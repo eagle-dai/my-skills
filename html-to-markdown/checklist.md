@@ -28,7 +28,11 @@
 **阻断项差异>0 时，必须逐一定位丢失的元素并修复或标注人工复核。**
 
 **Markdown 计数注意事项：**
-- 计数必须**排除评论区和代码块内部**
+- 计数必须**排除评论区和代码块内部**——所有 grep 验证脚本必须先剥离 fenced code block：
+  ```python
+  no_code = re.sub(r'```.*?\n.*?```', '', text, flags=re.DOTALL)
+  ```
+  否则代码注释 `# foo` 会被当作 H1 命中，得到虚高的标题计数。
 - 列表项正则应精确匹配行首 `^(?:- |\d+\. )`
 - 段落内容恰好以列表标记开头时为误报，需人工确认
 
@@ -114,6 +118,17 @@ Markdown 输出方式 / 渲染是否居中
 ### 代码块检查
 - 疑似代码/日志/命令/配置/堆栈/训练日志是否裸露在普通段落（含评论区）
 - 代码块是否标注了语言
+
+### Notebook 类专项（仅 notebook 类页面）
+详见 @notebook-and-virtualized.md。验证要点：
+
+- **Cell 总数对齐**：DOM cell 容器数 == markdown_count + code_count，差异>0 阻断
+- **Code cell 完整性**：每个 code cell 都成功提取代码（无空 cell、无 ⚠️ 标记），任一空 cell 阻断
+- **NBSP 残留**：markdown 中不得出现 `\xa0`，否则代码不可执行 → 阻断
+- **fence 配对**：3-反引号和 4-反引号分两路统计，各自必须为偶数（奇偶配对校验为准；4-反引号 outer 升级会包住 inner 3-反引号，使总数等式不可解，详见 notebook-and-virtualized.md §3.2 / §5）
+- **Output blockquote 渲染**：含 inner ` ``` ` 的 Output 必须用 4-反引号 outer fence，否则会被截断（Playwright 抽查含 inner fence 的 cell：blockquote 内单一 `<pre>` + 末尾文本到位）
+- **空 IFrame/img 回填**：从 cell 源代码或 `data-src` 反推 URL；未回填的需在报告标注
+- **Output 处理报告**：输出保留数 / 跳过数 / 回填数 三项必须明示
 
 ---
 

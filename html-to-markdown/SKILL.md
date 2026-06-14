@@ -40,16 +40,30 @@ Phase 5: 输出
 | Level 2 | 有公式，有原始 LaTeX | 提取 + 渲染验证 | 整页 + 公式区域局部 |
 | Level 3 | 有公式，无原始 LaTeX，需重建 | 完整公式处理 | 整页 + 逐公式局部 |
 
-### 1.3 同源批量检测
+### 1.3 页面类型分流（与复杂度并列）
+
+除复杂度外，先识别页面类型——不同类型的提取协议差异很大：
+
+| 类型 | 信号 | 适用文档 |
+|------|------|---------|
+| 文章/博客 | `<article>` / `<main>` / 富文本编辑器（Slate 等） | conversion-rules.md |
+| Notebook 类（Jupyter/Databricks/Colab） | `data-mode-id` / `command-input` / `cm-editor` / `jp-Cell` / 标题含 `notebook` | **notebook-and-virtualized.md** |
+| 含虚拟化容器 | Monaco editor / CodeMirror / react-virtualized；活跃元素数 < 实际数 | **notebook-and-virtualized.md** |
+| 含 lazy-load 空占位 | `<iframe src="">` / `<img src=""` 但 `data-src` 有值 | **notebook-and-virtualized.md §4** |
+
+类型不互斥，识别到任一即追加对应规则。
+
+### 1.4 同源批量检测
 
 多个 HTML 来自同一站点时，DOM 结构一致，应指导 sub agent 采用脚本化批量处理。
 
-### 1.4 确定关键参数
+### 1.5 确定关键参数
 
 - 正文容器选择器
 - 富文本编辑器类型（标准 HTML / Slate / 其他）
 - 评论区选择器
 - 公式类型和来源
+- **Notebook 类追加**：cell 容器选择器、cell type breakdown、代码提取双源协议、output 容器
 
 ---
 
@@ -112,9 +126,18 @@ Phase 5: 输出
 ### 文本清理
 - PUA 字符删除
 - 零宽字符删除
+- 代码 cell/代码块内部的 NBSP（U+00A0）替换为普通空格（Monaco/CodeMirror 提取常见陷阱）
 
 ### 解析器
 - 必须使用 lxml，不得使用 html.parser
+
+### Notebook/虚拟化容器（如适用）
+[当 Phase 1 检测到 notebook 类或虚拟化容器时拼接此段，详见 @notebook-and-virtualized.md]
+- 代码提取双源协议：备份选择器 优先 → 渲染态片段 fallback
+- Output 默认保留有内容输出，跳过空容器
+- 空 IFrame/img 必须从源代码或 data-src 反推 URL 回填
+- 输出格式统一：代码块后空一行 + `> **Output:** ...`
+- 报告必须含：保留 N / 跳过 M / 回填 K / 失败 cell idx
 
 ## 公式处理（Level 2-3 时包含）
 [按复杂度级别从 formula-extraction skill 精简]
@@ -144,6 +167,8 @@ Phase 5: 输出
 
 ### 强制计数对比
 提取完成后，将 DOM 基线与 Markdown 逐项对比，差异>0 的阻断项必须修复。
+
+**所有 grep 验证脚本必须先剥离 fenced code block**（`re.sub(r'```.*?\n.*?```', '', text, flags=re.DOTALL)`），否则代码注释 `# foo` 会被当成 H1 标题命中。
 
 ### Playwright 渲染验证（Level 1+）
 1. 创建 render.html（KaTeX + marked.js，保护数学公式后再解析）
@@ -242,6 +267,7 @@ digraph dispatch_decision {
 ## 参考文档
 
 - @conversion-rules.md — 完整转换规则（列表、评论、图片、居中、代码块等）
+- @notebook-and-virtualized.md — Notebook 类页面（Jupyter/Databricks/Colab）+ Monaco/CodeMirror 等虚拟化容器 + lazy-load 空占位回填
 - @blocking-rules.md — 阻断规则（验证阶段使用）
 - @checklist.md — 验证 checklist 和报告模板
 - `formula-extraction` skill — 公式提取的权威参考（独立 skill）
