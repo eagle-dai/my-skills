@@ -118,7 +118,8 @@ d_\pi_\theta  V^\pi_\theta  Q^\pi_\theta  J_\pi_\theta
 | Unicode 下标序列 | `₀`, `₁`, `ₙ` 等 | `_{0}`, `_{1}`, `_{n}` | U+208x |
 | NBSP | `\xa0` (U+00A0) | 普通空格 | unknownSymbol warning |
 | 裸 CJK in math mode | math mode 内 `[一-鿿]`（先剥离 `\text{}` 内容再判） | 连续 CJK 段包 `\text{...}` | `unicodeTextInMathMode` warning，`.katex-error` 检测漏网（是 warning 非 error）。实测：`\frac{平均盈利}{平均亏损}` |
-| `\text{}` 内特殊符 | `\text{...}` 内未转义的 `_ # % &` | `\_ \# \% \&` | 即使在 text mode，`_`/`^` 仍触发 ParseError `Expected 'EOF', got '_'`。实测：`\text{signal_source}` |
+| `\text{}` 内 `_` / `^`（**下标符**） | `\text{signal_source}` 或 `\text{signal\_source}` | 拆到 `\text{}` 外：`\text{signal}\_\text{source}` | **KaTeX 与 GitHub MathJax 行为不同**：KaTeX 接受 `\text{signal\_source}`，但 **GitHub MathJax 报 `'_' allowed only in math mode`**（`\text{}` 内即使 `\_` 也非法）。两端通吃的唯一写法是把 `_` 移到 `\text{}` 外用 `\_` 连接。实测：`\text{signal_source}`→`\text{signal}\_\text{source}`。次选：`\text{}` 内下划线换空格 `\text{signal source}`，或整体改行内代码 `` `signal_source` ``（非公式语义时） |
+| `\text{}` 内 `# % &` | `\text{...}` 内未转义的 `# % &` | `\# \% \&` | text mode 下这三个转义可行（不同于 `_`） |
 | 数学块内裸 `*`（GitHub 目标平台） | 数学段（`$...$`/`$$...$$`）内未转义的 `*` | `\ast` | 成对 `*`（如 `SR^{*}` 多次出现）被 GitHub markdown 当 emphasis 吃掉，`{*}`→`{_}`，MathJax 报 `Extra close brace`。VS Code 先保护数学块不受影响。实测：PSR/DSR 公式 |
 | LaTeX 命令粘连 | `\gammaV`, `\thetax` | `\gamma V`, `\theta x` | 命令名延伸 |
 | `\text{}` 后粘连 | `\text{with probability}1` | `\text{with probability} 1` | 视觉粘连 |

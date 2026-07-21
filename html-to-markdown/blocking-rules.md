@@ -51,7 +51,10 @@ No such environment
 MathJax error
 Double subscript
 Double superscript
+'_' allowed only in math mode
 ```
+
+**`'_' allowed only in math mode` 是 GitHub MathJax 特有**（本地 KaTeX 不报）：`\text{}` 内含 `_`（即使 `\_`）触发。必须用 GitHub 端验证才能捕获，本地 KaTeX 渲染验证会漏。修法见 formula-extraction 后处理管道：`_` 拆出 `\text{}`。
 
 **渲染文本中不得裸露 LaTeX 命令名：**
 
