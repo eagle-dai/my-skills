@@ -73,6 +73,8 @@ unknownSymbol
 
 **GitHub 行内公式边界阻断（目标平台含 GitHub 时）：** 行内 `$...$` 定界符外侧紧贴 CJK 汉字/全角标点，GitHub 不渲染（本地 KaTeX 照渲染，会漏）。检测正则 `([一-鿿　-〿＀-￯])\$(?!\$)` / `(?<!\$)\$([一-鿿　-〿＀-￯])` 命中 > 0 → 阻断，修法插 ASCII 空格。详见 checklist.md Step 1.6。
 
+**数学块内裸 `*` 阻断（目标平台含 GitHub 时）：** 数学段（`$...$`/`$$...$$`）内含未转义 `*`（非 `\ast`），GitHub markdown 先把成对 `*` 当强调符吃掉，破坏 `{*}` 结构 → MathJax 报 `Extra close brace or missing open brace`（本地 KaTeX 照渲染，会漏）。检测：数学段内 `(?<!\\)\*` 命中 > 0 → 阻断，修法 `*` → `\ast`。实测 PSR/DSR。
+
 ---
 
 ## §0.5 列表结构阻断
