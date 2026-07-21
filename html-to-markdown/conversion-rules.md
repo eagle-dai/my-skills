@@ -194,16 +194,20 @@ $$
 
 富文本编辑器的代码块通常无 `language-*` class。通过内容启发式检测语言（至少 2 个信号才标注）：
 
-| 语言 | 信号（≥2 个匹配） |
+| 语言 | 信号（≥2 个匹配，除非注明单信号即可） |
 |------|-------------------|
 | Go | `package \w+`, `func \w+`, `import (`, `fmt.\w+`, `:=` |
 | Python | `from \w+ import`, `def \w+(`, `self.`, `class \w+.*:` |
 | JavaScript/TS | `const \w+ =`, `let \w+ =`, `=>`, `require(`, `export` |
 | Java | `public class`, `public void`, `public static` |
-| Bash/Shell | `mkdir`, `cd`, `go run/mod/build`, `npm`, `pip`, `docker`, `git`（行首） |
-| Text（非代码） | 目录树字符 `├└│─`，emoji 开头行 |
+| Bash/Shell | `mkdir`, `cd`, `go run/mod/build`, `npm`, `pip`, `docker`, `git`、`python xxx.py --flag`（行首） |
+| PowerShell | `$env:`, `Get-\w+`/`Set-\w+`（cmdlet 动词-名词）, `-ErrorAction`, 行首 `.\` |
+| JSON | 整体被 `{}`/`[]` 包裹 + `"key":` 键值对（单信号+括号闭合即可标） |
+| YAML | 行首 `key:` 缩进层级 + `- ` 列表项，无花括号 |
+| SQL | `SELECT`/`INSERT`/`CREATE TABLE`/`WHERE`（不区分大小写，≥1 强关键词） |
+| Text（非代码） | 目录树字符 `├└│─`；emoji 开头行；**中文占比高的清单/模板/说明**（如 `允许：… 审批：…`、`【主假设行】…` 这类中文字段块）；**中文判定伪代码**（`if 收益≤基准: 不支持` 这类非可运行逻辑，标 text 不标 python，避免误导可运行） |
 
----
+**判不准时**：信号不足 2 个、或像多语言混合 → 标 `text`（保守），不要猜一个可运行语言。宁可 text 也不误标——误标 python 会让读者以为可直接运行。**所有代码块最终都要有语言标注**（含 `text`），不留裸 ` ``` `。
 
 ## 文本清理（SingleFile 特有）
 
