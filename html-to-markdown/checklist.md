@@ -134,6 +134,8 @@ Markdown 输出方式 / 渲染是否居中
 
 ## Playwright 渲染验证（强制，不可跳过）
 
+> **主/子分工**：Step 1（`.katex-error`）、Step 1.6（GitHub 边界）主 agent **必须独立复验，不采信 sub agent 自报结论**——实测出现过 sub 报 error=0、主复验 error=1。分工契约见 SKILL.md「主/子 agent 验证分工契约」。主/子共用同一 render.html 模板。
+
 ### Step 1: 程序化 KaTeX 错误检测
 
 1. 创建 `render.html` 验证页面（KaTeX CDN + marked.js，通过 `?file=` 加载 Markdown）
@@ -148,6 +150,16 @@ Markdown 输出方式 / 渲染是否居中
 1. 执行 `document.querySelectorAll('.katex').length`
 2. 与 DOM 基线 `N_formula_block + N_formula_inline` 对比
 3. 渲染数量显著少于基线 → 阻断（`$` 分界符被 Markdown 解析器破坏）
+
+### Step 1.6: GitHub GFM 兼容检查（目标平台含 GitHub 时强制）
+
+**本地 KaTeX 比 GitHub（GFM/MathJax）宽松。** GitHub 要求行内 `$...$` 定界符外侧是 ASCII 边界；紧贴中文/全角标点（如 `，$q=1-p$，`）时 GitHub **不渲染**，留字面 `$`，但本地 KaTeX 照渲染 → 验证漏过。
+
+1. 扫描 md（先剥离 fenced code + `$$` 块）：找行内 `$...$` 定界符**外侧紧贴 CJK 汉字或全角标点**的实例。
+   - 正则：开界 `([一-鿿　-〿＀-￯])\$(?!\$)`、闭界 `(?<!\$)\$([一-鿿　-〿＀-￯])`
+2. 命中 > 0 → 修：在 CJK 与 `$` 之间插一个 **ASCII 空格**（方案 A）→ `， $q=1-p$ ，`。
+3. **实测依据**（2026-07）：方案 A（插空格，标准 `$` 语法）GitHub + VS Code 都渲染；方案 B（backtick `` $`...`$ ``）GitHub 渲染但 VS Code 不认，弃用。块级 `$$...$$` 独立成行，不受此限。
+4. 有条件时，push 到公开 repo + Playwright 打开 `blob/main/xxx.md` 实地确认渲染（看是否成数学斜体字符而非字面 `$`）。
 
 ### Step 2: 截图对比
 

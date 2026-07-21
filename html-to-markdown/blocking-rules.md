@@ -62,6 +62,17 @@ frac  theta  sigma  gamma  epsilon  pitheta  mutheta  sigmatheta
 
 特别注意 `\mathcal{N}` 被错误输出为 `\\mathcal{N}` 导致渲染成 `mathcalN` 的情况。
 
+**KaTeX warning 也算阻断（`.katex-error` 抓不到）：** 裸 CJK in math mode 触发的是 `unicodeTextInMathMode` **warning** 而非 error，`.katex-error=0` 会误判通过。验证时须同时读 console warning：
+
+```text
+unicodeTextInMathMode
+unknownSymbol
+```
+
+命中 → 按 formula-extraction 后处理管道修（裸 CJK 包 `\text{}`）。
+
+**GitHub 行内公式边界阻断（目标平台含 GitHub 时）：** 行内 `$...$` 定界符外侧紧贴 CJK 汉字/全角标点，GitHub 不渲染（本地 KaTeX 照渲染，会漏）。检测正则 `([一-鿿　-〿＀-￯])\$(?!\$)` / `(?<!\$)\$([一-鿿　-〿＀-￯])` 命中 > 0 → 阻断，修法插 ASCII 空格。详见 checklist.md Step 1.6。
+
 ---
 
 ## §0.5 列表结构阻断

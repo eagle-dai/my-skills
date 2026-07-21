@@ -31,6 +31,21 @@ Phase 5: 输出
 
 用 Playwright 打开 SingleFile HTML，确认页面结构。
 
+### 1.1a 探测原则：按语义容器，不按 HTML 标签
+
+**富文本编辑器（Slate/极客时间等）用 `data-slate-type` 等自定义属性表示代码块、表格、列表，不用标准标签。** 静态 lxml 按 `<pre>/<code>/<table>` 标签计数会严重低估——实测把 3 篇各含 4-7 个代码块的文章判成"0 代码块"，表格全漏。
+
+探测计数一律走**双轨（语义属性 OR 标准标签）**：
+
+| 探测项 | 查询 |
+|--------|------|
+| 代码块 | `[data-slate-type="pre"]` OR `pre>code` |
+| 表格 | `[data-slate-type="table"]` OR `<table>` |
+| 列表 | `[data-slate-type="list"]` OR `<ul>/<ol>` |
+| 公式 | `.katex` / `math` / `[data-slate-type*="katex"]` |
+
+判定复杂度前，先用 Playwright 在**渲染后的 DOM**（非仅静态解析）确认，或对 `data-slate-type` 做一次全量 distinct 值枚举，避免漏掉编辑器特有容器。
+
 ### 1.2 复杂度分级
 
 | 级别 | 条件 | 公式处理 | 验证深度 |
@@ -196,6 +211,22 @@ Phase 5: 输出
 3. 内置审计计数
 4. 所有文章输出到一个 zip，每篇一个子目录
 ```
+
+### 主/子 agent 验证分工契约
+
+**问题**：sub agent 自报"error=0"不可全信——实测出现 sub agent 报 `.katex-error=0`，主 agent 独立复验测出 error=1 的情况（sub agent 渲染方式与主 agent 不同）。
+
+**契约**：
+
+| 验证项 | sub agent 自验证 | 主 agent 独立复验 |
+|--------|:---:|:---:|
+| 计数对比（DOM 基线 vs md） | ✓ 必跑 | ✓ 采信前抽验 |
+| KaTeX `.katex-error` = 0 | ✓ 必跑 | ✓ **必须独立复验，不采信 sub 结论** |
+| GitHub 边界（`$` 紧贴 CJK） | ✓ 必跑 | ✓ **必须独立复验** |
+| 裸 CJK / PUA / 零宽 / NBSP | ✓ 必跑 | ✓ **必须独立复验** |
+| 截图语义对比 | 高风险区 | 高风险区抽检 |
+
+**统一模板**：sub agent 与主 agent 的 KaTeX 渲染验证**共用同一 render.html 模板**（KaTeX CDN + marked.js + 公式保护），避免"两套渲染路径结论不一致"。主 agent 复验时直接打开 sub agent 产出的 render.html，或用同一模板重建。
 
 ---
 
