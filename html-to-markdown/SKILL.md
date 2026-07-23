@@ -9,7 +9,7 @@ description: Use when converting SingleFile-saved HTML pages into clean offline 
 
 **架构：** 主 agent 负责分析和质量验证，sub agent 负责实际转换工作。
 
-> **改这个 skill 本身？** 先读 @self-improvement.md——过泛化检查清单 + 跑回归用例表再落地，防"规则贴死单样例"和"新改进改坏旧样例"。
+> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md`（通用两道闸）+ @self-improvement.md（本 skill 专属回归用例表）——过泛化检查清单 + 跑回归用例表再落地，防"规则贴死单样例"和"新改进改坏旧样例"。
 
 ## 工作流概览
 
@@ -318,5 +318,6 @@ digraph dispatch_decision {
 - @notebook-and-virtualized.md — Notebook 类页面（Jupyter/Databricks/Colab）+ Monaco/CodeMirror 等虚拟化容器 + lazy-load 空占位回填
 - @blocking-rules.md — 阻断规则（验证阶段使用）
 - @checklist.md — 验证 checklist 和报告模板
-- @self-improvement.md — **改进本 skill 时读**：泛化检查清单 + 回归用例表（防"规则贴死单样例"和"新改进改坏旧样例"两个反复踩的坑）
+- `../_meta/skill-self-improvement.md` — **改进任何自建 skill 时读**：通用泛化检查清单 + 病根 + 改进流程
+- @self-improvement.md — **改进本 skill 时读**：html-to-md 专属回归用例表（边界正则/清理正则）
 - `formula-extraction` skill — 公式提取的权威参考（独立 skill）

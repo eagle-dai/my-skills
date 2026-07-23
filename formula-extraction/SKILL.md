@@ -7,6 +7,8 @@ description: Extract LaTeX from a single formula DOM node (KaTeX/MathJax/MathML)
 
 从单个公式 DOM 节点中提取语义正确的 LaTeX 字符串。
 
+> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md`（通用两道闸）+ @self-improvement.md（本 skill 专属回归用例表）——尤其后处理粘连修正,改前构造合法命令反例、改后跑全表,防误伤 `\simeq` 这类合法命令。
+
 ## 职责边界
 
 - **输入**：单个公式 DOM 节点（`.katex` / `<math>` / `<annotation>` / `.MathJax` 等）
