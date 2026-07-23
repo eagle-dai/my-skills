@@ -132,6 +132,8 @@ description: Extract LaTeX from a single formula DOM node (KaTeX/MathJax/MathML)
 | PUA / zero-width | 对应 Unicode 范围 | 删除 | 干扰匹配 |
 | Prime inside frac | 已确认的大括号错位 | 修复平衡 | 语法错误 |
 
+**不得全局执行 `\mid → \vert`。** `\mid` 是关系符号，`\vert` 更接近竖线/定界符，替换会改变数学间距或语义；并且二者源码都没有裸 `|`，不能解决 Markdown 表格分隔符冲突。若实际问题来自裸 `|` 或 `\|`，应在对应 Markdown/表格上下文中局部检测和处理，不能改写所有条件关系符。
+
 ### `\sim` token 边界规则
 
 **禁止**对最终字符串执行：
