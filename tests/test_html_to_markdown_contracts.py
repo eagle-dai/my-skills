@@ -87,7 +87,7 @@ class CommentLedgerContractTests(unittest.TestCase):
         ]
 
         self.assertEqual(
-            contracts.validate_comment_ledger(entries, source_total=2), ()
+            contracts.validate_comment_ledger(entries, source_ids=["c1", "c2"]), ()
         )
 
     def test_filtered_comment_requires_reason(self) -> None:
@@ -95,14 +95,14 @@ class CommentLedgerContractTests(unittest.TestCase):
             contracts.CommentLedgerEntry("c1", "removed_as_noise", 0),
         ]
 
-        errors = contracts.validate_comment_ledger(entries, source_total=1)
+        errors = contracts.validate_comment_ledger(entries, source_ids=["c1"])
 
         self.assertTrue(any("requires a reason" in error for error in errors))
 
     def test_kept_comment_must_be_emitted_exactly_once(self) -> None:
         entries = [contracts.CommentLedgerEntry("c1", "kept", 2)]
 
-        errors = contracts.validate_comment_ledger(entries, source_total=1)
+        errors = contracts.validate_comment_ledger(entries, source_ids=["c1"])
 
         self.assertTrue(any("emitted_count == 1" in error for error in errors))
 
@@ -112,9 +112,17 @@ class CommentLedgerContractTests(unittest.TestCase):
             contracts.CommentLedgerEntry("c1", "manual_review", 0, "ambiguous"),
         ]
 
-        errors = contracts.validate_comment_ledger(entries, source_total=2)
+        errors = contracts.validate_comment_ledger(entries, source_ids=["c1", "c2"])
 
         self.assertTrue(any("duplicate comment source_id" in error for error in errors))
+
+    def test_missing_and_unexpected_source_ids_are_rejected(self) -> None:
+        entries = [contracts.CommentLedgerEntry("invented", "kept", 1)]
+
+        errors = contracts.validate_comment_ledger(entries, source_ids=["actual"])
+
+        self.assertTrue(any("missing source comment ids" in error for error in errors))
+        self.assertTrue(any("unexpected source comment ids" in error for error in errors))
 
 
 class DocumentationContractTests(unittest.TestCase):
@@ -131,8 +139,8 @@ class DocumentationContractTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn("validate_comment_ledger()", rules)
-        self.assertIn("每个源顶层评论必须在 ledger 中", rules)
+        self.assertIn("validate_comment_ledger(entries, source_ids=source_ids)", rules)
+        self.assertIn("完整 `source_ids`", rules)
         self.assertNotIn("评论数量必须与 HTML 中的评论条目一一对应", rules)
 
 
