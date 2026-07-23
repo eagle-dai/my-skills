@@ -164,11 +164,91 @@ def stable_dom_path(node: Any) -> str:
     return "/".join(reversed(parts))
 
 
-_DOM_DISCOVERY_SPECS: Mapping[str, tuple[str, str, str]] = {
-    # kind: (native selector, native representation, wrapper representation)
-    "table": ("table", "native-table", "slate-table-wrapper"),
-    "codeblock": ("pre > code", "native-code", "slate-pre-wrapper"),
+@dataclass(frozen=True)
+class _DiscoverySpec:
+    native_selector: str
+    wrapper_representation: str
+
+
+_DOM_DISCOVERY_SPECS: Mapping[str, _DiscoverySpec] = {
+    "table": _DiscoverySpec("table", "slate-table-wrapper"),
+    "codeblock": _DiscoverySpec("pre > code", "slate-pre-wrapper"),
+    "list": _DiscoverySpec("ul, ol", "slate-list-wrapper"),
+    "list_item": _DiscoverySpec("li", "slate-list-item-wrapper"),
 }
+
+
+def _is_native_node(kind: str, node: Any) -> bool:
+    name = getattr(node, "name", None)
+    if kind == "table":
+        return name == "table"
+    if kind == "codeblock":
+        parent = getattr(node, "parent", None)
+        return name == "code" and getattr(parent, "name", None) == "pre"
+    if kind == "list":
+        return name in {"ul", "ol"}
+    if kind == "list_item":
+        return name == "li"
+    return False
+
+
+def _native_representation(kind: str, node: Any) -> str:
+    if kind == "table":
+        return "native-table"
+    if kind == "codeblock":
+        return "native-code"
+    if kind == "list":
+        return (
+            "native-ordered-list"
+            if getattr(node, "name", None) == "ol"
+            else "native-unordered-list"
+        )
+    if kind == "list_item":
+        return "native-list-item"
+    raise ValueError(f"unsupported semantic candidate kind: {kind}")
+
+
+def _top_level_native_descendants(
+    wrapper: Any,
+    *,
+    kind: str,
+    selector: str,
+) -> list[Any]:
+    """Return native descendants not nested inside another native peer.
+
+    This is essential for lists: a root ``<ol>`` may legitimately contain a
+    nested ``<ul>``. The nested list is its own semantic block and must not make
+    the wrapper look ambiguous.
+    """
+
+    result: list[Any] = []
+    for candidate in wrapper.select(selector):
+        if not _is_native_node(kind, candidate):
+            continue
+
+        current = getattr(candidate, "parent", None)
+        nested_in_native_peer = False
+        while current is not None and current is not wrapper:
+            if _is_native_node(kind, current):
+                nested_in_native_peer = True
+                break
+            current = getattr(current, "parent", None)
+
+        if not nested_in_native_peer:
+            result.append(candidate)
+
+    return result
+
+
+def _nearest_native_ancestor(root: Any, node: Any, *, kind: str) -> Any | None:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if _is_native_node(kind, current):
+            return current
+        if current is root:
+            break
+        current = getattr(current, "parent", None)
+    return None
 
 
 def discover_semantic_candidates(
@@ -182,9 +262,10 @@ def discover_semantic_candidates(
     the real workflow, callers should first render the page with Playwright,
     serialize the confirmed content container, and parse that rendered snapshot.
 
-    A wrapper containing exactly one native node shares the native node's
-    ``semantic_id``. Native nodes have higher priority. A wrapper containing
-    multiple native nodes is ambiguous and fails closed instead of silently
+    A wrapper containing exactly one top-level native node shares the native
+    node's ``semantic_id``. A wrapper nested inside one native list/list-item also
+    shares that ancestor's identity. Native nodes have higher priority. Multiple
+    top-level native nodes are ambiguous and fail closed instead of silently
     collapsing several blocks into one.
     """
 
@@ -193,35 +274,33 @@ def discover_semantic_candidates(
     if not hasattr(root, "select"):
         raise TypeError("root must provide select(selector)")
 
-    native_selector, native_representation, wrapper_representation = (
-        _DOM_DISCOVERY_SPECS[kind]
-    )
+    spec = _DOM_DISCOVERY_SPECS[kind]
     candidates: list[SemanticCandidate] = []
 
     for node in root.select(CSS_SELECTORS[kind]):
-        # Use element shape for the two supported native representations.
-        if kind == "table":
-            is_native = getattr(node, "name", None) == "table"
-        else:
-            parent = getattr(node, "parent", None)
-            is_native = (
-                getattr(node, "name", None) == "code"
-                and getattr(parent, "name", None) == "pre"
-            )
-
-        if is_native:
+        if _is_native_node(kind, node):
             canonical_node = node
-            representation = native_representation
+            representation = _native_representation(kind, node)
             priority = 0
         else:
-            native_nodes = list(node.select(native_selector))
+            native_nodes = _top_level_native_descendants(
+                node,
+                kind=kind,
+                selector=spec.native_selector,
+            )
             if len(native_nodes) > 1:
                 raise ValueError(
                     f"ambiguous {kind} wrapper {stable_dom_path(node)} contains "
                     f"{len(native_nodes)} native nodes"
                 )
-            canonical_node = native_nodes[0] if native_nodes else node
-            representation = wrapper_representation
+
+            if native_nodes:
+                canonical_node = native_nodes[0]
+            else:
+                canonical_node = _nearest_native_ancestor(root, node, kind=kind)
+                if canonical_node is None:
+                    canonical_node = node
+            representation = spec.wrapper_representation
             priority = 10
 
         candidates.append(
