@@ -178,7 +178,7 @@ unknownSymbol
 
 ### §0.6.1 评论 ledger 守恒阻断
 
-评论验收不要求 Markdown 评论数与源评论数相等；允许过滤纯打卡、纯表情和广告，但每个源顶层评论必须在 ledger 中**恰好出现一次**。
+评论验收不要求 Markdown 评论数与源评论数相等；允许过滤纯打卡、纯表情和广告，但必须先记录源顶层评论的完整 `source_ids`，且 ledger 的 ID 集合与它**完全相等**。
 
 每条 ledger：
 
@@ -192,12 +192,13 @@ source_id | status | emitted_count | reason
 kept | removed_as_noise | failed | manual_review
 ```
 
-权威校验调用 @contracts.py 的 `validate_comment_ledger()`。
+权威校验调用 `validate_comment_ledger(entries, source_ids=source_ids)`。
 
 **阻断条件：**
 
-- ledger 条目数不等于 `source_total`
-- `source_id` 为空或重复
+- 源 `source_ids` 含空值或重复值
+- ledger `source_id` 为空或重复
+- ledger 缺少源 ID 或出现源集合之外的 ID
 - `status` 不在允许集合
 - `kept` 的 `emitted_count != 1`
 - 非 `kept` 的 `emitted_count != 0`
