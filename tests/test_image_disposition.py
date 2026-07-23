@@ -91,6 +91,75 @@ class ImageLedgerTests(unittest.TestCase):
             (),
         )
 
+    def test_preserved_decoded_qr_records_clickable_link(self) -> None:
+        entries = [
+            image_disposition.ImageLedgerEntry(
+                source_id="download-qr",
+                decision="keep",
+                emitted_count=1,
+                decoded_url="https://example.com/download",
+                decoded_link_emitted=True,
+            )
+        ]
+
+        self.assertEqual(
+            image_disposition.validate_image_ledger(
+                entries,
+                source_ids=["download-qr"],
+            ),
+            (),
+        )
+
+    def test_decoded_url_requires_clickable_link_emission(self) -> None:
+        entries = [
+            image_disposition.ImageLedgerEntry(
+                source_id="download-qr",
+                decision="keep",
+                emitted_count=1,
+                decoded_url="https://example.com/download",
+            )
+        ]
+
+        errors = image_disposition.validate_image_ledger(
+            entries,
+            source_ids=["download-qr"],
+        )
+
+        self.assertTrue(any("clickable link" in error for error in errors))
+
+    def test_decoded_link_flag_requires_url(self) -> None:
+        entries = [
+            image_disposition.ImageLedgerEntry(
+                source_id="qr",
+                decision="keep",
+                emitted_count=1,
+                decoded_link_emitted=True,
+            )
+        ]
+
+        errors = image_disposition.validate_image_ledger(entries, source_ids=["qr"])
+
+        self.assertTrue(any("without decoded_url" in error for error in errors))
+
+    def test_removed_image_cannot_emit_decoded_link(self) -> None:
+        entries = [
+            image_disposition.ImageLedgerEntry(
+                source_id="follow-qr",
+                decision="remove_as_ui",
+                emitted_count=0,
+                reason="follow widget outside article",
+                decoded_url="https://example.com/follow",
+                decoded_link_emitted=True,
+            )
+        ]
+
+        errors = image_disposition.validate_image_ledger(
+            entries,
+            source_ids=["follow-qr"],
+        )
+
+        self.assertTrue(any("must not emit" in error for error in errors))
+
     def test_manual_review_cannot_silently_drop_image(self) -> None:
         entries = [
             image_disposition.ImageLedgerEntry(
@@ -116,6 +185,14 @@ class ImageLedgerTests(unittest.TestCase):
         errors = image_disposition.validate_image_ledger(entries, source_ids=["qr"])
 
         self.assertTrue(any("positive UI evidence" in error for error in errors))
+
+    def test_duplicate_source_ids_name_the_duplicate(self) -> None:
+        errors = image_disposition.validate_image_ledger(
+            [image_disposition.ImageLedgerEntry("qr", "keep", 1)],
+            source_ids=["qr", "qr"],
+        )
+
+        self.assertIn("duplicate source image id: qr", errors)
 
     def test_missing_source_image_is_rejected(self) -> None:
         entries = [image_disposition.ImageLedgerEntry("one", "keep", 1)]
