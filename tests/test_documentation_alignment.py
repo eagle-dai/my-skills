@@ -24,10 +24,11 @@ class DocumentationAlignmentTests(unittest.TestCase):
         self.assertIn("@markdown_fences.py", notebook)
         self.assertIn("scan_fenced_blocks", notebook)
         self.assertIn("strip_fenced_blocks", notebook)
-        self.assertNotIn("n3 % 2", notebook)
-        self.assertNotIn("n4 % 2", notebook)
-        self.assertNotIn("偶数 = 配对完整", notebook)
-        self.assertNotIn("re.sub(r'```.*?", notebook)
+        # The docs may quote a bad expression as a prohibited example. What must
+        # not return is the old affirmative algorithm and its claimed proof.
+        self.assertNotIn("assert n3 % 2 == 0 and n4 % 2 == 0", notebook)
+        self.assertNotIn("偶数 = 配对完整即可", notebook)
+        self.assertNotIn("re.sub(r'```.*?\n.*?```'", notebook)
 
     def test_checklist_uses_deterministic_conservation_rules(self) -> None:
         checklist = self.read("html-to-markdown/checklist.md")
