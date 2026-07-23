@@ -37,6 +37,8 @@
 │   ├── checklist.md
 │   ├── contracts.py
 │   ├── conversion-rules.md
+│   ├── fence-validation.md
+│   ├── markdown_fences.py
 │   ├── notebook-and-virtualized.md
 │   └── self-improvement.md
 └── tests/
@@ -44,7 +46,8 @@
     │   └── selector_contract.html
     ├── test_dom_contracts.py
     ├── test_first_batch_rules.py
-    └── test_html_to_markdown_contracts.py
+    ├── test_html_to_markdown_contracts.py
+    └── test_markdown_fences.py
 ```
 
 ## 各目录说明
@@ -73,6 +76,8 @@ SingleFile HTML 转 Markdown 的主 skill。
 
 - `SKILL.md`：主流程、复杂度分级、主 agent / sub agent 分工和最终交付要求。
 - `contracts.py`：可执行的 selector、复杂度分级、DOM 语义候选发现与去重，以及评论 ledger 合同。
+- `markdown_fences.py`：按行扫描 Markdown fenced code block，验证 opener/closer、容器和长度，并在结构计数前安全剥离代码块。
+- `fence-validation.md`：fence scanner 的使用方式、阻断条件和反例。
 - `conversion-rules.md`：表格、列表、评论、图片、题注、代码块、文本清理等非公式转换规则。
 - `notebook-and-virtualized.md`：Jupyter、Databricks、Colab、Monaco、CodeMirror、lazy-load 等特殊页面处理规则。
 - `blocking-rules.md`：交付前必须通过的内容完整性和渲染阻断条件。
@@ -85,6 +90,7 @@ SingleFile HTML 转 Markdown 的主 skill。
 
 - `fixtures/selector_contract.html`：包含 Slate wrapper、原生 table/code、列表、公式、题注和歧义结构的代表性 DOM fixture。
 - `test_dom_contracts.py`：通过真实 CSS selector 引擎执行全部 selector，并验证 wrapper/native 的语义身份生成、优先级和 fail-closed 行为。
+- `test_markdown_fences.py`：验证 backtick/tilde、长 outer fence、blockquote、列表、错误 closer 和保行剥离行为。
 - `test_html_to_markdown_contracts.py`：测试 `contracts.py` 的复杂度、候选去重和评论 ledger 行为，并检查关键文档是否引用统一合同。
 - `test_first_batch_rules.py`：检查公式、选择器、图片处理和 Markdown 边界等关键规则是否在文档中保持一致。
 
