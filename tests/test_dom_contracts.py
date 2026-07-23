@@ -21,8 +21,8 @@ SPEC.loader.exec_module(contracts)
 EXPECTED_SELECTOR_TAGS = {
     "codeblock": ["section", "code", "section"],
     "table": ["section", "table", "section"],
-    "list": ["div", "ul"],
-    "list_item": ["div", "li"],
+    "list": ["section", "ol", "ul", "section"],
+    "list_item": ["li", "div", "li", "li", "section"],
     "formula": ["div", "span", "math"],
     "caption": ["caption", "figcaption"],
     "heading": ["h2", "div"],
@@ -80,6 +80,68 @@ class SelectorExecutionTests(unittest.TestCase):
             ["native-code", "slate-pre-wrapper"],
         )
 
+    def test_list_wrapper_shares_root_identity_without_collapsing_nested_list(self) -> None:
+        candidates = contracts.discover_semantic_candidates(self.normal, kind="list")
+        result = contracts.canonicalize_candidates(candidates)
+
+        self.assertEqual(len(candidates), 4)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(
+            [candidate.representation for candidate in result],
+            [
+                "native-ordered-list",
+                "native-unordered-list",
+                "slate-list-wrapper",
+            ],
+        )
+
+        wrapper = next(
+            item
+            for item in candidates
+            if item.representation == "slate-list-wrapper"
+            and item.source_dom_id.endswith("section[4]")
+        )
+        ordered = next(
+            item
+            for item in candidates
+            if item.representation == "native-ordered-list"
+        )
+        nested = next(
+            item
+            for item in candidates
+            if item.representation == "native-unordered-list"
+        )
+        self.assertEqual(wrapper.semantic_id, ordered.semantic_id)
+        self.assertNotEqual(ordered.semantic_id, nested.semantic_id)
+
+    def test_list_item_wrapper_inside_li_shares_ancestor_identity(self) -> None:
+        candidates = contracts.discover_semantic_candidates(
+            self.normal,
+            kind="list_item",
+        )
+        result = contracts.canonicalize_candidates(candidates)
+
+        self.assertEqual(len(candidates), 5)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(
+            [candidate.representation for candidate in result],
+            [
+                "native-list-item",
+                "native-list-item",
+                "native-list-item",
+                "slate-list-item-wrapper",
+            ],
+        )
+
+        wrapper = next(
+            item
+            for item in candidates
+            if item.representation == "slate-list-item-wrapper"
+            and "div" in item.source_dom_id
+        )
+        first_native = candidates[0]
+        self.assertEqual(wrapper.semantic_id, first_native.semantic_id)
+
     def test_ambiguous_table_wrapper_fails_closed(self) -> None:
         root = self.soup.select_one("#ambiguous-table")
         assert root is not None
@@ -93,6 +155,20 @@ class SelectorExecutionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "contains 2 native nodes"):
             contracts.discover_semantic_candidates(root, kind="codeblock")
+
+    def test_ambiguous_list_wrapper_fails_closed(self) -> None:
+        root = self.soup.select_one("#ambiguous-list")
+        assert root is not None
+
+        with self.assertRaisesRegex(ValueError, "contains 2 native nodes"):
+            contracts.discover_semantic_candidates(root, kind="list")
+
+    def test_ambiguous_list_item_wrapper_fails_closed(self) -> None:
+        root = self.soup.select_one("#ambiguous-list-item")
+        assert root is not None
+
+        with self.assertRaisesRegex(ValueError, "contains 2 native nodes"):
+            contracts.discover_semantic_candidates(root, kind="list_item")
 
     def test_unsupported_kind_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported semantic candidate kind"):
