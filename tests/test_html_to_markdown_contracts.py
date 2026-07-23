@@ -117,5 +117,24 @@ class CommentLedgerContractTests(unittest.TestCase):
         self.assertTrue(any("duplicate comment source_id" in error for error in errors))
 
 
+class DocumentationContractTests(unittest.TestCase):
+    def test_skill_references_executable_contracts(self) -> None:
+        skill = (ROOT / "html-to-markdown" / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("@contracts.py", skill)
+        self.assertIn("classify_complexity()", skill)
+        self.assertIn("canonicalize_candidates()", skill)
+        self.assertNotIn("无公式、正文图片、代码块、表格和评论", skill)
+
+    def test_blocking_rules_use_ledger_conservation(self) -> None:
+        rules = (ROOT / "html-to-markdown" / "blocking-rules.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("validate_comment_ledger()", rules)
+        self.assertIn("每个源顶层评论必须在 ledger 中", rules)
+        self.assertNotIn("评论数量必须与 HTML 中的评论条目一一对应", rules)
+
+
 if __name__ == "__main__":
     unittest.main()
