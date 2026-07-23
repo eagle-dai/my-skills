@@ -18,7 +18,12 @@ FenceMarker = Literal["`", "~"]
 
 @dataclass(frozen=True)
 class FencedBlock:
-    """One closed Markdown fenced code block using 1-based line numbers."""
+    """One closed Markdown fenced code block using 1-based line numbers.
+
+    ``blockquote_depth`` and ``container_indent`` preserve the structural
+    container needed to validate the closer. ``container_indent`` is zero for a
+    normal fence and the minimum content indentation for a list-item fence.
+    """
 
     start_line: int
     end_line: int
@@ -34,6 +39,9 @@ _OPEN_RE = re.compile(
 _LIST_OPEN_RE = re.compile(
     r"^(?P<indent> {0,3})(?P<marker>(?:[-+*]|\d{1,9}[.)]))"
     r"(?P<spacing>[ \t]+)(?P<fence>`{3,}|~{3,})(?P<info>.*)$"
+)
+_FENCE_LINE_RE = re.compile(
+    r"^(?P<indent> *)(?P<fence>`{3,}|~{3,})(?P<rest>.*)$"
 )
 
 
@@ -87,12 +95,20 @@ def _parse_opener(line: str) -> tuple[int, int, FenceMarker, int] | None:
     if fence[0] == "`" and "`" in info:
         return None
 
+    # A normally indented fence remains in the root container: CommonMark
+    # permits its closer at any indentation from column 0 through column 3.
     return (
         blockquote_depth,
-        len(match.group("indent")),
+        0,
         fence[0],
         len(fence),
     )
+
+
+def _closing_indent_bounds(container_indent: int) -> tuple[int, int]:
+    if container_indent:
+        return container_indent, container_indent + 3
+    return 0, 3
 
 
 def _is_closer(
@@ -107,37 +123,71 @@ def _is_closer(
     if current_depth != blockquote_depth:
         return False
 
-    # Accept a repeated list marker, although normal list continuations usually
-    # close with indentation only.
-    list_match = _LIST_OPEN_RE.match(remainder)
-    if list_match is not None:
-        fence = list_match.group("fence")
-        return (
-            fence[0] == marker
-            and len(fence) >= marker_length
-            and not list_match.group("info").strip()
-        )
+    match = _FENCE_LINE_RE.match(remainder)
+    if match is None:
+        return False
 
-    # Top-level fences may be indented by at most three spaces. A list opener
-    # can place its fence farther right, so retain that exact container width.
-    max_indent = max(3, container_indent)
-    close_re = re.compile(
-        rf"^ {{0,{max_indent}}}(?P<fence>{re.escape(marker)}"
-        rf"{{{marker_length},}})[ \t]*$"
-    )
-    return close_re.match(remainder) is not None
+    fence = match.group("fence")
+    if fence[0] != marker or len(fence) < marker_length:
+        return False
+    if match.group("rest").strip():
+        return False
+
+    minimum_indent, maximum_indent = _closing_indent_bounds(container_indent)
+    indent = len(match.group("indent"))
+    return minimum_indent <= indent <= maximum_indent
+
+
+def _invalid_closer_reason(
+    line: str,
+    *,
+    blockquote_depth: int,
+    container_indent: int,
+    marker: FenceMarker,
+    marker_length: int,
+) -> str | None:
+    """Describe a fence-looking line that cannot legally close the block."""
+
+    current_depth, remainder = _strip_blockquote_prefix(line)
+    match = _FENCE_LINE_RE.match(remainder)
+    if match is None:
+        return None
+
+    fence = match.group("fence")
+    if current_depth != blockquote_depth:
+        return "blockquote depth does not match the opener"
+    if fence[0] != marker:
+        return "closing fence uses a different marker"
+    if len(fence) < marker_length:
+        return "closing fence is shorter than the opener"
+
+    minimum_indent, maximum_indent = _closing_indent_bounds(container_indent)
+    indent = len(match.group("indent"))
+    if not minimum_indent <= indent <= maximum_indent:
+        if container_indent:
+            return (
+                "closing fence is outside the list-item content indentation "
+                f"{minimum_indent}-{maximum_indent}"
+            )
+        return "closing fence indentation exceeds three spaces"
+    if match.group("rest").strip():
+        return "closing fence has trailing text"
+    return None
 
 
 def scan_fenced_blocks(markdown: str) -> tuple[FencedBlock, ...]:
-    """Return all closed fenced blocks or raise on an unclosed opener.
+    """Return all closed fenced blocks or raise on malformed/unclosed input.
 
     The scanner recognizes backtick and tilde fences, longer outer fences,
     blockquote prefixes, and list-item openers. While a block is open, shorter
     fences and fences using the other marker are content rather than closers.
+    If no valid closer is found, a previously seen fence-looking line is used to
+    report the most specific available diagnostic.
     """
 
     blocks: list[FencedBlock] = []
     open_state: tuple[int, int, int, FenceMarker, int] | None = None
+    invalid_closer: tuple[int, str] | None = None
 
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         if open_state is None:
@@ -151,6 +201,7 @@ def scan_fenced_blocks(markdown: str) -> tuple[FencedBlock, ...]:
                     marker,
                     marker_length,
                 )
+                invalid_closer = None
             continue
 
         (
@@ -178,8 +229,26 @@ def scan_fenced_blocks(markdown: str) -> tuple[FencedBlock, ...]:
                 )
             )
             open_state = None
+            invalid_closer = None
+            continue
+
+        reason = _invalid_closer_reason(
+            line,
+            blockquote_depth=blockquote_depth,
+            container_indent=container_indent,
+            marker=marker,
+            marker_length=marker_length,
+        )
+        if reason is not None:
+            invalid_closer = (line_number, reason)
 
     if open_state is not None:
+        if invalid_closer is not None:
+            line_number, reason = invalid_closer
+            raise ValueError(
+                f"invalid closing fence at line {line_number}: {reason}; "
+                f"block opened at line {open_state[0]}"
+            )
         raise ValueError(
             f"unclosed fenced code block opened at line {open_state[0]}"
         )
