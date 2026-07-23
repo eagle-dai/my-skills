@@ -52,16 +52,24 @@ class FirstBatchRuleConsistencyTests(unittest.TestCase):
             self.assertIn('[data-slate-type="table"]', text, relative)
             self.assertIn("表格", text, relative)
 
-    def test_dewatermark_is_opt_in(self) -> None:
+    def test_dewatermark_is_default_with_destructive_guardrails(self) -> None:
+        # 去水印默认执行（用户改为默认），但破坏性护栏一条都不能省。
         for relative in (
             "html-to-markdown/SKILL.md",
             "html-to-markdown/conversion-rules.md",
             "html-to-markdown/checklist.md",
         ):
             text = self.read(relative)
-            self.assertIn("默认", text, relative)
-            self.assertIn("明确要求", text, relative)
-            self.assertNotIn("默认去站点水印", text, relative)
+            # 默认执行且提供保留 escape hatch
+            self.assertIn("默认执行", text, relative)
+            self.assertIn("保留原始水印", text, relative)
+            # 破坏性护栏必须仍在（三文件共同词，机制护栏而非表面措辞）
+            self.assertIn("原图副本", text, relative)
+            self.assertIn("正文未被擦除", text, relative)
+            self.assertIn("缩略图", text, relative)
+            self.assertIn("连通块", text, relative)
+            # 旧的 opt-in 措辞不得残留
+            self.assertNotIn("默认行为：保留水印和原始图片", text, relative)
 
     def test_mid_is_not_globally_rewritten_to_vert(self) -> None:
         skill = self.read("formula-extraction/SKILL.md")
