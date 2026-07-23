@@ -86,6 +86,7 @@ kept + removed_as_noise + failed + manual_review == source_total
 - 文件真实存在
 - 无 base64 直接嵌入
 - 顺序和图注对应
+- **每张图片/表格的题注（figcaption / Slate image 子 div / caption）已提取，未静默丢失**
 - 删除的图片确为头像/广告/装饰图
 - 压缩后文字可读
 

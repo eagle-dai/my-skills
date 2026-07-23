@@ -39,6 +39,7 @@ Phase 5  输出 zip + 报告
 | 列表项 | `[data-slate-type="list-line"]` OR `li` |
 | 公式 | `[data-slate-type*="katex"]` OR `.katex` OR `math` |
 | 图片 | `img`（排除装饰图后） |
+| 题注 | `figcaption` OR Slate image 块内 img 同级 `<div>` OR `<caption>` |
 | 标题 | heading slate type OR `h1-h6` |
 | 评论 | 评论区顶层评论容器 |
 
@@ -55,6 +56,7 @@ N_table
 N_list
 N_list_item
 N_image
+N_caption
 N_codeblock
 N_heading
 N_comment
@@ -107,6 +109,7 @@ DOM 基线：
 - tables:
 - lists / list items:
 - images:
+- captions:
 - code blocks:
 - headings:
 - comments:
@@ -202,6 +205,7 @@ DOM 基线：
 | 代码块 | 使用与 Phase 1 相同选择器；少一个即阻断 |
 | 列表项 | 总数和 marker 类型对齐 |
 | 图片 | 排除装饰图后对齐 |
+| 题注 | HTML 题注数 == Markdown 题注数；少一个即阻断（排查内容块子节点/同级题注是否漏抽） |
 | 块级公式 | 少一个即阻断 |
 | 评论 | 使用“保留/过滤/失败 ledger”解释差异 |
 
@@ -254,6 +258,7 @@ DOM 基线 / Markdown 实际：
 - tables:
 - lists / list items:
 - images:
+- captions:
 - code blocks:
 - headings:
 - comments ledger:
