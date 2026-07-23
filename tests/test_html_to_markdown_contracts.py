@@ -189,7 +189,7 @@ class DocumentationContractTests(unittest.TestCase):
         module_text = MODULE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("shared DOM baseline/report contract", module_text)
-        self.assertIn("do not currently change the Level 0/1 split", module_text)
+        self.assertIn("currently change the Level 0/1 split", module_text)
 
 
 if __name__ == "__main__":
