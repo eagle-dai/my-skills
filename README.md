@@ -46,6 +46,7 @@
 └── tests/
     ├── fixtures/
     │   └── selector_contract.html
+    ├── test_documentation_alignment.py
     ├── test_dom_contracts.py
     ├── test_first_batch_rules.py
     ├── test_html_to_markdown_contracts.py
@@ -94,6 +95,7 @@ SingleFile HTML 转 Markdown 的主 skill。
 基于 Python `unittest` 的回归测试。
 
 - `fixtures/selector_contract.html`：包含 Slate wrapper、原生 table/code、列表、公式、题注和歧义结构的代表性 DOM fixture。
+- `test_documentation_alignment.py`：防止二维码、fence、阈值和 CI 描述重新漂移到过期规则。
 - `test_dom_contracts.py`：通过真实 CSS selector 引擎执行全部 selector，并验证 wrapper/native 的语义身份生成、优先级和 fail-closed 行为。
 - `test_markdown_fences.py`：验证 backtick/tilde、长 outer fence、blockquote、列表、错误 closer 和保行剥离行为。
 - `test_image_disposition.py`：验证正文二维码保留、UI 二维码删除、未知二维码保留待复核及 image ledger 守恒。
