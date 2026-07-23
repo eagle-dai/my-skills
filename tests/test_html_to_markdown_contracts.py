@@ -76,6 +76,17 @@ class ComplexityContractTests(unittest.TestCase):
             contracts.classify_complexity(counts, has_original_latex=False), 3
         )
 
+    def test_baseline_only_fields_remain_available(self) -> None:
+        counts = contracts.DomCounts(list=2, list_item=4, caption=1, heading=3)
+
+        self.assertEqual(counts.list, 2)
+        self.assertEqual(counts.list_item, 4)
+        self.assertEqual(counts.caption, 1)
+        self.assertEqual(counts.heading, 3)
+        self.assertEqual(
+            contracts.classify_complexity(counts, has_original_latex=False), 0
+        )
+
 
 class CommentLedgerContractTests(unittest.TestCase):
     def test_valid_filtering_does_not_require_markdown_count_equality(self) -> None:
@@ -89,6 +100,17 @@ class CommentLedgerContractTests(unittest.TestCase):
         self.assertEqual(
             contracts.validate_comment_ledger(entries, source_ids=["c1", "c2"]), ()
         )
+
+    def test_assert_valid_comment_ledger_accepts_valid_identity_ledger(self) -> None:
+        entries = [contracts.CommentLedgerEntry("c1", "kept", 1)]
+
+        contracts.assert_valid_comment_ledger(entries, source_ids=["c1"])
+
+    def test_assert_valid_comment_ledger_raises_on_invalid_ledger(self) -> None:
+        entries = [contracts.CommentLedgerEntry("invented", "kept", 1)]
+
+        with self.assertRaisesRegex(ValueError, "missing source comment ids"):
+            contracts.assert_valid_comment_ledger(entries, source_ids=["actual"])
 
     def test_filtered_comment_requires_reason(self) -> None:
         entries = [
@@ -142,6 +164,32 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("validate_comment_ledger(entries, source_ids=source_ids)", rules)
         self.assertIn("完整 `source_ids`", rules)
         self.assertNotIn("评论数量必须与 HTML 中的评论条目一一对应", rules)
+
+    def test_execution_docs_use_contract_selectors_and_identity_ledger(self) -> None:
+        for relative in (
+            "html-to-markdown/conversion-rules.md",
+            "html-to-markdown/checklist.md",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            with self.subTest(relative=relative):
+                self.assertIn("@contracts.py", text)
+                self.assertIn("canonicalize_candidates()", text)
+                self.assertIn(
+                    "assert_valid_comment_ledger(entries, source_ids=source_ids)",
+                    text,
+                )
+                self.assertNotIn(
+                    "kept + removed_as_noise + failed + manual_review == source_total",
+                    text,
+                )
+                self.assertNotIn('[data-slate-type="table"] OR `table`', text)
+                self.assertNotIn('[data-slate-type="pre"] OR `pre > code`', text)
+
+    def test_contract_documents_baseline_only_fields(self) -> None:
+        module_text = MODULE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("shared DOM baseline/report contract", module_text)
+        self.assertIn("do not currently change the Level 0/1 split", module_text)
 
 
 if __name__ == "__main__":
