@@ -39,6 +39,24 @@
 | `$SR^{*}$` | ✅ | 裸 `*` 被当 emphasis，MathJax 报错 |
 | `$a \ast b$` | ❌ | 已转义 |
 
+## 题注提取候选发现（缺陷 8，语义规则，非正则）
+
+判定项：给定内容块内一个候选节点，**是否分类为题注并输出**。非正则可跑，靠转换脚本的候选发现逻辑判定；此表是语义回归清单（人工/fixture 验证），改候选发现范围时必须逐条对照。
+
+规则见 conversion-rules「题注提取」：只认 `figure > figcaption` / `table > caption` / Slate image 容器内 img 已验证同级 `<div>`，排除 UI/wrapper/正文。
+
+| 候选节点 | 期望分类 | 理由 |
+|----------|:---:|------|
+| Slate image 容器内 img 同级 `<div>图 4-5　权益峰值...</div>` | ✅ 题注 | 已验证直接结构关系，命名性短文本 |
+| `<figure>` 内 `<figcaption>系统架构</figcaption>` | ✅ 题注 | 标准结构 |
+| `<table>` 内 `<caption>量化口径</caption>` | ✅ 题注 | 标准结构 |
+| 图片工具栏 `<div class="toolbar"><button/></div>` | ❌ 排除 | 含 button、UI class |
+| resize wrapper `<div><img/></div>` | ❌ 排除 | 含 img，是 wrapper 非题注 |
+| 图片后紧随的解释性长段落 `图 4-5 给出了…（多句）` | ❌ 排除 | 内容块父容器外/解释性正文，作正文保留不重复抽 |
+| 内容块父容器外的下一普通段落 | ❌ 排除 | 跨出父容器，禁止抓取 |
+
+去重项：同一 DOM 节点被普通段落遍历和题注 pass 同时触达 → `emitted_count == 1`（只输出一次，题注 pass 复用/移动而非重复输出）。
+
 ---
 
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。
