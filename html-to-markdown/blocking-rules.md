@@ -3,6 +3,8 @@
 输出 `.zip` 前，必须执行以下阻断检查。任何一项命中都必须修复或标注人工复核。
 
 > **公式相关阻断规则**（源码异常 §0.2、语义退化 §0.3、提取策略 §0.4）已移至 `formula-extraction` skill。本文档仅保留非公式部分的阻断规则。
+>
+> selector、复杂度分级、语义候选去重和评论 ledger 的可执行合同以 @contracts.py 为准。本文档只定义何时阻断，不复制实现。
 
 ---
 
@@ -20,6 +22,27 @@
 - `<section>` / `<div>` / `<article>` 中间层
 - 富文本编辑器的内部包装层
 
+### §0.0.2 候选 canonicalization
+
+CSS selector list 只负责发现候选，**原始命中数不得直接作为 DOM 基线**。同一语义块可能同时命中 wrapper 和原生节点，例如 Slate table wrapper + 内部 `<table>`。
+
+必须执行：
+
+1. 为同一语义块分配相同 `semantic_id`；
+2. 调用 @contracts.py 的 `canonicalize_candidates()`；
+3. 每个 `semantic_id` 只保留一个 canonical candidate；
+4. 表格优先原生 `<table>`，wrapper 仅作 fallback；
+5. 基线、提取和验收都使用 canonical candidate 数量。
+
+**阻断条件：**
+
+- 使用包含字面 `OR` 的字符串调用 `querySelectorAll()`
+- 直接把 selector 原始命中数记录为 DOM 基线
+- 同一 `semantic_id` 被计数或输出两次
+- wrapper 和内部原生节点被当成两个表格/代码块/列表
+
+### §0.0.3 内容完整性
+
 **阻断条件（通用）：**
 - 原 HTML 中公式元素数量 > Markdown 中公式数量
 - 原 HTML 中代码块元素数量 > Markdown 中代码块数量
@@ -29,9 +52,9 @@
 
 **任何内容块数量减少都意味着提取遗漏，必须定位并修复。**题注在内容块容器内的已验证结构关系里，只抽 `<img>`/`<table>` 会漏掉；验收按 caption ledger（见 conversion-rules「题注提取」），不能只比总数。
 
-### §0.0.2 强制计数对比
+### §0.0.4 强制计数对比
 
-提取完成后，必须将 DOM 基线计数与 Markdown 输出做逐项对比。计数对比表必须包含在工作过程中，任何差异 > 0 的阻断项必须修复。
+提取完成后，必须将 canonical DOM 基线计数与 Markdown 输出做逐项对比。计数对比表必须包含在工作过程中，任何差异 > 0 的阻断项必须修复。
 
 ---
 
@@ -153,15 +176,35 @@ unknownSymbol
 8. 回复与原评论挤在同一段
 9. 训练 log / Episode/Score/Loss 被挤成普通长段落
 
-### §0.6.1 评论数量一致性阻断
+### §0.6.1 评论 ledger 守恒阻断
 
-**评论数量必须与 HTML 中的评论条目一一对应。**
+评论验收不要求 Markdown 评论数与源评论数相等；允许过滤纯打卡、纯表情和广告，但每个源顶层评论必须在 ledger 中**恰好出现一次**。
+
+每条 ledger：
+
+```text
+source_id | status | emitted_count | reason
+```
+
+`status` 只能是：
+
+```text
+kept | removed_as_noise | failed | manual_review
+```
+
+权威校验调用 @contracts.py 的 `validate_comment_ledger()`。
 
 **阻断条件：**
-- Markdown 中评论数量 > HTML 中顶层评论容器数量 → **评论被错误拆分**（碎片化）
-- Markdown 中评论数量 < HTML 中顶层评论容器数量 → 评论丢失
 
-**评论碎片化检测（Markdown 源码扫描）：**
+- ledger 条目数不等于 `source_total`
+- `source_id` 为空或重复
+- `status` 不在允许集合
+- `kept` 的 `emitted_count != 1`
+- 非 `kept` 的 `emitted_count != 0`
+- `removed_as_noise / failed / manual_review` 没有非空 `reason`
+- 为追求数量相等而把已确认噪声评论重新输出
+
+**评论碎片化检测（仅检查 `kept` 输出）：**
 
 出现以下模式时阻断：
 - 连续评论中出现只有日期的条目
@@ -173,7 +216,7 @@ unknownSymbol
 
 ### §0.6.2 评论结构完整性
 
-每条 Markdown 评论必须包含：
+每条 `kept` Markdown 评论必须包含：
 1. 用户名（如果原始 HTML 中有）
 2. 评论正文
 3. 时间（如果原始 HTML 中有）
