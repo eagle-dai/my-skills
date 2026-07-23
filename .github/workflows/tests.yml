@@ -1,10 +1,13 @@
 name: Tests
+run-name: Tests · ${{ github.event_name }} · ${{ github.ref_name }}
 
 on:
   push:
     branches:
       - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
