@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <body>
+    <main id="normal">
+      <section data-slate-type="table" id="table-wrapper">
+        <table id="table-native">
+          <caption>Table caption</caption>
+          <tr><th>A</th></tr>
+          <tr><td>1</td></tr>
+        </table>
+      </section>
+
+      <section data-slate-type="table" id="table-wrapper-only">
+        <div>Fallback table representation</div>
+      </section>
+
+      <section data-slate-type="pre" id="code-wrapper">
+        <pre><code id="code-native">print("hello")</code></pre>
+      </section>
+
+      <section data-slate-type="pre" id="code-wrapper-only">
+        <div>Fallback code representation</div>
+      </section>
+
+      <div data-slate-type="list">
+        <div data-slate-type="list-line">Slate item</div>
+      </div>
+      <ul><li>Native item</li></ul>
+
+      <div data-slate-type="block-katex"><span class="katex">x</span></div>
+      <math><mi>y</mi></math>
+
+      <figure>
+        <img src="diagram.png" alt="diagram">
+        <figcaption>Figure caption</figcaption>
+      </figure>
+
+      <h2>Native heading</h2>
+      <div data-slate-type="heading-two">Slate heading</div>
+    </main>
+
+    <section id="ambiguous-table">
+      <div data-slate-type="table">
+        <table><tr><td>1</td></tr></table>
+        <table><tr><td>2</td></tr></table>
+      </div>
+    </section>
+
+    <section id="ambiguous-code">
+      <div data-slate-type="pre">
+        <pre><code>one</code></pre>
+        <pre><code>two</code></pre>
+      </div>
+    </section>
+  </body>
+</html>
