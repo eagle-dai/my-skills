@@ -130,27 +130,29 @@ _ALLOWED_COMMENT_STATUSES = {
 def validate_comment_ledger(
     entries: Sequence[CommentLedgerEntry],
     *,
-    source_total: int,
+    source_ids: Sequence[str],
 ) -> tuple[str, ...]:
-    """Validate comment conservation without requiring output-count equality."""
+    """Validate exact source-comment conservation without output-count equality."""
 
     errors: list[str] = []
-    if source_total < 0:
-        return ("source_total must be >= 0",)
+    expected_ids = list(source_ids)
+    expected_seen: set[str] = set()
+    for source_id in expected_ids:
+        if not source_id:
+            errors.append("source comment id must not be empty")
+        elif source_id in expected_seen:
+            errors.append(f"duplicate source comment id: {source_id}")
+        else:
+            expected_seen.add(source_id)
 
-    if len(entries) != source_total:
-        errors.append(
-            f"ledger entry count {len(entries)} does not equal source_total {source_total}"
-        )
-
-    seen: set[str] = set()
+    ledger_seen: set[str] = set()
     for entry in entries:
         if not entry.source_id:
             errors.append("comment source_id must not be empty")
-        elif entry.source_id in seen:
+        elif entry.source_id in ledger_seen:
             errors.append(f"duplicate comment source_id: {entry.source_id}")
         else:
-            seen.add(entry.source_id)
+            ledger_seen.add(entry.source_id)
 
         if entry.status not in _ALLOWED_COMMENT_STATUSES:
             errors.append(f"unknown comment status for {entry.source_id}: {entry.status}")
@@ -174,14 +176,21 @@ def validate_comment_ledger(
         if not entry.reason.strip():
             errors.append(f"{entry.status} comment {entry.source_id} requires a reason")
 
+    missing = expected_seen - ledger_seen
+    unexpected = ledger_seen - expected_seen
+    if missing:
+        errors.append(f"missing source comment ids: {sorted(missing)}")
+    if unexpected:
+        errors.append(f"unexpected source comment ids: {sorted(unexpected)}")
+
     return tuple(errors)
 
 
 def assert_valid_comment_ledger(
     entries: Sequence[CommentLedgerEntry],
     *,
-    source_total: int,
+    source_ids: Sequence[str],
 ) -> None:
-    errors = validate_comment_ledger(entries, source_total=source_total)
+    errors = validate_comment_ledger(entries, source_ids=source_ids)
     if errors:
         raise ValueError("; ".join(errors))
