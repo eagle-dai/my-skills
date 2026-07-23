@@ -1,227 +1,177 @@
 # 验证 Checklist 与输出报告
 
-本 checklist 供主 agent 在 sub agent 返回后执行独立验收。selector、复杂度分级、语义候选去重和评论 ledger 的可执行合同以 @contracts.py 为准。
+本 checklist 供主 agent 在 sub agent 返回后独立验收。selector、复杂度分级、DOM identity、候选去重和评论 ledger 以 @contracts.py 为准；Markdown fence 以 @markdown_fences.py 为准；图片判定以 @image_disposition.py 为准。
 
-## 自动结构检查
+## 1. 基线建立
 
-### 基线建立
+在提取前通过 Playwright 对整个正文容器执行 `querySelectorAll()`，不能只遍历直接子节点。候选发现后分配 `semantic_id` 并调用 `canonicalize_candidates()`；selector 原始命中数不能直接作为基线。
 
-在提取前通过 Playwright 对整个主体容器执行 `querySelectorAll`。不要只遍历直接子节点。候选发现后必须按 `semantic_id` 调用 `canonicalize_candidates()`，原始 selector 命中数不得直接作为基线。
+| 检查项 | HTML 侧 | 阻断条件 |
+|---|---|---|
+| 块级公式 | canonical 公式候选按 display 分类 | Markdown 输出数 `< N_formula_block` |
+| 行内公式 | canonical 候选排除 display | 任何源公式无 ledger/输出对应项 |
+| 表格 | `[data-slate-type="table"], table` 后 canonicalize | Markdown/HTML table 数 `< N_table` |
+| 列表 | `[data-slate-type="list"], ul, ol` 后 canonicalize | 容器数量或 ordered/unordered 类型不一致且无解释 |
+| 列表项 | `[data-slate-type="list-line"], li` 后 canonicalize | Markdown 列表项数 `< N_list_item` |
+| 图片 | `img` + image ledger | 任一源图缺 ledger，或应保留图未输出一次 |
+| 代码块 | `[data-slate-type="pre"], pre > code` 后 canonicalize | Markdown 代码块数 `< N_codeblock` |
+| 标题 | Slate heading + `h1..h6` | 任一源标题无输出对应项且无原因 |
+| 段落 | 站点段落 selector + `p` | 任一正文段落未映射到输出/过滤 ledger |
+| 评论 | 顶层评论 `source_ids` | identity ledger 校验失败 |
 
-### 强制计数对比
+Slate 代码块必须使用 `[data-slate-type="pre"]`。不得在验收阶段改成 `[data-slate-type="code-block"]`。
 
-| 检查项 | DOM 查询/分类方式 | 阻断条件 |
-|--------|-------------------|----------|
-| 块级公式 | `CSS_SELECTORS["formula"]` 发现 canonical 公式候选，再按 display 容器/Slate 类型分类 | HTML > Markdown |
-| 行内公式 | `CSS_SELECTORS["formula"]` 发现 canonical 公式候选，再排除 display 后分类 | 显著减少 |
-| 表格 | `[data-slate-type="table"], table`，随后 canonicalize wrapper/native | HTML > Markdown |
-| 有序/无序列表 | 有序判定规则 | marker 类型或数量不一致 |
-| 列表项 | `[data-slate-type="list-line"], li`，随后 canonicalize | HTML > Markdown |
-| 图片 | `img`（排除装饰图后） | HTML > Markdown |
-| 代码块 | `[data-slate-type="pre"], pre > code`，随后 canonicalize wrapper/native | HTML > Markdown |
-| 标题 | `[data-slate-type^="heading"], h1, h2, h3, h4, h5, h6` | 差异需解释 |
-| 段落 | 站点 paragraph selector 与 `p` 的合法 CSS selector list | 大幅减少 |
-| 评论 | 顶层评论容器 + 完整稳定 `source_ids` | identity ledger 校验失败 |
+## 2. Markdown 侧结构扫描
 
-**权威约束：** Slate 代码块使用 `[data-slate-type="pre"]`。不得在验收阶段改用 `[data-slate-type="code-block"]`，否则会把真实代码块基线算成 0。selector 表中的逗号是 CSS selector list 语法，不得把自然语言 `OR` 拼进 `querySelectorAll()`。
+先验证并剥离 fenced code block：
 
-### Markdown 侧计数
+```python
+from markdown_fences import scan_fenced_blocks, strip_fenced_blocks
 
-结构扫描前排除 fenced code block，避免代码注释或示例被误算为标题/列表。
+scan_fenced_blocks(markdown)
+no_code = strip_fenced_blocks(markdown)
+```
 
-简单三反引号正则只适用于无嵌套场景；存在 4+ 反引号或 blockquote/list 嵌套时，按 @notebook-and-virtualized.md 的 fence 规则或使用 Markdown parser。
+标题、列表、blockquote 和段落计数都基于 `no_code`。不得使用 fence 行数奇偶、三反引号跨行正则或只支持 backtick 的脚本。
 
-## 专项检查
+## 3. 表格
 
-### 表格
+- canonical HTML 表格数与 Markdown/HTML table 输出数一致；
+- Slate wrapper 与内部 `<table>` 使用同一 `semantic_id`；
+- 原生 `<table>` 优先，wrapper 只作 fallback；
+- 行列、表头、顺序一致；
+- rowspan/colspan 无法表达时使用 fenced HTML 或人工复核；
+- 表标题与表格之间保留空行；
+- 至少局部截图抽检一张复杂表格。
 
-- canonical HTML 表格基线与 Markdown/HTML table 输出数量一致
-- Slate 外层 table wrapper 与内部标准 `<table>` 使用同一 `semantic_id`，不得重复计数
-- canonical candidate 优先原生 `<table>`，wrapper 仅作 fallback
-- 行数、列数、表头、顺序一致
-- rowspan/colspan 无法等价表达时使用 fenced HTML 或人工复核
-- 表标题与表格之间保留空行
-- 截图抽检至少一张复杂表格
+## 4. 代码块与 Notebook
 
-### 代码块
+- 代码块数量与 canonical 基线一致；
+- 语言标签有证据，不确定时使用 `text`；
+- NBSP 已替换；
+- code cell 与 markdown 内嵌代码块分开计数；
+- `scan_fenced_blocks()` 无错误；
+- `strip_fenced_blocks()` 后代码注释不再被误算为标题；
+- output 未被 inner fence 截断；
+- lazy-load IFrame/img 已回填或明确标注。
 
-- 基线 selector、`semantic_id` 生成和 canonicalization 与 Phase 1 相同
-- 代码块数量一致
-- 语言标签合理；不确定时为 `text`
-- 代码内部 NBSP 已清理
-- 代码注释未被误算为标题
-- Notebook code cell 与 markdown 内嵌 code block 分开计数
+详见 @notebook-and-virtualized.md 和 @fence-validation.md。
 
-### 列表
+## 5. 列表
 
-- 有序/无序/嵌套列表数量对比
-- 编号证据可能在 item 子树
-- 双 marker 扫描
-- 代码块行号不误作列表
-- 列表项总数一致
+- ordered/unordered/嵌套列表数量对比；
+- 父列表与嵌套子列表具有不同 `semantic_id`；
+- Slate list wrapper 与唯一顶层 `ul/ol` 共享身份；
+- list-line wrapper 与原生 `li` 共享身份；
+- 编号证据可能位于 item 子树；
+- 禁止双 marker；
+- 代码块行号不误作列表；
+- 列表项总数一致。
 
-### 评论
+## 6. 评论
 
-转换前记录源顶层评论的完整稳定 `source_ids`。为每条源评论记录：
+转换前记录源顶层评论完整稳定 `source_ids`。每条源评论记录：
 
 ```text
 source_id | status | emitted_count | reason
 ```
 
-其中 `status` 只能是：
+`status` 只能为：
 
 ```text
 kept | removed_as_noise | failed | manual_review
 ```
 
-交付前强制执行：
+交付前执行：
 
 ```python
 assert_valid_comment_ledger(entries, source_ids=source_ids)
 ```
 
-检查：
+- ledger ID 集合与源 ID 集合完全相等；
+- `kept` 输出一次；
+- 其他状态输出 0 次并写明原因；
+- 作者回复、代码、日志、公式、图片、链接和 blockquote 排版正确。
 
-- ledger 的 `source_id` 集合与源 `source_ids` 完全相等
-- `kept` 的 `emitted_count == 1`
-- 非 `kept` 的 `emitted_count == 0`
-- `removed_as_noise / failed / manual_review` 有非空 `reason`
-- 允许有理由地过滤噪声，不要求 Markdown 评论数量等于源评论数量
-- 作者回复、代码、日志、公式、图片、链接和 blockquote 排版正确
+## 7. 图片与二维码
 
-### 图片
+每张源图片建立 image ledger：
 
-- 相对路径有效
-- 文件真实存在
-- 无 base64 直接嵌入
-- 顺序和图注对应
-- **每张图片/表格的题注（figcaption / Slate image 子 div / caption）已提取，未静默丢失**
-- 删除的图片确为头像/广告/装饰图
-- 压缩后文字可读
+```text
+source_id | decision | emitted_count | reason | decoded_url
+```
 
-#### 去水印
+交付前执行：
 
-- 默认应为“未执行”
-- 只有用户明确要求时才允许执行
-- 必须存在原图副本
-- 报告列出处理文件、方法和 bbox
-- 原尺寸/放大抽检，确认水印外内容未被擦除
-- 未满足任一条件 → 阻断交付处理图，改用原图
+```python
+assert_valid_image_ledger(entries, source_ids=source_ids)
+```
 
-### 公式
+- 正文或有内容关系的二维码必须保留；
+- 分享/关注 UI 中且与正文无关的二维码才可 `remove_as_ui`；
+- 无法判断的二维码为 `manual_review`，原图仍输出一次；
+- 删除项必须有明确 UI/装饰证据；
+- 相对路径有效，文件真实存在，无 base64 直接嵌入；
+- 图片顺序和题注对应；
+- 压缩后文字仍可读。
+
+### 去水印
+
+- **默认**不执行；
+- 只有用户**明确要求**才允许；
+- 必须保留原图副本；
+- 报告处理文件、方法和 bbox；
+- 原尺寸/放大抽检，确认正文未被擦除；
+- 任一条件不满足时使用原图。
+
+## 8. 题注与居中
+
+短题注可与内容块同组；解释性长段落保持正文左对齐。
+
+- **短题注示例：** `图 D-1　系统架构`，紧邻图片且仅用于命名，可与图片同组居中。
+- **说明段落示例：** `图 D-1 给出了系统架构。它展示了……`，包含多句解释，保持正文左对齐。
+- 历史样例中曾出现 **200–267 字** 的“图/公式开头说明段落”；长度只是辅助信号，最终判断其功能。
+
+每个 confirmed caption 必须 `emitted_count == 1`，不得静默丢失或重复输出。
+
+## 9. 公式
 
 引用 `formula-extraction` skill：
 
-- `.katex-error == 0`
-- `mstyle[mathcolor="#cc0000"] == 0`
-- 捕获 warning
-- 渲染后公式数与基线对比
-- 原始结构与输出的分式、上下标、矩阵等语义一致
-- 上下标方向一致
-- 双反斜杠命令未裸露
+- `.katex-error == 0`；
+- `mstyle[mathcolor="#cc0000"] == 0`；
+- 捕获 warning；
+- 渲染后公式数不得少于源 canonical 公式数；
+- 分式、上下标、矩阵和编号语义一致；
+- 未知 KaTeX 结构 fail closed；
+- 合法 `\simeq`、`\simneqq` 不得被拆分；
+- 只有 parser parts 明确为 `["\sim", "p"]` 时才输出 `\sim p`。
 
-#### 命令边界
+## 10. GitHub / Markdown 边界
 
-- `\simeq`、`\simneqq` 等合法命令不得被拆分
-- 只有 parser parts 明确为 `["\sim", "p"]` 时才输出 `\sim p`
-- 禁止在最终字符串上运行 `\\sim([A-Za-z...])`
-- 未知 KaTeX 结构必须 fail-closed；`textContent` 只能用于诊断
+### 行内数学
 
-### 块级居中
+首选在 CJK/全角标点与 `$` 之间插入 **ASCII 空格**。该方案在 **GitHub 与 VS Code** 都能渲染；**backtick 数学变体**虽然可在 GitHub 工作，但 VS Code 不识别，**因此不采用**。
 
-记录每个候选块的：
+### 强调
 
-```text
-类型
-原始居中证据
-Markdown 输出方式
-渲染结果
-```
+- 闭合 `**/*/_` 后紧贴字母、数字或 CJK 时检查；
+- 紧贴标点的合法场景不得误修；
+- 禁用 `\S` 宽类；
+- 清理过度插入空格；
+- 扫描相邻强调产生的 `****`；
+- 命中时先移除该行已有强调定界符，再按语义重包；**不要把四个星号机械替换成两个**。
 
-短题注可与内容块同组；长说明段落保持正文对齐。
+## 11. Playwright 渲染验证
 
-- 短题注示例：`图 D-1　系统架构`，紧邻图片且仅用于命名，可与图片同组居中。
-- 说明段落示例：`图 D-1 给出了系统架构。它展示了……`，后续包含多句解释，即使以“图 D-1”开头也保持正文左对齐。
-- 历史样例中曾出现 200–267 字的“图/公式开头说明段落”；长度只是辅助信号，最终以“命名性题注”还是“解释性正文”的功能判断。
+1. 使用统一固定版本的 `render.html`；
+2. 检查 KaTeX error/warning；
+3. 对比渲染后公式数量与源 canonical 数；
+4. 整页截图；
+5. 公式、列表、表格、评论、二维码和处理过的图片做局部截图；
+6. 发现问题后局部修复，并重新执行受影响的计数、scanner、ledger 和截图检查。
 
-### Markdown 渲染错误文本
-
-渲染后扫描：
-
-```text
-KaTeX parse error
-ParseError
-Undefined control sequence
-Double subscript
-Double superscript
-'_' allowed only in math mode
-mathcalN
-mathbbE
-```
-
-### Notebook 类
-
-详见 @notebook-and-virtualized.md：
-
-- cell 总数对齐
-- 每个 code cell 都能提取代码
-- NBSP 无残留
-- fence 真正配对，不只看总数
-- output 未被 inner fence 截断
-- 空 iframe/img 已回填或标注
-- output 保留/跳过/回填统计完整
-
-## Playwright 渲染验证
-
-### Step 1：公式错误
-
-1. 使用统一、固定版本的 `render.html`
-2. Markdown 解析前保护数学段
-3. `.katex-error == 0`
-4. `mstyle[mathcolor="#cc0000"] == 0`
-5. 捕获 KaTeX console warning
-6. 定位错误公式并循环修复
-
-### Step 1.5：公式数量
-
-渲染后 `.katex` 数量与 `N_formula_block + N_formula_inline` 对比。显著减少 → 阻断。
-
-### Step 1.6：GitHub GFM
-
-目标平台含 GitHub 时检查：
-
-- 行内 `$` 外侧紧贴 CJK/全角标点
-- 数学段未转义 `*`
-- `\text{}` 内 `_`
-- 双反斜杠命令
-
-**行内 `$` 的首选修法：** 在 CJK/全角标点与 `$` 之间插入 ASCII 空格。实测该方案在 GitHub 与 VS Code 都能渲染；backtick 数学变体虽然可在 GitHub 工作，但 VS Code 不识别，因此不采用，避免为一个平台修复后破坏另一个平台。
-
-### Step 1.7：强调边界
-
-所有 level 强制：
-
-- 闭合 `**/*/_` 后紧贴字母、数字、CJK 字符 → 检查
-- 紧贴 punctuation 的合法场景不得误修
-- 禁用 `\S` 宽类
-- 清理 `**结论** 。` 这类误插空格
-- 扫描 `****` 拼接
-- 命中相邻加粗产生的 `****` 时，先移除该行已有加粗定界符，再按语义段重新包一层 `**...**`；不要把四个星号机械替换成两个，否则仍可能错误合并两段强调内容
-
-### Step 2：截图对比
-
-- 原 HTML 与 Markdown 渲染整页截图
-- 公式、列表、**表格**、评论、处理过的图片做局部截图
-- 做语义对比，不要求像素一致
-- 表格/列表结构在整页图中不明显，必须局部检查
-
-## 修复循环
-
-发现问题 → 局部修复 → 重新执行受影响的计数、渲染和截图检查。
-
-## 最终报告模板
-
-### 通用部分
+## 12. 最终报告模板
 
 ```text
 复杂度级别：
@@ -230,46 +180,17 @@ mathbbE
 
 DOM 基线 / Markdown 实际：
 - 块级公式：
-- 行内公式：
+- 行内公式 ledger：
 - 表格：
 - 列表 / 列表项：
-- 图片：
+- 图片 ledger：
 - 代码块：
 - 标题：
+- 段落 ledger：
 - 评论 ledger：
 
-图片处理：
-- 去水印是否执行（默认否）：
-- 用户明确要求：
-- 原图副本：
-- 压缩：
-- 人工抽检：
-
-浏览器渲染：
-- 是否执行：
-- 发现差异：
-- 是否修复：
-- 人工复核项：
-```
-
-### 公式部分（Level 2-3）
-
-```text
-公式来源：
-成功提取：
-截图 fallback：
-KaTeX error / warning：
-渲染数量 vs 基线：
-语义退化：
-上下标方向：
-未知结构 fail-closed：
-合法命令误拆检查：
-```
-
-### 批量汇总
-
-```text
-| 序号 | 文件名 | 标题 | 表格 | 图片 | 代码块 | 列表项 | 评论 | 公式 | 问题 |
-|------|--------|------|------|------|--------|--------|------|------|------|
-| 1    | ...    | ...  | N/M  | N/M  | N/M    | N/M    | ledger | N/M | ... |
+Fence：scan_fenced_blocks 结果
+图片：保留 / remove_as_ui / manual_review
+去水印：默认否；用户是否明确要求；原图副本；抽检
+浏览器渲染：执行情况、差异、修复、人工复核项
 ```
