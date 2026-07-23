@@ -1,29 +1,29 @@
 # 验证 Checklist 与输出报告
 
-本 checklist 供主 agent 在 sub agent 返回后执行独立验收。
+本 checklist 供主 agent 在 sub agent 返回后执行独立验收。selector、复杂度分级、语义候选去重和评论 ledger 的可执行合同以 @contracts.py 为准。
 
 ## 自动结构检查
 
 ### 基线建立
 
-在提取前通过 Playwright 对整个主体容器执行 `querySelectorAll`。不要只遍历直接子节点。
+在提取前通过 Playwright 对整个主体容器执行 `querySelectorAll`。不要只遍历直接子节点。候选发现后必须按 `semantic_id` 调用 `canonicalize_candidates()`，原始 selector 命中数不得直接作为基线。
 
 ### 强制计数对比
 
-| 检查项 | DOM 查询方式 | 阻断条件 |
-|--------|-------------|----------|
-| 块级公式 | `[data-slate-type="block-katex"]` OR `.katex-display` | HTML > Markdown |
-| 行内公式 | inline-katex OR 非 display `.katex` | 显著减少 |
-| 表格 | `[data-slate-type="table"]` OR `table` | HTML > Markdown |
+| 检查项 | DOM 查询/分类方式 | 阻断条件 |
+|--------|-------------------|----------|
+| 块级公式 | `CSS_SELECTORS["formula"]` 发现 canonical 公式候选，再按 display 容器/Slate 类型分类 | HTML > Markdown |
+| 行内公式 | `CSS_SELECTORS["formula"]` 发现 canonical 公式候选，再排除 display 后分类 | 显著减少 |
+| 表格 | `[data-slate-type="table"], table`，随后 canonicalize wrapper/native | HTML > Markdown |
 | 有序/无序列表 | 有序判定规则 | marker 类型或数量不一致 |
-| 列表项 | `[data-slate-type="list-line"]` OR `li` | HTML > Markdown |
+| 列表项 | `[data-slate-type="list-line"], li`，随后 canonicalize | HTML > Markdown |
 | 图片 | `img`（排除装饰图后） | HTML > Markdown |
-| 代码块 | `[data-slate-type="pre"]` OR `pre > code` | HTML > Markdown |
-| 标题 | heading slate type OR `h1-h6` | 差异需解释 |
-| 段落 | paragraph slate type OR `p` | 大幅减少 |
-| 评论 | 顶层评论容器 | ledger 不守恒 |
+| 代码块 | `[data-slate-type="pre"], pre > code`，随后 canonicalize wrapper/native | HTML > Markdown |
+| 标题 | `[data-slate-type^="heading"], h1, h2, h3, h4, h5, h6` | 差异需解释 |
+| 段落 | 站点 paragraph selector 与 `p` 的合法 CSS selector list | 大幅减少 |
+| 评论 | 顶层评论容器 + 完整稳定 `source_ids` | identity ledger 校验失败 |
 
-**权威约束：** Slate 代码块使用 `[data-slate-type="pre"]`。不得在验收阶段改用 `[data-slate-type="code-block"]`，否则会把真实代码块基线算成 0。
+**权威约束：** Slate 代码块使用 `[data-slate-type="pre"]`。不得在验收阶段改用 `[data-slate-type="code-block"]`，否则会把真实代码块基线算成 0。selector 表中的逗号是 CSS selector list 语法，不得把自然语言 `OR` 拼进 `querySelectorAll()`。
 
 ### Markdown 侧计数
 
@@ -35,8 +35,9 @@
 
 ### 表格
 
-- HTML 表格基线与 Markdown/HTML table 输出数量一致
-- Slate 外层 table wrapper 与内部标准 `<table>` 不得重复计数
+- canonical HTML 表格基线与 Markdown/HTML table 输出数量一致
+- Slate 外层 table wrapper 与内部标准 `<table>` 使用同一 `semantic_id`，不得重复计数
+- canonical candidate 优先原生 `<table>`，wrapper 仅作 fallback
 - 行数、列数、表头、顺序一致
 - rowspan/colspan 无法等价表达时使用 fenced HTML 或人工复核
 - 表标题与表格之间保留空行
@@ -44,7 +45,7 @@
 
 ### 代码块
 
-- 基线选择器与 Phase 1 相同
+- 基线 selector、`semantic_id` 生成和 canonicalization 与 Phase 1 相同
 - 代码块数量一致
 - 语言标签合理；不确定时为 `text`
 - 代码内部 NBSP 已清理
@@ -61,24 +62,32 @@
 
 ### 评论
 
-为每条源评论记录：
+转换前记录源顶层评论的完整稳定 `source_ids`。为每条源评论记录：
 
 ```text
-source_id
-kept
-removed_as_noise
-failed
-manual_review
-reason
+source_id | status | emitted_count | reason
 ```
 
-守恒条件：
+其中 `status` 只能是：
 
 ```text
-kept + removed_as_noise + failed + manual_review == source_total
+kept | removed_as_noise | failed | manual_review
 ```
 
-检查作者回复、代码、日志、公式、图片、链接和 blockquote 排版。
+交付前强制执行：
+
+```python
+assert_valid_comment_ledger(entries, source_ids=source_ids)
+```
+
+检查：
+
+- ledger 的 `source_id` 集合与源 `source_ids` 完全相等
+- `kept` 的 `emitted_count == 1`
+- 非 `kept` 的 `emitted_count == 0`
+- `removed_as_noise / failed / manual_review` 有非空 `reason`
+- 允许有理由地过滤噪声，不要求 Markdown 评论数量等于源评论数量
+- 作者回复、代码、日志、公式、图片、链接和 blockquote 排版正确
 
 ### 图片
 
