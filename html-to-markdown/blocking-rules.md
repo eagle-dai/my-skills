@@ -24,9 +24,10 @@
 - 原 HTML 中公式元素数量 > Markdown 中公式数量
 - 原 HTML 中代码块元素数量 > Markdown 中代码块数量
 - 原 HTML 中图片数量（排除装饰图后）> Markdown 中图片引用数量
-- 原 HTML 中题注数量（figcaption / Slate image 子 div / `<caption>`）> Markdown 中题注数量
+- 源侧 confirmed caption 数（`figure > figcaption` / `table > caption` / Slate image 已验证同级题注）> Markdown 中题注输出数
+- 任一 confirmed caption `emitted_count != 1`（丢失或重复输出）
 
-**任何内容块数量减少都意味着提取遗漏，必须定位并修复。**题注常作内容块子节点/同级节点，只抽 `<img>`/`<table>` 会漏掉。
+**任何内容块数量减少都意味着提取遗漏，必须定位并修复。**题注在内容块容器内的已验证结构关系里，只抽 `<img>`/`<table>` 会漏掉；验收按 caption ledger（见 conversion-rules「题注提取」），不能只比总数。
 
 ### §0.0.2 强制计数对比
 
