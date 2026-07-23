@@ -1,254 +1,265 @@
 # 验证 Checklist 与输出报告
 
-本 checklist 供主 agent 在 sub agent 返回结果后执行最终质量验证。
+本 checklist 供主 agent 在 sub agent 返回后执行独立验收。
 
-## 自动结构检查（强制量化对比）
+## 自动结构检查
 
-### 基线建立（提取前）
+### 基线建立
 
-在提取内容之前，必须通过 DOM 查询建立原始 HTML 的结构基线计数。查询时**必须在整个主体容器中搜索**（`querySelectorAll`），不能仅遍历直接子节点。
+在提取前通过 Playwright 对整个主体容器执行 `querySelectorAll`。不要只遍历直接子节点。
 
-### 强制计数对比表（提取后）
+### 强制计数对比
 
-| 检查项 | DOM 查询方式 | HTML 基线 | Markdown 实际 | 差异 | 阻断? |
-|--------|-------------|-----------|---------------|------|-------|
-| 块级公式 | `[data-slate-type="block-katex"]` 或 `.katex-display` | N | M | N-M | **差异>0 阻断** |
-| 行内公式 | `[data-slate-type="inline-katex"]` 或 `.katex:not(.katex-display *)` | N | M | N-M | 差异>2 警告 |
-| 有序列表容器 | 见有序列表判定规则 | N | M | N-M | **差异>0 阻断** |
-| 无序列表容器 | 列表总数 - 有序列表数 | N | M | N-M | 差异>0 警告 |
-| 列表项（总计） | `li` 或 `[data-slate-type="list-line"]` | N | M | N-M | **差异>0 阻断** |
-| 有序列表项 | 有序列表容器内的 list-line 数量 | N | M | N-M | **差异>0 阻断** |
-| 无序列表项 | 无序列表容器内的 list-line 数量 | N | M | N-M | **差异>0 阻断** |
-| 图片 | `img`（排除装饰图后） | N | M | N-M | **差异>0 阻断** |
-| 代码块 | `[data-slate-type="code-block"]` 或 `pre > code` | N | M | N-M | **差异>0 阻断** |
-| 标题 | `h1-h6` 或 heading slate types | N | M | N-M | 差异>0 警告 |
-| 段落 | paragraph slate types 或 `<p>` | N | M | N-M | 差异>3 警告 |
-| 评论 | 评论容器内评论节点 | N | M | N-M | 差异>0 警告 |
+| 检查项 | DOM 查询方式 | 阻断条件 |
+|--------|-------------|----------|
+| 块级公式 | `[data-slate-type="block-katex"]` OR `.katex-display` | HTML > Markdown |
+| 行内公式 | inline-katex OR 非 display `.katex` | 显著减少 |
+| 表格 | `[data-slate-type="table"]` OR `table` | HTML > Markdown |
+| 有序/无序列表 | 有序判定规则 | marker 类型或数量不一致 |
+| 列表项 | `[data-slate-type="list-line"]` OR `li` | HTML > Markdown |
+| 图片 | `img`（排除装饰图后） | HTML > Markdown |
+| 代码块 | `[data-slate-type="pre"]` OR `pre > code` | HTML > Markdown |
+| 标题 | heading slate type OR `h1-h6` | 差异需解释 |
+| 段落 | paragraph slate type OR `p` | 大幅减少 |
+| 评论 | 顶层评论容器 | ledger 不守恒 |
 
-**阻断项差异>0 时，必须逐一定位丢失的元素并修复或标注人工复核。**
+**权威约束：** Slate 代码块使用 `[data-slate-type="pre"]`。不得在验收阶段改用 `[data-slate-type="code-block"]`，否则会把真实代码块基线算成 0。
 
-**Markdown 计数注意事项：**
-- 计数必须**排除评论区和代码块内部**——所有 grep 验证脚本必须先剥离 fenced code block：
-  ```python
-  no_code = re.sub(r'```.*?\n.*?```', '', text, flags=re.DOTALL)
-  ```
-  否则代码注释 `# foo` 会被当作 H1 命中，得到虚高的标题计数。
-- 列表项正则应精确匹配行首 `^(?:- |\d+\. )`
-- 段落内容恰好以列表标记开头时为误报，需人工确认
+### Markdown 侧计数
 
-### 有序列表判定规则
+结构扫描前排除 fenced code block，避免代码注释或示例被误算为标题/列表。
 
-`data-code-line-number` 属性可能出现在以下位置：
-1. `list-line` 元素自身
-2. `list-line` 的直接子 div
-3. `list-line` 子树中的任意后代节点
+简单三反引号正则只适用于无嵌套场景；存在 4+ 反引号或 blockquote/list 嵌套时，按 @notebook-and-virtualized.md 的 fence 规则或使用 Markdown parser。
 
-判定方法：
-```text
-对每个 list 容器：
-  遍历其 list-line 子节点
-    对每个 list-line，执行 querySelector('[data-code-line-number]')
-    如果找到 → 记录编号值
-    如果全部 list-line 都有连续编号 → 有序列表
-  同时检查 CSS 规则：
-    遍历 document.styleSheets 查找 content: attr(data-code-line-number)"."
-    如果该 CSS class 出现在当前 list-line 子树中 → 有序列表
-```
+## 专项检查
 
-**注意：** 有序证据（属性和 CSS class）可能在列表项的子元素上而非列表项本身。判定时须搜索子树。
+### 表格
 
----
+- HTML 表格基线与 Markdown/HTML table 输出数量一致
+- Slate 外层 table wrapper 与内部标准 `<table>` 不得重复计数
+- 行数、列数、表头、顺序一致
+- rowspan/colspan 无法等价表达时使用 fenced HTML 或人工复核
+- 表标题与表格之间保留空行
+- 截图抽检至少一张复杂表格
 
-## 专项检查清单
+### 代码块
 
-### 评论区专项
-- 原 HTML 是否存在评论区
-- HTML 中顶层评论容器数量
-- Markdown 中评论数量是否与顶层容器数量一致
-- 作者/讲师/官方回复数量
-- 评论中代码/日志/公式/图片/链接
-- 回复是否 blockquote 格式
-- 训练日志是否 fenced code block
-- 碎片化扫描：是否存在只有日期/只有用户名/只有归属地的独立"评论"
+- 基线选择器与 Phase 1 相同
+- 代码块数量一致
+- 语言标签合理；不确定时为 `text`
+- 代码内部 NBSP 已清理
+- 代码注释未被误算为标题
+- Notebook code cell 与 markdown 内嵌 code block 分开计数
 
-### 评论排版专项
-- 不得出现 `**回复：** 作者回复：...`
-- 回复必须用 blockquote 格式（`>` 前缀）
-- 多回复拆成多个 blockquote 块
-- 评论 `# 注释` 不误渲染为标题
-- 连续训练日志为 fenced code block
+### 列表
 
-### 列表结构专项
 - 有序/无序/嵌套列表数量对比
-- `data-code-line-number` + CSS 证据
-- CSS bullet marker 类型
+- 编号证据可能在 item 子树
 - 双 marker 扫描
 - 代码块行号不误作列表
+- 列表项总数一致
 
-### 列表 marker 专项
-对每个富文本伪列表记录：父节点类型、列表项数量、marker 来源、原始值、是否连续、判定结果、Markdown 输出 marker、是否双 marker、是否需要人工复核
+### 评论
 
-### 公式验证专项（引用 formula-extraction skill）
-- KaTeX 程序化错误检测（`.katex-error` + `mstyle[mathcolor]` 均为 0）
-- 渲染后公式数量 vs DOM 基线
-- 公式源码异常扫描（见 formula-extraction skill）
-- 语义退化检测（见 formula-extraction skill）
-- 上下标方向一致性
-
-### LaTeX 命令转义专项
-- 行内公式中 `\\[A-Za-z]+` → 一律阻断
-- 块级公式中 `\\[A-Za-z]+` → 复核（多行换行 `\\` 除外）
-
-### 块级居中专项
-对每个可能居中的块级元素：
+为每条源评论记录：
 
 ```text
-块序号 / 元素类型（公式块/图片/图表/图注/短句/署名）
-原始居中证据 / 是否居中
-Markdown 输出方式 / 渲染是否居中
-是否原文居中但输出靠左 / 是否需要人工复核
+source_id
+kept
+removed_as_noise
+failed
+manual_review
+reason
 ```
 
-### Markdown 渲染错误文本检查
-渲染 → 读取 innerText → 扫描 ParseError / Double subscript / mathcalN / mathbbE 等
+守恒条件：
 
-### 图片路径检查
-相对路径 / 指向 `files/<zip-同名>/` / 文件存在 / 无无关图片 / 图注紧跟图片 / 顺序一致 / 居中图片保留居中
+```text
+kept + removed_as_noise + failed + manual_review == source_total
+```
 
-### 代码块检查
-- 疑似代码/日志/命令/配置/堆栈/训练日志是否裸露在普通段落（含评论区）
-- 代码块是否标注了语言
+检查作者回复、代码、日志、公式、图片、链接和 blockquote 排版。
 
-### Notebook 类专项（仅 notebook 类页面）
-详见 @notebook-and-virtualized.md。验证要点：
+### 图片
 
-- **Cell 总数对齐**：DOM cell 容器数 == markdown_count + code_count，差异>0 阻断
-- **Code cell 完整性**：每个 code cell 都成功提取代码（无空 cell、无 ⚠️ 标记），任一空 cell 阻断
-- **NBSP 残留**：markdown 中不得出现 `\xa0`，否则代码不可执行 → 阻断
-- **fence 配对**：3-反引号和 4-反引号分两路统计，各自必须为偶数（奇偶配对校验为准；4-反引号 outer 升级会包住 inner 3-反引号，使总数等式不可解，详见 notebook-and-virtualized.md §3.2 / §5）
-- **Output blockquote 渲染**：含 inner ` ``` ` 的 Output 必须用 4-反引号 outer fence，否则会被截断（Playwright 抽查含 inner fence 的 cell：blockquote 内单一 `<pre>` + 末尾文本到位）
-- **空 IFrame/img 回填**：从 cell 源代码或 `data-src` 反推 URL；未回填的需在报告标注
-- **Output 处理报告**：输出保留数 / 跳过数 / 回填数 三项必须明示
+- 相对路径有效
+- 文件真实存在
+- 无 base64 直接嵌入
+- 顺序和图注对应
+- 删除的图片确为头像/广告/装饰图
+- 压缩后文字可读
 
----
+#### 去水印
 
-## Playwright 渲染验证（强制，不可跳过）
+- 默认应为“未执行”
+- 只有用户明确要求时才允许执行
+- 必须存在原图副本
+- 报告列出处理文件、方法和 bbox
+- 原尺寸/放大抽检，确认水印外内容未被擦除
+- 未满足任一条件 → 阻断交付处理图，改用原图
 
-> **主/子分工**：Step 1（`.katex-error`）、Step 1.6（GitHub 边界）主 agent **必须独立复验，不采信 sub agent 自报结论**——实测出现过 sub 报 error=0、主复验 error=1。分工契约见 SKILL.md「主/子 agent 验证分工契约」。主/子共用同一 render.html 模板。
+### 公式
 
-### Step 1: 程序化 KaTeX 错误检测
+引用 `formula-extraction` skill：
 
-1. 创建 `render.html` 验证页面（KaTeX CDN + marked.js，通过 `?file=` 加载 Markdown）
-2. **render.html 必须在 Markdown 解析前保护数学公式**（占位符替换）
-3. 用 Playwright 打开渲染页面
-4. 执行 `document.querySelectorAll('.katex-error').length` — 目标 0
-5. 执行 `document.querySelectorAll('mstyle[mathcolor="#cc0000"]').length` — 目标 0
-6. 若 > 0，获取错误公式 `.textContent`，定位修复
+- `.katex-error == 0`
+- `mstyle[mathcolor="#cc0000"] == 0`
+- 捕获 warning
+- 渲染后公式数与基线对比
+- 原始结构与输出的分式、上下标、矩阵等语义一致
+- 上下标方向一致
+- 双反斜杠命令未裸露
 
-### Step 1.5: 渲染后公式数量验证
+#### 命令边界
 
-1. 执行 `document.querySelectorAll('.katex').length`
-2. 与 DOM 基线 `N_formula_block + N_formula_inline` 对比
-3. 渲染数量显著少于基线 → 阻断（`$` 分界符被 Markdown 解析器破坏）
+- `\simeq`、`\simneqq` 等合法命令不得被拆分
+- 只有 parser parts 明确为 `["\sim", "p"]` 时才输出 `\sim p`
+- 禁止在最终字符串上运行 `\\sim([A-Za-z...])`
+- 未知 KaTeX 结构必须 fail-closed；`textContent` 只能用于诊断
 
-### Step 1.6: GitHub GFM 兼容检查（目标平台含 GitHub 时强制）
+### 块级居中
 
-**本地 KaTeX 比 GitHub（GFM/MathJax）宽松。** GitHub 要求行内 `$...$` 定界符外侧是 ASCII 边界；紧贴中文/全角标点（如 `，$q=1-p$，`）时 GitHub **不渲染**，留字面 `$`，但本地 KaTeX 照渲染 → 验证漏过。
+记录每个候选块的：
 
-1. 扫描 md（先剥离 fenced code + `$$` 块）：找行内 `$...$` 定界符**外侧紧贴 CJK 汉字或全角标点**的实例。
-   - 正则：开界 `([一-鿿　-〿＀-￯])\$(?!\$)`、闭界 `(?<!\$)\$([一-鿿　-〿＀-￯])`
-2. 命中 > 0 → 修：在 CJK 与 `$` 之间插一个 **ASCII 空格**（方案 A）→ `， $q=1-p$ ，`。
-3. **实测依据**（2026-07）：方案 A（插空格，标准 `$` 语法）GitHub + VS Code 都渲染；方案 B（backtick `` $`...`$ ``）GitHub 渲染但 VS Code 不认，弃用。块级 `$$...$$` 独立成行，不受此限。
-4. **数学块内裸 `*`**（同族坑）：扫描数学段（`$...$`/`$$...$$`）内 `(?<!\\)\*`，命中 > 0 → 改 `\ast`。成对 `*`（如 `SR^{*}` 多次）被 GitHub 当 emphasis 吃掉，MathJax 报 `Extra close brace`；VS Code 不受影响。实测 PSR/DSR。
-4. 有条件时，push 到公开 repo + Playwright 打开 `blob/main/xxx.md` 实地确认渲染（看是否成数学斜体字符而非字面 `$`）。
+```text
+类型
+原始居中证据
+Markdown 输出方式
+渲染结果
+```
 
-### Step 1.7: 强调定界符边界检查（所有 level 强制，与公式无关）
+短题注可与内容块同组；长说明段落保持正文对齐。
 
-**独立于公式验证——无公式文档（Level 0/1）也必须跑。** 之前把强调边界坑只写进规则文档、没进验证 Step，导致无公式文档整个跳过 Step 1.x 时漏检（实测：`**入口核对：**按表…` 加粗字面显示未渲染）。
+- 短题注示例：`图 D-1　系统架构`，紧邻图片且仅用于命名，可与图片同组居中。
+- 说明段落示例：`图 D-1 给出了系统架构。它展示了……`，后续包含多句解释，即使以“图 D-1”开头也保持正文左对齐。
+- 历史样例中曾出现 200–267 字的“图/公式开头说明段落”；长度只是辅助信号，最终以“命名性题注”还是“解释性正文”的功能判断。
 
-闭合 `**`/`*`/`_` 右侧紧跟**字母/数字/CJK 汉字**时，GitHub 判该定界符右-flanking 失败、配对断裂 → 星号字面显示、加粗失效（本地/VS Code 宽容，GitHub 严格）。
+### Markdown 渲染错误文本
 
-**关键：紧贴的是「标点」还是「字符」要分开判——用 `\S` 会误伤。** CommonMark 里闭合 `**` 后紧跟 **punctuation**（含 CJK 标点 `。，、；：！？）】」』`、ASCII `.,;:!?)` 等）时仍是**有效** right-flanking delimiter，`**结论**。` GitHub **渲染正常**。只有紧贴**字母/数字/CJK 汉字**才断裂。
+渲染后扫描：
 
-1. 扫描 md（先剥离 fenced code）：正则 `(\*\*[^*\n]+?\*\*)([^\s。，、；：！？）】」』.,;:!?)])`——**排除标点**，只命中真违规（闭合后紧贴字符）。命中 > 0 → 阻断。同理查单 `*`/`_`。
-   - ⚠️ **别用 `(\*\*[^*\n]+?\*\*)(\S)`**：`\S` 把 CJK 标点当违规 → 假阳性，会把正确的 `**结论**。` 判成违规。2026-07-23 sub agent 照旧正则"修"，给 11 处句末加粗插了空格 `**结论** 。`，反造成可见多余间距（过度修复=新 bug）。
-2. 修法二选一（**仅对真违规**，紧贴标点的不动）：
-   - 闭合 `**` 前是**标点**（尤其全角冒号 `：`）→ **把标点移出加粗**：`**入口核对：**按表` → `**入口核对**：按表`（最自然，标点本不该加黑）。
-   - 其它情况 → **闭合定界符后插空格**：`**标签：**https://` → `**标签：** https://`。
-3. 反向查**已误插的空格**：`\*\*[^*\n]+?\*\* [。，、；：！？）]` 命中 > 0 → 删空格（这是过度修复留下的错误）。
-4. 顺手查 `****` 四连星拼接 bug（加黑段相邻拼接）：去掉整行 `**` 后重包一层。
-5. 详见 conversion-rules.md「加粗/斜体」段。**主 agent 必须独立复验此项，不采信 sub agent 自报。**
+```text
+KaTeX parse error
+ParseError
+Undefined control sequence
+Double subscript
+Double superscript
+'_' allowed only in math mode
+mathcalN
+mathbbE
+```
 
-### Step 2: 截图对比
+### Notebook 类
 
-1. 分别打开原 HTML 和 Markdown 渲染 HTML
-2. 整页截图 + 高风险区域局部截图
-3. 视觉语义对比（不做像素匹配）
-4. **列表区域重点关注**：列表项被合并成段落在全页截图中不易发现
+详见 @notebook-and-virtualized.md：
 
----
+- cell 总数对齐
+- 每个 code cell 都能提取代码
+- NBSP 无残留
+- fence 真正配对，不只看总数
+- output 未被 inner fence 截断
+- 空 iframe/img 已回填或标注
+- output 保留/跳过/回填统计完整
+
+## Playwright 渲染验证
+
+### Step 1：公式错误
+
+1. 使用统一、固定版本的 `render.html`
+2. Markdown 解析前保护数学段
+3. `.katex-error == 0`
+4. `mstyle[mathcolor="#cc0000"] == 0`
+5. 捕获 KaTeX console warning
+6. 定位错误公式并循环修复
+
+### Step 1.5：公式数量
+
+渲染后 `.katex` 数量与 `N_formula_block + N_formula_inline` 对比。显著减少 → 阻断。
+
+### Step 1.6：GitHub GFM
+
+目标平台含 GitHub 时检查：
+
+- 行内 `$` 外侧紧贴 CJK/全角标点
+- 数学段未转义 `*`
+- `\text{}` 内 `_`
+- 双反斜杠命令
+
+**行内 `$` 的首选修法：** 在 CJK/全角标点与 `$` 之间插入 ASCII 空格。实测该方案在 GitHub 与 VS Code 都能渲染；backtick 数学变体虽然可在 GitHub 工作，但 VS Code 不识别，因此不采用，避免为一个平台修复后破坏另一个平台。
+
+### Step 1.7：强调边界
+
+所有 level 强制：
+
+- 闭合 `**/*/_` 后紧贴字母、数字、CJK 字符 → 检查
+- 紧贴 punctuation 的合法场景不得误修
+- 禁用 `\S` 宽类
+- 清理 `**结论** 。` 这类误插空格
+- 扫描 `****` 拼接
+- 命中相邻加粗产生的 `****` 时，先移除该行已有加粗定界符，再按语义段重新包一层 `**...**`；不要把四个星号机械替换成两个，否则仍可能错误合并两段强调内容
+
+### Step 2：截图对比
+
+- 原 HTML 与 Markdown 渲染整页截图
+- 公式、列表、**表格**、评论、处理过的图片做局部截图
+- 做语义对比，不要求像素一致
+- 表格/列表结构在整页图中不明显，必须局部检查
 
 ## 修复循环
 
-发现问题 → 只修改局部 → 重新渲染检查 → 直到无结构性错误或标注人工复核
+发现问题 → 局部修复 → 重新执行受影响的计数、渲染和截图检查。
 
----
+## 最终报告模板
 
-## 最终输出报告模板
-
-### 通用部分（所有级别必填）
+### 通用部分
 
 ```text
-复杂度级别：Level [0/1/2/3]
-是否识别到正文：
-保留资源文件数量：
-其中正文图片数量：
-其中评论图片数量：
-是否识别到评论区：
-评论数量（DOM 基线 / Markdown 实际）：
-保留有价值评论数量：
-删除无价值评论数量：
-保留作者/讲师/官方回复数量：
-是否发现评论排版问题（内联回复/日志未 code block）：
-是否已修复：
-列表项数量（DOM 基线 / Markdown 实际）：
-代码块数量（DOM 基线 / Markdown 实际）：
-标题数量（DOM 基线 / Markdown 实际）：
-图片数量（DOM 基线 / Markdown 实际）：
-是否处理并保留加粗、斜体、强调、高亮：
-是否进行了浏览器渲染核对（截图对比）：
-核对后是否发现差异：
-发现的差异是否已经修正：
-是否还有需要人工复核的内容：
+复杂度级别：
+正文容器：
+编辑器类型：
+
+DOM 基线 / Markdown 实际：
+- 块级公式：
+- 行内公式：
+- 表格：
+- 列表 / 列表项：
+- 图片：
+- 代码块：
+- 标题：
+- 评论 ledger：
+
+图片处理：
+- 去水印是否执行（默认否）：
+- 用户明确要求：
+- 原图副本：
+- 压缩：
+- 人工抽检：
+
+浏览器渲染：
+- 是否执行：
+- 发现差异：
+- 是否修复：
+- 人工复核项：
 ```
 
-### 公式部分（Level 2-3 追加）
+### 公式部分（Level 2-3）
 
 ```text
-公式总数（块级 / 行内）：
-公式来源：[annotation / data-tex / MathML / KaTeX HTML 重建 / 截图]
-成功提取原始 LaTeX 数量：
-KaTeX 渲染错误数量（.katex-error / mstyle[mathcolor]）：
-渲染后公式数量 vs DOM 基线：
-是否发现公式语义退化：
-是否发现上下标方向反转：
-是否发现 LaTeX 命令双反斜杠转义：
-是否已修复所有公式问题：
-是否存在需要人工复核的公式：
+公式来源：
+成功提取：
+截图 fallback：
+KaTeX error / warning：
+渲染数量 vs 基线：
+语义退化：
+上下标方向：
+未知结构 fail-closed：
+合法命令误拆检查：
 ```
 
-### 居中部分（有居中块时追加）
+### 批量汇总
 
 ```text
-原 HTML 居中块数量：
-是否发现原文居中但 Markdown 靠左：
-是否已修复居中丢失问题：
-```
-
-### 批量处理汇总表（同源多文件时使用）
-
-```text
-| 序号 | 文件名 | 标题 | 图片 | 代码块 | 列表项 | 评论 | 公式 | 问题 |
-|------|--------|------|------|--------|--------|------|------|------|
-| 1    | ...    | ...  | N/M  | N/M    | N/M    | N/M  | N/M  | 无/描述 |
+| 序号 | 文件名 | 标题 | 表格 | 图片 | 代码块 | 列表项 | 评论 | 公式 | 问题 |
+|------|--------|------|------|------|--------|--------|------|------|------|
+| 1    | ...    | ...  | N/M  | N/M  | N/M    | N/M    | ledger | N/M | ... |
 ```

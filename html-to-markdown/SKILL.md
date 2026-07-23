@@ -5,319 +5,280 @@ description: Use when converting SingleFile-saved HTML pages into clean offline 
 
 # SingleFile HTML 转离线 Markdown 包（调度模式）
 
-将 SingleFile 保存的网页 HTML 转换为干净、结构清晰、可离线阅读的 Markdown 文档包。
+将 SingleFile 保存的网页 HTML 转换为结构清晰、可离线阅读的 Markdown 文档包。
 
-**架构：** 主 agent 负责分析和质量验证，sub agent 负责实际转换工作。
+**架构：** 主 agent 负责分析、定义审计基线和独立验收；sub agent 负责执行转换。
 
-> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md`（通用两道闸）+ @self-improvement.md（本 skill 专属回归用例表）——过泛化检查清单 + 跑回归用例表再落地，防"规则贴死单样例"和"新改进改坏旧样例"。
+> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md` + @self-improvement.md。相同规则不得在多个文件中以不同选择器或不同默认行为存在。
 
 ## 工作流概览
 
 ```text
-Phase 1: 初步分析（主 agent）
-    ↓
-Phase 2: Dispatch sub agent（执行转换）
-    ↓
-Phase 3: 质量验证（主 agent）
-    ↓ 如有问题
-Phase 4: 修复循环（再次 dispatch 或手动修复）
-    ↓
-Phase 5: 输出
+Phase 1  主 agent：识别页面类型 + 建立 DOM 基线
+Phase 2  sub agent：按明确参数执行转换
+Phase 3  主 agent：独立计数、渲染和截图验收
+Phase 4  修复循环
+Phase 5  输出 zip + 报告
 ```
 
----
+## Phase 1：初步分析
 
-## Phase 1: 初步分析（主 agent 执行）
+### 1.1 打开 HTML
 
-### 1.1 打开 HTML 文件
+用 Playwright 打开 SingleFile HTML，确认页面结构。计数必须基于**渲染后的 DOM**，不能只依赖静态 lxml。
 
-用 Playwright 打开 SingleFile HTML，确认页面结构。
+### 1.2 按语义容器探测
 
-### 1.1a 探测原则：按语义容器，不按 HTML 标签
+富文本编辑器常不用标准标签。探测一律走“语义属性 OR 标准标签”双轨：
 
-**富文本编辑器（Slate 等）用 `data-slate-type` 等自定义属性表示代码块、表格、列表，不用标准标签。** 静态 lxml 按 `<pre>/<code>/<table>` 标签计数会严重低估——实测把 3 篇各含 4-7 个代码块的文章判成"0 代码块"，表格全漏。
+| 探测项 | 权威查询 |
+|--------|----------|
+| 代码块 | `[data-slate-type="pre"]` OR `pre > code` |
+| 表格 | `[data-slate-type="table"]` OR `table` |
+| 列表 | `[data-slate-type="list"]` OR `ul, ol` |
+| 列表项 | `[data-slate-type="list-line"]` OR `li` |
+| 公式 | `[data-slate-type*="katex"]` OR `.katex` OR `math` |
+| 图片 | `img`（排除装饰图后） |
+| 标题 | heading slate type OR `h1-h6` |
+| 评论 | 评论区顶层评论容器 |
 
-探测计数一律走**双轨（语义属性 OR 标准标签）**：
+**不得**在其他文档改用 `[data-slate-type="code-block"]` 作为 Slate 代码块基线；本 skill 的 Slate 映射是 `pre`。
 
-| 探测项 | 查询 |
-|--------|------|
-| 代码块 | `[data-slate-type="pre"]` OR `pre>code` |
-| 表格 | `[data-slate-type="table"]` OR `<table>` |
-| 列表 | `[data-slate-type="list"]` OR `<ul>/<ol>` |
-| 公式 | `.katex` / `math` / `[data-slate-type*="katex"]` |
+### 1.3 强制 DOM 基线
 
-判定复杂度前，先用 Playwright 在**渲染后的 DOM**（非仅静态解析）确认，或对 `data-slate-type` 做一次全量 distinct 值枚举，避免漏掉编辑器特有容器。
+提取前至少记录：
 
-### 1.2 复杂度分级
+```text
+N_formula_block
+N_formula_inline
+N_table
+N_list
+N_list_item
+N_image
+N_codeblock
+N_heading
+N_comment
+```
+
+表格和代码块均为阻断项：HTML 基线大于 Markdown 实际数量时，必须定位丢失元素。
+
+### 1.4 复杂度分级
 
 | 级别 | 条件 | 公式处理 | 验证深度 |
 |------|------|---------|---------|
-| Level 0 | 无公式、无正文图片、无代码块、无评论 | 跳过 | 整页对比即可 |
-| Level 1 | 无公式（N_formula = 0） | 跳过 | 整页 + 列表/评论局部 |
-| Level 2 | 有公式，有原始 LaTeX | 提取 + 渲染验证 | 整页 + 公式区域局部 |
-| Level 3 | 有公式，无原始 LaTeX，需重建 | 完整公式处理 | 整页 + 逐公式局部 |
+| Level 0 | 无公式、正文图片、代码块、表格和评论 | 跳过公式流程 | 整页对比 |
+| Level 1 | 无公式 | 跳过公式流程 | 整页 + 列表/表格/评论局部 |
+| Level 2 | 有公式，有原始 LaTeX | 提取 + 渲染验证 | 整页 + 公式局部 |
+| Level 3 | 有公式，无原始 LaTeX | 结构重建或截图 | 整页 + 逐公式局部 |
 
-### 1.3 页面类型分流（与复杂度并列）
+### 1.5 页面类型分流
 
-除复杂度外，先识别页面类型——不同类型的提取协议差异很大：
-
-| 类型 | 信号 | 适用文档 |
+| 类型 | 信号 | 追加规则 |
 |------|------|---------|
-| 文章/博客 | `<article>` / `<main>` / 富文本编辑器（Slate 等） | conversion-rules.md |
-| Notebook 类（Jupyter/Databricks/Colab） | `data-mode-id` / `command-input` / `cm-editor` / `jp-Cell` / 标题含 `notebook` | **notebook-and-virtualized.md** |
-| 含虚拟化容器 | Monaco editor / CodeMirror / react-virtualized；活跃元素数 < 实际数 | **notebook-and-virtualized.md** |
-| 含 lazy-load 空占位 | `<iframe src="">` / `<img src=""` 但 `data-src` 有值 | **notebook-and-virtualized.md §4** |
+| 文章/博客 | `<article>` / `<main>` / Slate | @conversion-rules.md |
+| Notebook | Jupyter/Databricks/Colab/cell 信号 | @notebook-and-virtualized.md |
+| 虚拟化容器 | Monaco/CodeMirror/react-virtualized | @notebook-and-virtualized.md |
+| lazy-load 空占位 | 空 `src` + `data-src` 等 | @notebook-and-virtualized.md |
 
-类型不互斥，识别到任一即追加对应规则。
+类型可叠加。
 
-### 1.4 同源批量检测
-
-多个 HTML 来自同一站点时，DOM 结构一致，应指导 sub agent 采用脚本化批量处理。
-
-### 1.5 确定关键参数
+### 1.6 确定参数
 
 - 正文容器选择器
-- 富文本编辑器类型（标准 HTML / Slate / 其他）
-- 评论区选择器
+- 编辑器类型
+- 评论区顶层选择器
 - 公式类型和来源
-- **Notebook 类追加**：cell 容器选择器、cell type breakdown、代码提取双源协议、output 容器
+- DOM 基线计数
+- Notebook 的 cell/output/代码提取参数
 
----
+## Phase 2：Dispatch Sub Agent
 
-## Phase 2: Dispatch Sub Agent
+Prompt 必须包含明确参数，不得让 sub agent 重新猜测已确认的选择器。
 
-使用 Agent tool 派出 sub agent 执行转换。根据复杂度级别选择对应的 prompt 模板。
-
-### Prompt 模板结构
-
-```
+```text
 ## 任务
 将 [文件路径] 的 SingleFile HTML 转换为离线 Markdown 包。
-复杂度级别：Level [N]
-正文容器：[选择器]
-编辑器类型：[标准 HTML / Slate / 其他]
-[同源批量：是/否，共 N 个文件]
 
-## 输出要求
-输出 zip 包，结构：
-<zip-英文名>.zip
-└── 文章标题目录/
+复杂度：[Level N]
+正文容器：[selector]
+编辑器：[standard / Slate / other]
+DOM 基线：
+- formula block / inline:
+- tables:
+- lists / list items:
+- images:
+- code blocks:
+- headings:
+- comments:
+
+## 输出结构
+<zip-name>.zip
+└── 文章标题/
     ├── 文章标题.md
-    └── files/<zip-英文名>/ (图片)
+    └── files/<zip-name>/
+```
 
-**打包注意：**
-- 机器常无 `zip` 命令，用 Python `zipfile`。
-- **`zipfile` 打包命令里不要串 `pkill` 等可能非零退出的收尾操作**：若写成 `zip打包 && pkill ...` 或同一 heredoc，`pkill` 的退出码（如无匹配进程返回 1、被信号中断返回 144）会中断/掩盖整条命令，导致 zip 实际没打成却以为成功。打包单独一条命令跑；清理（停 server 等）另起一条。
-- **改完 md 必须重打 zip 再交付**，且重打后 `zipfile` 读取校验一次内容（grep 关键改动），别只看时间戳。
+### 打包
 
-## 转换规则
+- 使用 Python `zipfile`，不要假设存在 `zip`
+- 打包和 `pkill`/清理命令分开执行
+- 修改 Markdown 后必须重打 zip
+- 重打后读取 zip 内文件验证关键修改，不能只看时间戳
 
-### DOM 审计（提取前必须执行）
-[从 conversion-rules.md 精简关键规则]
-- 建立计数基线：公式、列表项、图片、代码块、标题、评论
-- 容器嵌套穿透：无标记中间层必须递归搜索
-- 列表项计数是强制的
+### DOM 提取
 
-### 列表处理
-- 有序证据：<ol> / data-list-type="ordered" / CSS counter / content:attr(...)
-- 判定证据可能在列表项子树中而非列表项自身，搜索时须遍历子树
-- 无序证据：<ul> / CSS bullet / 无法确认→默认无序
+- 无语义中间 wrapper 必须递归穿透
+- 表格、代码块、列表项计数必须与基线对齐
+- Slate 代码块使用 `[data-slate-type="pre"]`
+- Slate 表格外层可为 `[data-slate-type="table"]`，内部再找标准 `<table>`
+
+### 列表
+
+- 有序证据来自 `<ol>`、属性、CSS counter 等
+- 证据可能在 list item 子树
+- 无法确认时默认无序
 - 禁止双 marker
-- 不得根据"内容像步骤"改变 marker 类型
-[如果是 Slate 编辑器，补充 Slate 列表映射]
+- 不得根据内容“像步骤”改变 marker
 
-### 评论区
-- 不得默认删除
+### 评论
+
+- 不得整体默认删除
 - 只匹配顶层评论容器
-- 用 Playwright 确认各子区域（正文 vs 回复）的实际用途，不凭 class 名猜测
-- 保留：技术问题、纠错、作者回复、长评论
-- 删除：打卡、纯表情、广告、头像
-- 格式：### 评论 N + blockquote 回复
+- 保留技术问题、纠错、作者回复、长评论
+- 过滤结果必须进入报告，不能用 Markdown 实际评论数直接等同源评论数
 
 ### 图片
-- base64 → 解码保存为 files/<zip-同名>/image_NN.ext
-- 删除装饰图（<50px）
-- 评论图片带 comment_ 前缀
-- **默认去站点水印（高风险，护栏必守）**：部分站点在正文图角落（多右下）嵌站点 logo+文字水印。默认去除，只在用户要求保留时跳过。**必须在原图上、压缩之前做**（压缩 artifact/缩放会干扰检测和 bbox）。三条已踩坑护栏——① 特征色会命中正文同色，只取**最右下连通块**当 logo，别框全图同色像素；② bbox **紧框水印本身**（logo 左缘到文字右缘、只含水印高度），**禁止从 logo 左上一盖到图右下角**（会擦掉正文/边框）；③ 检测和验证都在**原图**上做，不用缩略图（缩放错位会漏检）。纯色底用背景色矩形盖、压内容用 `cv2.inpaint`。逐图检测，无水印跳过。详见 conversion-rules.md 去站点水印段
-- **默认压缩（接受轻微有损）**：正文图统一转 webp quality 80，宽 >1600px 等比缩到 1600（密集图表放宽到 2000）。同步改 md 引用扩展名。只在用户明确要求最高保真/不压缩时跳过。工具优先 `ffmpeg -c:v libwebp -quality 80`（转前探测 which ffmpeg/cwebp + PIL）。转后抽检一张确认无可见 artifact。**去水印在前、压缩在后**。详见 conversion-rules.md 图片压缩段
 
-### 块级居中
-- 居中证据 → Markdown 也必须居中（<div align="center">）
+- base64 图片保存为相对文件
+- 删除头像、广告和纯 UI 装饰图
+- 评论说明图使用 `comment_` 前缀
+- **默认保留水印和原始像素内容**
+- **去站点水印仅在用户明确要求时执行（opt-in）**
+- 去水印时必须保留原图副本，记录处理文件和 bbox，并逐图原尺寸验证
+- 图片压缩按 @conversion-rules.md；若同时 opt-in 去水印，顺序为“原图备份 → 去水印 → 压缩”
 
 ### 代码块
-- 无 language class 时启发式检测语言（≥2 信号）
 
-### 文本清理
-- PUA 字符删除
-- 零宽字符删除
-- 代码 cell/代码块内部的 NBSP（U+00A0）替换为普通空格（Monaco/CodeMirror 提取常见陷阱）
+- 无语言 class 时至少两个信号才标为具体语言
+- 不确定时标 `text`
+- 代码块内部 NBSP 转普通空格
 
 ### 解析器
-- 必须使用 lxml，不得使用 html.parser
 
-### Notebook/虚拟化容器（如适用）
-[当 Phase 1 检测到 notebook 类或虚拟化容器时拼接此段，详见 @notebook-and-virtualized.md]
-- 代码提取双源协议：备份选择器 优先 → 渲染态片段 fallback
-- Output 默认保留有内容输出，跳过空容器
-- 空 IFrame/img 必须从源代码或 data-src 反推 URL 回填
-- 输出格式统一：代码块后空一行 + `> **Output:** ...`
-- 报告必须含：保留 N / 跳过 M / 回填 K / 失败 cell idx
+- BeautifulSoup 必须用 `lxml`
+- Notebook/虚拟化容器按专属双源协议处理
 
-## 公式处理（Level 2-3 时包含）
-[按复杂度级别从 formula-extraction skill 精简]
+## 公式处理（Level 2-3）
 
-### 提取优先级
-1. annotation[encoding="application/x-tex"]
-2. data-tex / data-latex / data-math / alttext
-3. <script type="math/tex">
-4. 页面 JSON / hydration 数据
-5. MathML 结构
-6. KaTeX HTML 系统性重建（编写解析器）
-7. 无法提取 → 截图保存
+提取优先级：
 
-### 后处理管道（必须统一应用）
-- Prime: ^' → '
-- 命令粘连: \gammaV → \gamma V（join 阶段统一）
-- \sim 后粘连: \simp → \sim p
-- Unicode 希腊字母 → LaTeX 命令
-- PUA/零宽字符删除
-- 空 block-katex 防护（空 $$ 删除）
+1. annotation
+2. data-tex/data-latex/data-math/alttext
+3. math/tex script
+4. hydration JSON
+5. MathML
+6. KaTeX HTML 系统性重建
+7. 失败 → 截图
 
-### 上下标方向
-- 忠实原文，不得根据领域惯例改变
-- Double subscript 只能补分组，不能改方向
+后处理要求：
 
-## 验证要求
+- Prime、Unicode、PUA/zero-width 等机械修复
+- 命令粘连只在 parser token/part 的 join 边界处理
+- `["\sim", "p"]` → `\sim p`
+- 单一 token `["\simeq"]` / `["\simneqq"]` 保持不变
+- **禁止**在最终字符串上运行 `\\sim([A-Za-z...])` 全局替换
+- 上下标方向必须忠实原 DOM
+- KaTeX parser 遇到未知语义结构必须 fail-closed，不得以 `textContent` 作为成功结果
 
-### 强制计数对比
-提取完成后，将 DOM 基线与 Markdown 逐项对比，差异>0 的阻断项必须修复。
+权威规则见 `formula-extraction` skill。
 
-**所有 grep 验证脚本必须先剥离 fenced code block**（`re.sub(r'```.*?\n.*?```', '', text, flags=re.DOTALL)`），否则代码注释 `# foo` 会被当成 H1 标题命中。
+## Phase 3：主 agent 独立验收
 
-### Markdown 边界检查（所有 level 强制，含无公式文档）
-纯文本 grep 检查，与公式/渲染无关，**Level 0/1 也必须跑**（别因为无公式就跳过整个验证）：
-- **强调定界符边界**：正则 `(\*\*[^*\n]+?\*\*)([^\s。，、；：！？）】」』.,;:!?)])` 命中 > 0 → 阻断（**排除标点**）。闭合 `**` 右侧紧贴**字母/数字/CJK 汉字**时 GitHub 加粗失效、星号字面显示。修：闭合前是标点→移标点出加粗（`**入口核对：**按` → `**入口核对**：按`）；否则闭合后插空格。同理查 `*`/`_`、`****` 四连星。⚠️ **别用 `\S`**：会把 CJK 标点当违规——`**结论**。` GitHub 渲染正常，`。`/`，` 等标点紧贴闭合 `**` 是**有效** right-flanking，勿修；对它插空格得 `**结论** 。` 是过度修复=新 bug。反向清理误插空格：`\*\*[^*\n]+?\*\* [。，、；：！？）]` 命中 → 删空格。
-- **GitHub `$` 边界**（有行内公式时）：`$` 紧贴 CJK/全角标点 → 插 ASCII 空格。
-- **裸字符**：PUA / 零宽 / 代码块内 NBSP。
-详见 checklist.md Step 1.7。
+### 强制计数
 
-### Playwright 渲染验证（Level 1+）
-1. 创建 render.html（KaTeX + marked.js，保护数学公式后再解析）
-2. .katex-error 数量 = 0
-3. mstyle[mathcolor="#cc0000"] 数量 = 0
-4. 渲染后 .katex 数量 ≈ DOM 基线
-5. 整页截图对比 + 高风险区域局部截图
+| 项目 | 要求 |
+|------|------|
+| 表格 | HTML 基线 == Markdown 实际；少一个即阻断 |
+| 代码块 | 使用与 Phase 1 相同选择器；少一个即阻断 |
+| 列表项 | 总数和 marker 类型对齐 |
+| 图片 | 排除装饰图后对齐 |
+| 块级公式 | 少一个即阻断 |
+| 评论 | 使用“保留/过滤/失败 ledger”解释差异 |
 
-### 修复循环
-发现问题 → 局部修复 → 重新验证 → 循环直到通过
+所有结构 grep 前必须排除 fenced code block；复杂 fence 按 @notebook-and-virtualized.md。
 
-## 输出
-返回 zip 文件路径 + 简短处理报告。
-```
+### Markdown/GitHub 边界
 
-### 同源批量的 prompt 变体
+所有 level 均检查：
 
-增加以下段落：
+- 强调定界符紧贴字母/数字/CJK 字符
+- 不得把紧贴 CJK 标点误判为违规
+- 行内 `$` 紧贴 CJK/全角标点
+- 数学段裸 `*`
+- PUA、zero-width、代码块 NBSP
 
-```
-## 批量处理策略
-共 [N] 个文件来自同一站点，DOM 结构一致。
-1. 先分析第一篇确定选择器和结构
-2. 编写 Python 脚本（BeautifulSoup + lxml）统一处理
-3. 内置审计计数
-4. 所有文章输出到一个 zip，每篇一个子目录
-```
+### Playwright
 
-### 主/子 agent 验证分工契约
+1. 使用统一 `render.html`
+2. `.katex-error == 0`
+3. `mstyle[mathcolor="#cc0000"] == 0`
+4. 捕获 KaTeX warning
+5. 渲染后公式数与基线对比
+6. 整页截图 + 公式、列表、表格、评论等高风险区域局部截图
 
-**问题**：sub agent 自报"error=0"不可全信——实测出现 sub agent 报 `.katex-error=0`，主 agent 独立复验测出 error=1 的情况（sub agent 渲染方式与主 agent 不同）。
+### 主/子分工
 
-**契约**：
-
-| 验证项 | sub agent 自验证 | 主 agent 独立复验 |
+| 验证项 | sub agent | 主 agent |
 |--------|:---:|:---:|
-| 计数对比（DOM 基线 vs md） | ✓ 必跑 | ✓ 采信前抽验 |
-| KaTeX `.katex-error` = 0 | ✓ 必跑 | ✓ **必须独立复验，不采信 sub 结论** |
-| GitHub 边界（`$` 紧贴 CJK） | ✓ 必跑 | ✓ **必须独立复验** |
-| 强调 `**`/`*`/`_` 边界（所有 level，含无公式） | ✓ 必跑 | ✓ **必须独立复验** |
-| 裸 CJK / PUA / 零宽 / NBSP | ✓ 必跑 | ✓ **必须独立复验** |
+| DOM vs Markdown 计数 | 必跑 | 独立抽验 |
+| 表格/代码块基线 | 必跑 | **使用同一选择器独立复验** |
+| KaTeX error/warning | 必跑 | **独立复验** |
+| GitHub 边界 | 必跑 | **独立复验** |
+| 图片破坏性处理 | 如 opt-in 执行 | **逐图抽检 + 原图存在性** |
 | 截图语义对比 | 高风险区 | 高风险区抽检 |
 
-**统一模板**：sub agent 与主 agent 的 KaTeX 渲染验证**共用同一 render.html 模板**（KaTeX CDN + marked.js + 公式保护），避免"两套渲染路径结论不一致"。主 agent 复验时直接打开 sub agent 产出的 render.html，或用同一模板重建。
+## Phase 4：修复循环
 
----
+- 个别问题：主 agent 局部修复
+- 系统性问题：重新 dispatch，并明确失败计数、选择器和修复要求
+- 每次修复后重新执行相关阻断项
 
-## Phase 3: 质量验证（主 agent 执行）
+## Phase 5：输出
 
-Sub agent 返回结果后，主 agent 执行最终质量验证。参考 @checklist.md。
+提供 zip 下载路径和报告。报告至少包含：
 
-### 必须验证的项目
+```text
+复杂度：
+DOM 基线 / Markdown 实际：
+- formulas:
+- tables:
+- lists / list items:
+- images:
+- code blocks:
+- headings:
+- comments ledger:
 
-1. **计数对比**：确认 sub agent 报告的 DOM 基线 vs Markdown 实际数量无阻断差异
-2. **Playwright 渲染**：打开 sub agent 创建的 render.html，独立验证 KaTeX error = 0
-3. **截图抽检**：对高风险区域（公式密集段、列表、评论区）做局部截图对比
-4. **zip 完整性**：确认 zip 解压后图片路径正确、文件存在
+图片：
+- 是否执行去水印（默认否）：
+- 用户是否明确要求：
+- 原图副本：
+- 压缩情况：
 
-### 最终输出报告
+公式：
+- 来源：
+- 失败/截图数量：
+- error/warning：
+- 语义退化/方向问题：
 
-参考 @checklist.md 中的报告模板，向用户提供：
-- 复杂度级别
-- 各项计数对比结果
-- 是否有人工复核标注
-- zip 下载路径
-
----
-
-## Phase 4: 修复循环
-
-如果 Phase 3 发现问题：
-
-- **小问题**（个别公式错误、单个列表 marker 错误）：主 agent 直接修复
-- **系统性问题**（大量公式失败、列表结构全部错误）：再次 dispatch sub agent，prompt 中包含具体问题描述和修复指导
-
----
-
-## Phase 5: 输出
-
-提供 `.zip` 下载链接 + 最终报告。
-
----
-
-## 关键决策点
-
-```dot
-digraph dispatch_decision {
-    rankdir=TB;
-    "用户提供 HTML" [shape=doublecircle];
-    "打开 HTML 判断复杂度" [shape=box];
-    "Level 0-1" [shape=diamond];
-    "Level 2-3" [shape=diamond];
-    "同源批量?" [shape=diamond];
-    "Dispatch: 基础转换 prompt" [shape=box];
-    "Dispatch: 含公式处理 prompt" [shape=box];
-    "Dispatch: 批量脚本 prompt" [shape=box];
-    "验证 + 输出" [shape=doublecircle];
-
-    "用户提供 HTML" -> "打开 HTML 判断复杂度";
-    "打开 HTML 判断复杂度" -> "Level 0-1" [label="无公式"];
-    "打开 HTML 判断复杂度" -> "Level 2-3" [label="有公式"];
-    "Level 0-1" -> "同源批量?";
-    "Level 2-3" -> "同源批量?";
-    "同源批量?" -> "Dispatch: 批量脚本 prompt" [label="是"];
-    "同源批量?" -> "Dispatch: 基础转换 prompt" [label="否, Level 0-1"];
-    "同源批量?" -> "Dispatch: 含公式处理 prompt" [label="否, Level 2-3"];
-    "Dispatch: 基础转换 prompt" -> "验证 + 输出";
-    "Dispatch: 含公式处理 prompt" -> "验证 + 输出";
-    "Dispatch: 批量脚本 prompt" -> "验证 + 输出";
-}
+人工复核：
 ```
 
 ## 参考文档
 
-- @conversion-rules.md — 完整转换规则（列表、评论、图片、居中、代码块等）
-- @notebook-and-virtualized.md — Notebook 类页面（Jupyter/Databricks/Colab）+ Monaco/CodeMirror 等虚拟化容器 + lazy-load 空占位回填
-- @blocking-rules.md — 阻断规则（验证阶段使用）
-- @checklist.md — 验证 checklist 和报告模板
-- `../_meta/skill-self-improvement.md` — **改进任何自建 skill 时读**：通用泛化检查清单 + 病根 + 改进流程
-- @self-improvement.md — **改进本 skill 时读**：html-to-md 专属回归用例表（边界正则/清理正则）
-- `formula-extraction` skill — 公式提取的权威参考（独立 skill）
+- @conversion-rules.md — 非公式转换规则
+- @notebook-and-virtualized.md — Notebook/虚拟化/lazy-load
+- @blocking-rules.md — 阻断规则
+- @checklist.md — 主 agent 验收
+- `../_meta/skill-self-improvement.md` — 通用改进规则
+- @self-improvement.md — 本 skill 回归用例
+- `formula-extraction` skill — 公式提取权威规则
