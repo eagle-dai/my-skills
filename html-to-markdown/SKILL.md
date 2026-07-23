@@ -159,12 +159,12 @@ DOM 基线：
 - 不得整体默认删除
 - 只匹配顶层评论容器
 - 保留技术问题、纠错、作者回复、长评论
-- 每个源评论必须写一条 comment ledger：`source_id | status | emitted_count | reason`
+- 先记录源顶层评论的完整 `source_ids`；每个 ID 必须写一条 comment ledger：`source_id | status | emitted_count | reason`
 - `status` 只能是 `kept / removed_as_noise / failed / manual_review`
 - `kept` 必须 `emitted_count == 1`
 - 非 `kept` 必须 `emitted_count == 0`，且必须写明 `reason`
-- 验收依据是 ledger 守恒，不要求 Markdown 评论数量等于源评论数量
-- 权威校验调用 @contracts.py 的 `validate_comment_ledger()`
+- ledger 的 `source_id` 集合必须与源 `source_ids` 完全相等；验收不要求 Markdown 评论数量等于源评论数量
+- 权威校验调用 `validate_comment_ledger(entries, source_ids=source_ids)`
 
 ### 图片
 
