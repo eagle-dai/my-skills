@@ -9,6 +9,8 @@ description: Use when converting SingleFile-saved HTML pages into clean offline 
 
 **架构：** 主 agent 负责分析和质量验证，sub agent 负责实际转换工作。
 
+> **改这个 skill 本身？** 先读 @self-improvement.md——过泛化检查清单 + 跑回归用例表再落地，防"规则贴死单样例"和"新改进改坏旧样例"。
+
 ## 工作流概览
 
 ```text
@@ -194,7 +196,7 @@ Phase 5: 输出
 
 ### Markdown 边界检查（所有 level 强制，含无公式文档）
 纯文本 grep 检查，与公式/渲染无关，**Level 0/1 也必须跑**（别因为无公式就跳过整个验证）：
-- **强调定界符边界**：正则 `(\*\*[^*\n]+?\*\*)(\S)` 命中 > 0 → 阻断。闭合 `**` 右侧紧贴非空白（中文/英文/标点都触发）时 GitHub 加粗失效、星号字面显示。修：闭合前是标点→移标点出加粗（`**入口核对：**按` → `**入口核对**：按`）；否则闭合后插空格。同理查 `*`/`_`、`****` 四连星。
+- **强调定界符边界**：正则 `(\*\*[^*\n]+?\*\*)([^\s。，、；：！？）】」』.,;:!?)])` 命中 > 0 → 阻断（**排除标点**）。闭合 `**` 右侧紧贴**字母/数字/CJK 汉字**时 GitHub 加粗失效、星号字面显示。修：闭合前是标点→移标点出加粗（`**入口核对：**按` → `**入口核对**：按`）；否则闭合后插空格。同理查 `*`/`_`、`****` 四连星。⚠️ **别用 `\S`**：会把 CJK 标点当违规——`**结论**。` GitHub 渲染正常，`。`/`，` 等标点紧贴闭合 `**` 是**有效** right-flanking，勿修；对它插空格得 `**结论** 。` 是过度修复=新 bug。反向清理误插空格：`\*\*[^*\n]+?\*\* [。，、；：！？）]` 命中 → 删空格。
 - **GitHub `$` 边界**（有行内公式时）：`$` 紧贴 CJK/全角标点 → 插 ASCII 空格。
 - **裸字符**：PUA / 零宽 / 代码块内 NBSP。
 详见 checklist.md Step 1.7。
@@ -316,4 +318,5 @@ digraph dispatch_decision {
 - @notebook-and-virtualized.md — Notebook 类页面（Jupyter/Databricks/Colab）+ Monaco/CodeMirror 等虚拟化容器 + lazy-load 空占位回填
 - @blocking-rules.md — 阻断规则（验证阶段使用）
 - @checklist.md — 验证 checklist 和报告模板
+- @self-improvement.md — **改进本 skill 时读**：泛化检查清单 + 回归用例表（防"规则贴死单样例"和"新改进改坏旧样例"两个反复踩的坑）
 - `formula-extraction` skill — 公式提取的权威参考（独立 skill）
