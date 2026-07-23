@@ -18,6 +18,17 @@ sys.modules[SPEC.name] = contracts
 SPEC.loader.exec_module(contracts)
 
 
+EXPECTED_SELECTOR_TAGS = {
+    "codeblock": ["section", "code", "section"],
+    "table": ["section", "table", "section"],
+    "list": ["div", "ul"],
+    "list_item": ["div", "li"],
+    "formula": ["div", "span", "math"],
+    "caption": ["caption", "figcaption"],
+    "heading": ["h2", "div"],
+}
+
+
 class SelectorExecutionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -26,11 +37,16 @@ class SelectorExecutionTests(unittest.TestCase):
         cls.normal = cls.soup.select_one("#normal")
         assert cls.normal is not None
 
-    def test_every_contract_selector_executes_against_a_real_fixture(self) -> None:
+    def test_every_contract_selector_matches_expected_fixture_nodes(self) -> None:
+        self.assertEqual(set(contracts.CSS_SELECTORS), set(EXPECTED_SELECTOR_TAGS))
+
         for name, selector in contracts.CSS_SELECTORS.items():
             with self.subTest(name=name, selector=selector):
                 matches = self.normal.select(selector)
-                self.assertGreater(len(matches), 0)
+                self.assertEqual(
+                    [match.name for match in matches],
+                    EXPECTED_SELECTOR_TAGS[name],
+                )
 
     def test_table_wrapper_and_native_node_share_identity(self) -> None:
         candidates = contracts.discover_semantic_candidates(self.normal, kind="table")
