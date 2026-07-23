@@ -2,13 +2,14 @@
 
 The Markdown files explain the workflow. This module owns the small pieces that
 must be deterministic and regression-testable: selector syntax, complexity
-classification, semantic candidate de-duplication, and comment ledger checks.
+classification, semantic candidate discovery/de-duplication, and comment ledger
+checks.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Mapping, Sequence
+from typing import Any, Iterable, Literal, Mapping, Sequence
 
 
 CSS_SELECTORS: Mapping[str, str] = {
@@ -109,6 +110,128 @@ def canonicalize_candidates(
     return tuple(
         item[2] for item in sorted(chosen.values(), key=lambda item: item[0])
     )
+
+
+def _element_children(node: Any) -> list[Any]:
+    """Return element children using identity-preserving DOM order.
+
+    BeautifulSoup ``Tag`` objects satisfy this tiny protocol. Keeping the
+    helper duck-typed lets callers use a rendered DOM snapshot serialized by
+    Playwright without coupling the contract module to a browser runtime.
+    """
+
+    return [
+        child
+        for child in getattr(node, "children", ())
+        if getattr(child, "name", None)
+    ]
+
+
+def stable_dom_path(node: Any) -> str:
+    """Return a stable element-only path for one parsed DOM snapshot.
+
+    The path is not intended to survive arbitrary page edits. It is an identity
+    key within one Phase 1 extraction/verification run, which is exactly the
+    lifetime required by semantic and comment ledgers.
+    """
+
+    parts: list[str] = []
+    current = node
+    while getattr(current, "name", None):
+        parent = getattr(current, "parent", None)
+        if parent is None or not getattr(parent, "name", None):
+            parts.append(str(current.name))
+            break
+
+        siblings = _element_children(parent)
+        index = next(
+            (
+                position
+                for position, sibling in enumerate(siblings)
+                if sibling is current
+            ),
+            None,
+        )
+        if index is None:
+            raise ValueError("node is not present in its parent's element children")
+        parts.append(f"{current.name}[{index}]")
+        current = parent
+
+    if not parts:
+        raise ValueError("node must be an element")
+    return "/".join(reversed(parts))
+
+
+_DOM_DISCOVERY_SPECS: Mapping[str, tuple[str, str, str]] = {
+    # kind: (native selector, native representation, wrapper representation)
+    "table": ("table", "native-table", "slate-table-wrapper"),
+    "codeblock": ("pre > code", "native-code", "slate-pre-wrapper"),
+}
+
+
+def discover_semantic_candidates(
+    root: Any,
+    *,
+    kind: str,
+) -> tuple[SemanticCandidate, ...]:
+    """Discover wrapper/native candidates and assign semantic IDs from DOM identity.
+
+    ``root`` must provide BeautifulSoup-compatible ``select()`` semantics. In
+    the real workflow, callers should first render the page with Playwright,
+    serialize the confirmed content container, and parse that rendered snapshot.
+
+    A wrapper containing exactly one native node shares the native node's
+    ``semantic_id``. Native nodes have higher priority. A wrapper containing
+    multiple native nodes is ambiguous and fails closed instead of silently
+    collapsing several blocks into one.
+    """
+
+    if kind not in _DOM_DISCOVERY_SPECS:
+        raise ValueError(f"unsupported semantic candidate kind: {kind}")
+    if not hasattr(root, "select"):
+        raise TypeError("root must provide select(selector)")
+
+    native_selector, native_representation, wrapper_representation = (
+        _DOM_DISCOVERY_SPECS[kind]
+    )
+    candidates: list[SemanticCandidate] = []
+
+    for node in root.select(CSS_SELECTORS[kind]):
+        # Use element shape for the two supported native representations.
+        if kind == "table":
+            is_native = getattr(node, "name", None) == "table"
+        else:
+            parent = getattr(node, "parent", None)
+            is_native = (
+                getattr(node, "name", None) == "code"
+                and getattr(parent, "name", None) == "pre"
+            )
+
+        if is_native:
+            canonical_node = node
+            representation = native_representation
+            priority = 0
+        else:
+            native_nodes = list(node.select(native_selector))
+            if len(native_nodes) > 1:
+                raise ValueError(
+                    f"ambiguous {kind} wrapper {stable_dom_path(node)} contains "
+                    f"{len(native_nodes)} native nodes"
+                )
+            canonical_node = native_nodes[0] if native_nodes else node
+            representation = wrapper_representation
+            priority = 10
+
+        candidates.append(
+            SemanticCandidate(
+                semantic_id=stable_dom_path(canonical_node),
+                source_dom_id=stable_dom_path(node),
+                representation=representation,
+                priority=priority,
+            )
+        )
+
+    return tuple(candidates)
 
 
 CommentStatus = Literal["kept", "removed_as_noise", "failed", "manual_review"]
