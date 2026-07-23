@@ -9,7 +9,7 @@ description: Use when converting SingleFile-saved HTML pages into clean offline 
 
 **架构：** 主 agent 负责分析、定义审计基线和独立验收；sub agent 负责执行转换。
 
-> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md` + @self-improvement.md。相同规则不得在多个文件中以不同选择器或不同默认行为存在。
+> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md` + @self-improvement.md。相同规则不得在多个文件中以不同选择器或不同默认行为存在。选择器、复杂度分级、语义候选去重和评论 ledger 的可执行合同以 @contracts.py 为准。
 
 ## 工作流概览
 
@@ -29,19 +29,27 @@ Phase 5  输出 zip + 报告
 
 ### 1.2 按语义容器探测
 
-富文本编辑器常不用标准标签。探测一律走“语义属性 OR 标准标签”双轨：
+富文本编辑器常不用标准标签。候选发现必须使用合法的 CSS selector list（逗号分隔），不得把文档里的 `OR` 当作 `querySelectorAll()` 语法。权威 selector 在 @contracts.py 的 `CSS_SELECTORS`：
 
-| 探测项 | 权威查询 |
-|--------|----------|
-| 代码块 | `[data-slate-type="pre"]` OR `pre > code` |
-| 表格 | `[data-slate-type="table"]` OR `table` |
-| 列表 | `[data-slate-type="list"]` OR `ul, ol` |
-| 列表项 | `[data-slate-type="list-line"]` OR `li` |
-| 公式 | `[data-slate-type*="katex"]` OR `.katex` OR `math` |
+| 探测项 | 可执行 CSS selector list |
+|--------|--------------------------|
+| 代码块 | `[data-slate-type="pre"], pre > code` |
+| 表格 | `[data-slate-type="table"], table` |
+| 列表 | `[data-slate-type="list"], ul, ol` |
+| 列表项 | `[data-slate-type="list-line"], li` |
+| 公式 | `[data-slate-type*="katex"], .katex, math` |
 | 图片 | `img`（排除装饰图后） |
-| 题注 | `figure > figcaption` OR `table > caption` OR Slate image 容器内 img 已验证同级 `<div>`（排除 UI/wrapper） |
-| 标题 | heading slate type OR `h1-h6` |
-| 评论 | 评论区顶层评论容器 |
+| 题注 | `figure > figcaption, table > caption`；Slate image 题注按已验证容器关系发现 |
+| 标题 | `[data-slate-type^="heading"], h1, h2, h3, h4, h5, h6` |
+| 评论 | 评论区顶层评论容器（站点专属 selector） |
+
+**selector 命中数不是 DOM 基线。** 同一个语义块可能同时命中 wrapper 和原生节点，例如 Slate table wrapper 内嵌标准 `<table>`。候选发现后必须：
+
+1. 为同一语义块分配相同 `semantic_id`；
+2. 调用 @contracts.py 的 `canonicalize_candidates()`；
+3. 每个 `semantic_id` 只保留一个 canonical candidate；
+4. 表格优先保留原生 `<table>`，wrapper 仅在没有原生节点时兜底；
+5. DOM 基线统计 canonical candidate 数量，不统计 selector 原始命中数。
 
 **不得**在其他文档改用 `[data-slate-type="code-block"]` 作为 Slate 代码块基线；本 skill 的 Slate 映射是 `pre`。
 
@@ -66,10 +74,12 @@ N_comment
 
 ### 1.4 复杂度分级
 
+复杂度必须调用 @contracts.py 的 `classify_complexity()`，不得再用容易漏字的自然语言条件自行判断。
+
 | 级别 | 条件 | 公式处理 | 验证深度 |
 |------|------|---------|---------|
-| Level 0 | 无公式、正文图片、代码块、表格和评论 | 跳过公式流程 | 整页对比 |
-| Level 1 | 无公式 | 跳过公式流程 | 整页 + 列表/表格/评论局部 |
+| Level 0 | `N_formula_block == 0 AND N_formula_inline == 0 AND N_image == 0 AND N_codeblock == 0 AND N_table == 0 AND N_comment == 0` | 跳过公式流程 | 整页对比 |
+| Level 1 | 公式总数为 0，但图片/代码块/表格/评论任一存在 | 跳过公式流程 | 整页 + 列表/表格/评论局部 |
 | Level 2 | 有公式，有原始 LaTeX | 提取 + 渲染验证 | 整页 + 公式局部 |
 | Level 3 | 有公式，无原始 LaTeX | 结构重建或截图 | 整页 + 逐公式局部 |
 
@@ -131,9 +141,10 @@ DOM 基线：
 ### DOM 提取
 
 - 无语义中间 wrapper 必须递归穿透
-- 表格、代码块、列表项计数必须与基线对齐
+- 先按 `CSS_SELECTORS` 发现候选，再按 `semantic_id` canonicalize；不得直接用 selector 命中数作为基线
+- 表格、代码块、列表项计数必须与 canonical 基线对齐
 - Slate 代码块使用 `[data-slate-type="pre"]`
-- Slate 表格外层可为 `[data-slate-type="table"]`，内部再找标准 `<table>`
+- Slate 表格外层可为 `[data-slate-type="table"]`，内部标准 `<table>` 与 wrapper 算同一个语义块
 
 ### 列表
 
@@ -148,7 +159,12 @@ DOM 基线：
 - 不得整体默认删除
 - 只匹配顶层评论容器
 - 保留技术问题、纠错、作者回复、长评论
-- 过滤结果必须进入报告，不能用 Markdown 实际评论数直接等同源评论数
+- 每个源评论必须写一条 comment ledger：`source_id | status | emitted_count | reason`
+- `status` 只能是 `kept / removed_as_noise / failed / manual_review`
+- `kept` 必须 `emitted_count == 1`
+- 非 `kept` 必须 `emitted_count == 0`，且必须写明 `reason`
+- 验收依据是 ledger 守恒，不要求 Markdown 评论数量等于源评论数量
+- 权威校验调用 @contracts.py 的 `validate_comment_ledger()`
 
 ### 图片
 
@@ -201,13 +217,13 @@ DOM 基线：
 
 | 项目 | 要求 |
 |------|------|
-| 表格 | HTML 基线 == Markdown 实际；少一个即阻断 |
-| 代码块 | 使用与 Phase 1 相同选择器；少一个即阻断 |
+| 表格 | canonical HTML 基线 == Markdown 实际；少一个即阻断 |
+| 代码块 | 使用与 Phase 1 相同 selector + canonicalization；少一个即阻断 |
 | 列表项 | 总数和 marker 类型对齐 |
 | 图片 | 排除装饰图后对齐 |
 | 题注 | 按 caption ledger 验收：每个 confirmed caption `emitted_count == 1`（不丢不重复）；源 confirmed 数 == Markdown 输出数，少一个即阻断 |
 | 块级公式 | 少一个即阻断 |
-| 评论 | 使用“保留/过滤/失败 ledger”解释差异 |
+| 评论 | `validate_comment_ledger()` 无错误；允许有理由地过滤噪声评论 |
 
 所有结构 grep 前必须排除 fenced code block；复杂 fence 按 @notebook-and-virtualized.md。
 
@@ -235,7 +251,8 @@ DOM 基线：
 | 验证项 | sub agent | 主 agent |
 |--------|:---:|:---:|
 | DOM vs Markdown 计数 | 必跑 | 独立抽验 |
-| 表格/代码块基线 | 必跑 | **使用同一选择器独立复验** |
+| 表格/代码块基线 | 必跑 | **使用同一 selector + canonicalization 独立复验** |
+| 评论 ledger | 必跑 | **调用同一合同独立复验** |
 | KaTeX error/warning | 必跑 | **独立复验** |
 | GitHub 边界 | 必跑 | **独立复验** |
 | 图片破坏性处理 | 如 opt-in 执行 | **逐图抽检 + 原图存在性** |
@@ -280,6 +297,7 @@ DOM 基线 / Markdown 实际：
 
 ## 参考文档
 
+- @contracts.py — 可执行 selector、复杂度、canonicalization、评论 ledger 合同
 - @conversion-rules.md — 非公式转换规则
 - @notebook-and-virtualized.md — Notebook/虚拟化/lazy-load
 - @blocking-rules.md — 阻断规则
