@@ -22,10 +22,27 @@
         <div>Fallback code representation</div>
       </section>
 
-      <div data-slate-type="list">
-        <div data-slate-type="list-line">Slate item</div>
-      </div>
-      <ul><li>Native item</li></ul>
+      <section data-slate-type="list" id="list-wrapper">
+        <ol id="list-native">
+          <li id="item-native-one">
+            <div data-slate-type="list-line" id="item-wrapper-one">First item</div>
+          </li>
+          <li id="item-native-two">
+            Second item
+            <ul id="nested-list">
+              <li id="nested-item">Nested item</li>
+            </ul>
+          </li>
+        </ol>
+      </section>
+
+      <section data-slate-type="list" id="list-wrapper-only">
+        <div>Fallback list representation</div>
+      </section>
+
+      <section data-slate-type="list-line" id="item-wrapper-only">
+        Fallback list item representation
+      </section>
 
       <div data-slate-type="block-katex"><span class="katex">x</span></div>
       <math><mi>y</mi></math>
@@ -50,6 +67,22 @@
       <div data-slate-type="pre">
         <pre><code>one</code></pre>
         <pre><code>two</code></pre>
+      </div>
+    </section>
+
+    <section id="ambiguous-list">
+      <div data-slate-type="list">
+        <ul><li>one</li></ul>
+        <ol><li>two</li></ol>
+      </div>
+    </section>
+
+    <section id="ambiguous-list-item">
+      <div data-slate-type="list-line">
+        <ul>
+          <li>one</li>
+          <li>two</li>
+        </ul>
       </div>
     </section>
   </body>
