@@ -87,7 +87,7 @@ def canonicalize_candidates(
 ) -> tuple[SemanticCandidate, ...]:
     """Return exactly one candidate for each semantic block."""
 
-    chosen: dict[str, tuple[int, SemanticCandidate]] = {}
+    chosen: dict[str, tuple[int, int, SemanticCandidate]] = {}
     for index, candidate in enumerate(candidates):
         if not candidate.semantic_id:
             raise ValueError("semantic_id must not be empty")
@@ -95,11 +95,17 @@ def canonicalize_candidates(
             raise ValueError("source_dom_id must not be empty")
 
         current = chosen.get(candidate.semantic_id)
-        rank = (candidate.priority, index)
-        if current is None or rank < (current[1].priority, current[0]):
-            chosen[candidate.semantic_id] = (index, candidate)
+        if current is None:
+            chosen[candidate.semantic_id] = (index, index, candidate)
+            continue
 
-    return tuple(item[1] for item in sorted(chosen.values(), key=lambda pair: pair[0]))
+        first_index, chosen_index, chosen_candidate = current
+        if (candidate.priority, index) < (chosen_candidate.priority, chosen_index):
+            chosen[candidate.semantic_id] = (first_index, index, candidate)
+
+    return tuple(
+        item[2] for item in sorted(chosen.values(), key=lambda item: item[0])
+    )
 
 
 CommentStatus = Literal["kept", "removed_as_noise", "failed", "manual_review"]
