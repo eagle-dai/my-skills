@@ -27,6 +27,9 @@ class DomCounts:
     formula_block: int = 0
     formula_inline: int = 0
     table: int = 0
+    # These fields belong to the shared DOM baseline/report contract. They do
+    # not currently change the Level 0/1 split, but callers must still record
+    # and validate them in every level.
     list: int = 0
     list_item: int = 0
     image: int = 0
