@@ -98,7 +98,7 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 每张源图片建立 image ledger：
 
 ```text
-source_id | decision | emitted_count | reason | decoded_url
+source_id | decision | emitted_count | reason | decoded_url | decoded_link_emitted
 ```
 
 交付前执行：
@@ -110,7 +110,11 @@ assert_valid_image_ledger(entries, source_ids=source_ids)
 - 正文或有内容关系的二维码必须保留；
 - 分享/关注 UI 中且与正文无关的二维码才可 `remove_as_ui`；
 - 无法判断的二维码为 `manual_review`，原图仍输出一次；
+- `keep/manual_review` 的 `decoded_url` 非空时，Markdown 必须输出可点击链接，并记录 `decoded_link_emitted=True`；
+- `decoded_link_emitted=True` 必须对应非空 `decoded_url`；
+- `remove_as_ui` 不得输出 decoded link；
 - 删除项必须有明确 UI/装饰证据；
+- 重复 source ID 的错误必须指出具体 ID；
 - 相对路径有效，文件真实存在，无 base64 直接嵌入；
 - 图片顺序和题注对应；
 - 压缩后文字仍可读。
@@ -190,7 +194,7 @@ DOM 基线 / Markdown 实际：
 - 评论 ledger：
 
 Fence：scan_fenced_blocks 结果
-图片：保留 / remove_as_ui / manual_review
+图片：保留 / remove_as_ui / manual_review；decoded URL/link 对齐
 去水印：默认否；用户是否明确要求；原图副本；抽检
 浏览器渲染：执行情况、差异、修复、人工复核项
 ```
