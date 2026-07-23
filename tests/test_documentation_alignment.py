@@ -41,13 +41,14 @@ class DocumentationAlignmentTests(unittest.TestCase):
         conversion = self.read("html-to-markdown/conversion-rules.md")
         image_section = self.section(conversion, "图片与资源")
         disposition = self.read("html-to-markdown/image-disposition.md")
+        qr_section = self.section(disposition, "QR code 默认规则")
         ledger_section = self.section(disposition, "Ledger")
 
         self.assertIn("@image_disposition.py", conversion)
         self.assertIn("decide_image()", image_section)
         self.assertIn("assert_valid_image_ledger", image_section)
         for decision in ("keep", "remove_as_ui", "manual_review"):
-            self.assertIn(decision, image_section)
+            self.assertIn(decision, qr_section)
         self.assertIn("decoded_link_emitted", ledger_section)
         self.assertIn("decoded_url", ledger_section)
         self.assertIn("可点击链接", disposition)
