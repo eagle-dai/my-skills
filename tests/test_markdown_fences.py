@@ -56,6 +56,23 @@ class MarkdownFenceScannerTests(unittest.TestCase):
         self.assertEqual(block.container_indent, 2)
         self.assertEqual((block.start_line, block.end_line), (1, 3))
 
+    def test_list_item_fence_rejects_column_zero_closer(self) -> None:
+        markdown = "- ```python\n  print('item')\n```\n"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "outside the list-item content indentation",
+        ):
+            markdown_fences.scan_fenced_blocks(markdown)
+
+    def test_normally_indented_opener_can_close_at_column_zero(self) -> None:
+        markdown = "  ```text\ncontent\n```\n"
+
+        block = markdown_fences.scan_fenced_blocks(markdown)[0]
+
+        self.assertEqual(block.container_indent, 0)
+        self.assertEqual((block.start_line, block.end_line), (1, 3))
+
     def test_tilde_fence_accepts_longer_closer(self) -> None:
         markdown = "~~~text\nvalue\n~~~~\n"
 
@@ -64,10 +81,16 @@ class MarkdownFenceScannerTests(unittest.TestCase):
         self.assertEqual(block.marker, "~")
         self.assertEqual(block.marker_length, 3)
 
-    def test_shorter_closer_does_not_close_long_fence(self) -> None:
+    def test_shorter_closer_reports_specific_reason(self) -> None:
         markdown = "````markdown\ncontent\n```\n"
 
-        with self.assertRaisesRegex(ValueError, "opened at line 1"):
+        with self.assertRaisesRegex(ValueError, "shorter than the opener"):
+            markdown_fences.scan_fenced_blocks(markdown)
+
+    def test_closer_with_trailing_text_reports_specific_reason(self) -> None:
+        markdown = "```python\ncode\n``` extra\n"
+
+        with self.assertRaisesRegex(ValueError, "has trailing text"):
             markdown_fences.scan_fenced_blocks(markdown)
 
     def test_even_marker_counts_can_still_be_malformed(self) -> None:
