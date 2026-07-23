@@ -31,14 +31,14 @@ class SelectorContractTests(unittest.TestCase):
                 priority=10,
             ),
             contracts.SemanticCandidate(
-                semantic_id="table-1",
-                source_dom_id="native-table-1",
+                semantic_id="table-2",
+                source_dom_id="native-table-2",
                 representation="native-table",
                 priority=0,
             ),
             contracts.SemanticCandidate(
-                semantic_id="table-2",
-                source_dom_id="native-table-2",
+                semantic_id="table-1",
+                source_dom_id="native-table-1",
                 representation="native-table",
                 priority=0,
             ),
