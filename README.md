@@ -12,7 +12,7 @@
 | Skill | 入口 | 用途 |
 |---|---|---|
 | `html-to-markdown` | [`html-to-markdown/SKILL.md`](html-to-markdown/SKILL.md) | 将 SingleFile HTML 转换为离线 Markdown 包。覆盖正文定位、DOM 基线、表格、列表、图片、题注、评论、Notebook、虚拟化容器、公式处理和浏览器验收。采用主 agent 分析与验收、sub agent 执行转换的调度模式。 |
-| `formula-extraction` | [`formula-extraction/SKILL.md`](formula-extraction/SKILL.md) | 从单个 KaTeX、MathJax 或 MathML 公式 DOM 节点中提取 LaTeX。优先读取原始语义数据，必要时进行 MathML 或 KaTeX HTML 结构重建；无法可靠恢复时 fail closed，由调用方改用截图或人工复核。 |
+| `formula-extraction` | [`formula-extraction/SKILL.md`](formula-extraction/SKILL.md) | 从单个 KaTeX、MathJax 或 MathML 公式节点中提取 LaTeX。优先读取原始语义数据，必要时进行 MathML 或 KaTeX HTML 结构重建；无法可靠恢复时 fail closed，由调用方改用截图或人工复核。 |
 
 `html-to-markdown` 在处理公式密集页面时会引用 `formula-extraction`，后者是公式提取与验证规则的权威来源。
 
@@ -42,16 +42,20 @@
 │   ├── image_disposition.py
 │   ├── markdown_fences.py
 │   ├── notebook-and-virtualized.md
+│   ├── preflight.md
+│   ├── preflight.py
 │   └── self-improvement.md
 └── tests/
     ├── fixtures/
+    │   ├── preflight_article.html
     │   └── selector_contract.html
     ├── test_documentation_alignment.py
     ├── test_dom_contracts.py
     ├── test_first_batch_rules.py
     ├── test_html_to_markdown_contracts.py
     ├── test_image_disposition.py
-    └── test_markdown_fences.py
+    ├── test_markdown_fences.py
+    └── test_preflight.py
 ```
 
 ## 各目录说明
@@ -80,6 +84,8 @@ SingleFile HTML 转 Markdown 的主 skill。
 
 - `SKILL.md`：主流程、复杂度分级、主 agent / sub agent 分工和最终交付要求。
 - `contracts.py`：可执行的 selector、复杂度分级、DOM 语义候选发现与去重，以及评论 ledger 合同。
+- `preflight.py`：从完整 SingleFile 中选择唯一正文，生成精简 HTML、结构 manifest、公式索引和资源索引，并根据风险信号建议 fast/strict 模式。
+- `preflight.md`：预检 CLI、输出 schema、正文选择、formula hash 和 fail-closed 规则。
 - `markdown_fences.py`：按行扫描 Markdown fenced code block，验证 opener/closer、容器和长度，并在结构计数前安全剥离代码块。
 - `fence-validation.md`：fence scanner 的使用方式、阻断条件和反例。
 - `image_disposition.py`：依据正文关系和 UI 证据决定图片保留、删除或保留待复核，并验证 image ledger。
@@ -90,15 +96,25 @@ SingleFile HTML 转 Markdown 的主 skill。
 - `checklist.md`：主 agent 独立验收清单和最终报告模板。
 - `self-improvement.md`：Markdown 边界和题注提取等专属回归用例。
 
+预检用法：
+
+```bash
+python html-to-markdown/preflight.py input.html --output work/preflight
+```
+
+预检成功后，下游 agent 应优先读取 `content.html` 和 JSON manifest，而不是重新读取完整 SingleFile。若正文不唯一、存在虚拟化编辑器或 lazy-load 占位，则进入现有 strict 流程。
+
 ### `tests/`
 
 基于 Python `unittest` 的回归测试。
 
 - `fixtures/selector_contract.html`：包含 Slate wrapper、原生 table/code、列表、公式、题注和歧义结构的代表性 DOM fixture。
+- `fixtures/preflight_article.html`：包含页面包装、正文、等价公式、表格和 data URI 图片的预检 fixture。
 - `test_documentation_alignment.py`：防止二维码、fence、阈值和 CI 描述重新漂移到过期规则。
 - `test_dom_contracts.py`：通过真实 CSS selector 引擎执行全部 selector，并验证 wrapper/native 的语义身份生成、优先级和 fail-closed 行为。
 - `test_markdown_fences.py`：验证 backtick/tilde、长 outer fence、blockquote、列表、错误 closer 和保行剥离行为。
 - `test_image_disposition.py`：验证正文二维码保留、UI 二维码删除、未知二维码保留待复核及 image ledger 守恒。
+- `test_preflight.py`：验证正文 fail-closed 选择、精简快照、公式 hash 去重、strict 信号和确定性输出。
 - `test_html_to_markdown_contracts.py`：测试 `contracts.py` 的复杂度、候选去重和评论 ledger 行为，并检查关键文档是否引用统一合同。
 - `test_first_batch_rules.py`：检查公式、选择器、图片处理和 Markdown 边界等关键规则是否在文档中保持一致。
 
