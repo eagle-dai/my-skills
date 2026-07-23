@@ -63,6 +63,26 @@ class FirstBatchRuleConsistencyTests(unittest.TestCase):
             self.assertIn("明确要求", text, relative)
             self.assertNotIn("默认去站点水印", text, relative)
 
+    def test_mid_is_not_globally_rewritten_to_vert(self) -> None:
+        skill = self.read("formula-extraction/SKILL.md")
+        self.assertIn(r"不得全局执行 `\mid → \vert`", skill)
+        self.assertIn("关系符号", skill)
+        self.assertIn("不能解决 Markdown 表格分隔符冲突", skill)
+
+    def test_gfm_inline_math_documents_cross_renderer_choice(self) -> None:
+        checklist = self.read("html-to-markdown/checklist.md")
+        self.assertIn("ASCII 空格", checklist)
+        self.assertIn("GitHub 与 VS Code", checklist)
+        self.assertIn("backtick 数学变体", checklist)
+        self.assertIn("因此不采用", checklist)
+
+    def test_emphasis_and_centering_repair_evidence_is_retained(self) -> None:
+        checklist = self.read("html-to-markdown/checklist.md")
+        self.assertIn("不要把四个星号机械替换成两个", checklist)
+        self.assertIn("短题注示例", checklist)
+        self.assertIn("说明段落示例", checklist)
+        self.assertIn("200–267 字", checklist)
+
 
 if __name__ == "__main__":
     unittest.main()
