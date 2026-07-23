@@ -132,7 +132,9 @@ def stable_dom_path(node: Any) -> str:
 
     The path is not intended to survive arbitrary page edits. It is an identity
     key within one Phase 1 extraction/verification run, which is exactly the
-    lifetime required by semantic and comment ledgers.
+    lifetime required by semantic and comment ledgers. ``select()`` results and
+    parent ``children`` traversal must expose the same element instances; do not
+    mix nodes from separate parses or reconstructed wrapper objects.
     """
 
     parts: list[str] = []
