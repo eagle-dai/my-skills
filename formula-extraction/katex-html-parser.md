@@ -64,7 +64,7 @@ CSS `top`：从 `style="top: -Xem"` 中提取数值。
 - `\text{prob}` + `x` → `\text{prob}x`：命令以闭合分组 `}` 结尾，不是控制字，`}x` 不会粘成命令；`\text{}` 后是否补视觉间距属于另一条后处理规则，不在此列。
 - 普通符号（`=`、数字、已闭合分组）结尾 + 任意后续 → 不插空格。
 
-`.mspace` 解析为一个空格 part（不是空串）；join 时把 falsy/空 part 跳过即可，真正的命令边界空格由上面的规则补回。
+`.mspace` 解析为一个单空格 part `" "`（不是空串）。它是 truthy，`_join()` 的 `if item` 过滤**只跳过 falsy/空串 part，不会跳过这个空格**——它原样保留作为视觉间距（`["x", " ", "y"] → "x y"`）。因此在 `["\leq", " ", "L"]` 这类序列里，边界正则之所以不再补空格，是因为空格 part 已经在那了，而非"规则补回"。自己写临时 parser 时也只能过滤空串，绝不能把 `.mspace` 的空白一起过滤掉，否则会把 `x <mspace> y` 错误粘成 `xy`。
 
 **仓库已有实现**：`html-to-markdown/formula_batch.py` 的 `_join()` 就是这条规则——前一 part `re.search(r"\\[A-Za-z]+$", result)`（控制字结尾）且后一 part `re.match(r"[A-Za-z\\]", part)`（**字母或反斜杠**开头）才插空格；`_merge()` 把它同时用于分式、上下标和 `.katex-html` 下多个 `.base` 的合并。自己写临时 parser 时照抄这一条，不要用 `''.join`。
 
@@ -178,7 +178,7 @@ def parse_katex_node(node) -> ParseResult:
     # 1. 判断节点类型
     # 2. 分派处理函数
     # 3. 递归处理子节点
-    # 4. join 时跳过 falsy part，在 control-word 边界补空格
+    # 4. join 时只跳过空串 part（.mspace 的单空格是 truthy，保留），在 control-word 边界补空格
     #    ——base 内和跨 base 合并都走同一规则（见「多 .base 拼接与命令边界」）
     # 5. 任一未知语义节点 → success=False
     ...
@@ -191,7 +191,7 @@ def post_process(latex: str) -> str:
 关键设计决策：
 
 - 递归下降，每个 CSS 类对应一个处理函数
-- 命令边界只在 parser parts 的 join 阶段处理；**base 内与跨 base 合并共用同一 join，先过滤空 part**
+- 命令边界只在 parser parts 的 join 阶段处理；**base 内与跨 base 合并共用同一 join，只过滤空串 part（`.mspace` 的单空格保留作视觉间距）**
 - 后处理管道作为最后一步统一应用
 - **未知结构 fail-closed**：返回失败标记和节点信息，由调用方截图或人工复核
 - **禁止**把 `textContent` 当作可交付公式；它会静默丢失分式、上下标、矩阵等结构
