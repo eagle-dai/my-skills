@@ -67,7 +67,13 @@ class PipelineTests(unittest.TestCase):
                 )
 
     def test_adjacent_inline_formulas_are_separated(self) -> None:
-        """Two adjacent inline formulas must not collide into a ``$$`` delimiter."""
+        """Two adjacent inline formulas must not collide into a ``$$`` delimiter.
+
+        A paragraph whose only content is two neighbouring inline formulas
+        would otherwise serialize as ``$D_t=1$$T_t=2$``; the ``$$`` reads as a
+        display-math delimiter on GitHub. The fast path must emit ``$a$ $b$``
+        while keeping both as inline math (formula_inline stays 2, no block).
+        """
 
         html = """
         <html><body><article>
@@ -92,7 +98,12 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
 
     def test_adjacent_inline_formulas_separated_inside_transparent_span(self) -> None:
-        """Adjacent formulas nested in a transparent span must also separate."""
+        """Adjacent formulas nested in a transparent <span> must also separate.
+
+        When the two formulas share a wrapping <span>, the outer paragraph sees
+        one fragment and the inner transparent span joins them. That join must
+        also go through the separator rule, otherwise ``$a$$b$`` still leaks.
+        """
 
         html = """
         <html><body><article>
@@ -210,10 +221,7 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(outcome.status, "strict_required")
             self.assertEqual(outcome.report["recommended_mode"], "strict")
-            self.assertIn(
-                "unsupported semantic element <details>",
-                outcome.report["strict_reasons"][0],
-            )
+            self.assertIn("unsupported semantic element <details>", outcome.report["strict_reasons"][0])
 
     def test_katex_html_only_formula_requires_matching_validation_report(self) -> None:
         html = """
@@ -234,14 +242,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(pending.status, "blocked")
             self.assertIsNone(pending.zip_path)
             self.assertEqual(pending.report["formula_batch"]["pending_validation"], 1)
-            self.assertIn(
-                "validation report is required",
-                pending.report["formula_validation_error"],
-            )
-            self.assertIn(
-                "{{FORMULA:formula-0001}}",
-                pending.markdown_path.read_text(encoding="utf-8"),
-            )
+            self.assertIn("validation report is required", pending.report["formula_validation_error"])
+            self.assertIn("{{FORMULA:formula-0001}}", pending.markdown_path.read_text(encoding="utf-8"))
 
             report_path = root / "validation-report.json"
             report_path.write_text(
