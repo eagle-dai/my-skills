@@ -52,6 +52,22 @@ Content span：排除 `.vlist-s` 和 `.strut` 后的直接 `<span>` 子节点。
 
 CSS `top`：从 `style="top: -Xem"` 中提取数值。
 
+## 多 `.base` 拼接与命令边界
+
+一个 `.katex-html` 常被 KaTeX 切成**多个 `.base` span**：每个关系符/二元运算符（`=`、`≤`、`+` 等）后会开一个新 `.base`。例如 `A_t=E_t≤L` 渲染为 3 个 `.base`。
+
+合并多个 base（以及 base 内多个 token）时，**必须走同一条 TeX control-word 边界规则**，不能裸 `''.join`：只有当**前一 part 以 `\[A-Za-z]+` 形式的控制字命令结尾，且后一 part 以字母或反斜杠开头**时，才插一个空格。
+
+- `\leq` + `L` → `\leq L`：不插空格会粘成 `\leqL`，被当成一个未定义控制序列（`Undefined control sequence`）。
+- `\sim` + `\nu` → `\sim \nu`：后一 part 以反斜杠开头（另一个命令），同样要分隔，否则 `\sim\nu` 语义粘连。
+- `\leq` + `1` → `\leq1`：**数字不会成为命令名的一部分**，不需分隔。
+- `\text{prob}` + `x` → `\text{prob}x`：命令以闭合分组 `}` 结尾，不是控制字，`}x` 不会粘成命令；`\text{}` 后是否补视觉间距属于另一条后处理规则，不在此列。
+- 普通符号（`=`、数字、已闭合分组）结尾 + 任意后续 → 不插空格。
+
+`.mspace` 解析为一个单空格 part `" "`（不是空串）。它是 truthy，`_join()` 的 `if item` 过滤**只跳过 falsy/空串 part，不会跳过这个空格**——它原样保留作为视觉间距（`["x", " ", "y"] → "x y"`）。因此在 `["\leq", " ", "L"]` 这类序列里，边界正则之所以不再补空格，是因为空格 part 已经在那了，而非"规则补回"。自己写临时 parser 时也只能过滤空串，绝不能把 `.mspace` 的空白一起过滤掉，否则会把 `x <mspace> y` 错误粘成 `xy`。
+
+**仓库已有实现**：`html-to-markdown/formula_batch.py` 的 `_join()` 就是这条规则——前一 part `re.search(r"\\[A-Za-z]+$", result)`（控制字结尾）且后一 part `re.match(r"[A-Za-z\\]", part)`（**字母或反斜杠**开头）才插空格；`_merge()` 把它同时用于分式、上下标和 `.katex-html` 下多个 `.base` 的合并。自己写临时 parser 时照抄这一条，不要用 `''.join`。
+
 ## op-limits 结构
 
 ```text
@@ -162,7 +178,8 @@ def parse_katex_node(node) -> ParseResult:
     # 1. 判断节点类型
     # 2. 分派处理函数
     # 3. 递归处理子节点
-    # 4. 在 token/part join 边界处理命令空格
+    # 4. join 时只跳过空串 part（.mspace 的单空格是 truthy，保留），在 control-word 边界补空格
+    #    ——base 内和跨 base 合并都走同一规则（见「多 .base 拼接与命令边界」）
     # 5. 任一未知语义节点 → success=False
     ...
 
@@ -174,7 +191,7 @@ def post_process(latex: str) -> str:
 关键设计决策：
 
 - 递归下降，每个 CSS 类对应一个处理函数
-- 命令边界只在 parser parts 的 join 阶段处理
+- 命令边界只在 parser parts 的 join 阶段处理；**base 内与跨 base 合并共用同一 join，只过滤空串 part（`.mspace` 的单空格保留作视觉间距）**
 - 后处理管道作为最后一步统一应用
 - **未知结构 fail-closed**：返回失败标记和节点信息，由调用方截图或人工复核
 - **禁止**把 `textContent` 当作可交付公式；它会静默丢失分式、上下标、矩阵等结构
