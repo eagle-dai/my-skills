@@ -60,6 +60,37 @@ class PipelineTests(unittest.TestCase):
                     "files/pipeline_article/asset-0001.png", archive.namelist()
                 )
 
+    def test_adjacent_inline_formulas_are_separated(self) -> None:
+        """Two adjacent inline formulas must not collide into a ``$$`` delimiter.
+
+        A paragraph whose only content is two neighbouring inline formulas
+        would otherwise serialize as ``$D_t=1$$T_t=2$``; the ``$$`` reads as a
+        display-math delimiter on GitHub. The fast path must emit ``$a$ $b$``
+        while keeping both as inline math (formula_inline stays 2, no block).
+        """
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a paragraph that contains only two adjacent formulas.</p>
+          <p><span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">D_t=1</annotation></math></span></span><span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">T_t=2</annotation></math></span></span></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "adjacent.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("$D_t=1$ $T_t=2$", markdown)
+            self.assertNotIn("$D_t=1$$T_t=2$", markdown)
+            self.assertNotIn("$$", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
+
     def test_virtualized_page_routes_to_strict_without_markdown(self) -> None:
         html = """
         <html><body><main>

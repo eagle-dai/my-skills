@@ -52,22 +52,20 @@ Content span：排除 `.vlist-s` 和 `.strut` 后的直接 `<span>` 子节点。
 
 CSS `top`：从 `style="top: -Xem"` 中提取数值。
 
-## 多 `.base` 拼接与命令边界（易漏）
+## 多 `.base` 拼接与命令边界
 
 一个 `.katex-html` 常被 KaTeX 切成**多个 `.base` span**：每个关系符/二元运算符（`=`、`≤`、`+` 等）后会开一个新 `.base`。例如 `A_t=E_t≤L` 渲染为 3 个 `.base`。
 
-解析器合并多个 base 的结果时，**必须和 base 内 token join 走同一条命令边界规则**，不能 `''.join`：
+合并多个 base（以及 base 内多个 token）时，**必须走同一条 TeX control-word 边界规则**，不能裸 `''.join`：只有当**前一 part 以 `\[A-Za-z]+` 形式的控制字命令结尾，且后一 part 以字母开头**时，才插一个空格。
 
-- 前一 part 以 LaTeX 命令结尾（`\leq`、`\gamma`、`\text{...}` 等控制序列或花括号命令），后一 part 以字母/数字开头时，必须插一个空格。否则 `\leq` + `L` 粘连成 `\leqL`（未定义控制序列，KaTeX/MathJax 报错）。
-- 前一 part 是普通符号（`=`、数字、已闭合分组），后一 part 任意时，不额外插空格。
+- `\leq` + `L` → `\leq L`：不插空格会粘成 `\leqL`，被当成一个未定义控制序列（`Undefined control sequence`）。
+- `\leq` + `1` → `\leq1`：**数字不会成为命令名的一部分**，不需分隔。
+- `\text{prob}` + `x` → `\text{prob}x`：命令以闭合分组 `}` 结尾，不是控制字，`}x` 不会粘成命令；`\text{}` 后是否补视觉间距属于另一条后处理规则，不在此列。
+- 普通符号（`=`、数字、已闭合分组）结尾 + 任意后续 → 不插空格。
 
-机制：`\leqL` 会被 LaTeX 当成一个控制序列名去查，查不到即 `Undefined control sequence`；`\leq L` 才是"关系符 + 变量"。边界规则只认"前一 token 是不是以命令收尾"，与它在 base 内还是跨 base 无关。
+`.mspace` 解析为一个空格 part（不是空串）；join 时把 falsy/空 part 跳过即可，真正的命令边界空格由上面的规则补回。
 
-### `.mspace` 空 part 破坏边界判断
-
-`.mspace` 渲染为空格，解析后是**空串 part**。若它夹在命令 part 和字母 part 之间（`[\leq, "", L]`），朴素的"看 `parts[i-1]`"会指向空串而非真正的前一命令 → 边界误判、漏插空格。
-
-规则：**join 前先过滤掉空串 part，再判断相邻边界**。KaTeX 的 `.mspace` 只表示视觉间距，不携带语义，过滤不丢信息；真正需要的空格由命令边界规则补回。
+**仓库已有实现**：`html-to-markdown/formula_batch.py` 的 `_join()` 就是这条规则（`re.search(r"\\[A-Za-z]+$", result)` 且下一 part 以字母开头才插空格），`_merge()` 把它同时用于分式、上下标和 `.katex-html` 下多个 `.base` 的合并。自己写临时 parser 时照抄这一条，不要用 `''.join`。
 
 ## op-limits 结构
 
@@ -179,7 +177,7 @@ def parse_katex_node(node) -> ParseResult:
     # 1. 判断节点类型
     # 2. 分派处理函数
     # 3. 递归处理子节点
-    # 4. 过滤空 part（含 .mspace），再在 token/part join 边界处理命令空格
+    # 4. join 时跳过 falsy part，在 control-word 边界补空格
     #    ——base 内和跨 base 合并都走同一规则（见「多 .base 拼接与命令边界」）
     # 5. 任一未知语义节点 → success=False
     ...

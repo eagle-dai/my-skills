@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 from bs4 import NavigableString, Tag
 
@@ -59,6 +59,27 @@ class ConversionResult:
     image_ledger: tuple[Any, ...]
     unresolved_formulas: tuple[dict[str, str], ...]
     warnings: tuple[str, ...]
+
+
+def _join_inline(parts: Iterable[str]) -> str:
+    """Concatenate inline fragments, separating adjacent inline formulas.
+
+    Two adjacent inline formulas render as ``$a$$b$``; the ``$$`` is parsed by
+    GitHub/KaTeX as a display-math delimiter and breaks rendering. Inserting a
+    single space (``$a$ $b$``) keeps both as inline math without changing the
+    formula type or the ``formula_inline`` count. Only a ``$``-terminated
+    fragment immediately followed by a ``$``-led fragment collides; every other
+    boundary is left untouched.
+    """
+
+    result = ""
+    for part in parts:
+        if not part:
+            continue
+        if result.endswith("$") and part.startswith("$"):
+            result += " "
+        result += part
+    return result
 
 
 def clean_inline(value: str) -> str:
@@ -173,7 +194,7 @@ class MarkdownConverter:
         raise FastPathUnsupported(f"unsupported semantic element <{node.name}>")
 
     def inline_children(self, node: Tag) -> str:
-        return clean_inline("".join(self.inline(child) for child in node.children))
+        return clean_inline(_join_inline(self.inline(child) for child in node.children))
 
     def inline(self, node: Any) -> str:
         if isinstance(node, NavigableString):
