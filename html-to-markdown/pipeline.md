@@ -45,6 +45,7 @@ python html-to-markdown/pipeline.py input.html \
 - 无 rowspan/colspan 的规则表格；
 - 在显式指定 `--allow-unprocessed-images` 时，对 data URI 图片进行离线解码并保持原样；
 - 带 annotation/data 属性等原始 LaTeX 的公式；
+- 位于已识别公式容器内部的 `math/tex` script 原始 LaTeX；
 - KaTeX HTML-only 公式的批量解析、去重、缓存与验证中间态；
 - wrapper/native DOM canonicalization；
 - image ledger、fence scanner 和结构数量守恒；
@@ -61,6 +62,7 @@ python html-to-markdown/pipeline.py input.html \
 - 资源缺失或外部图片尚未本地化；
 - `<table><caption>`、`<figure><figcaption>` 等已确认题注，因为 fast path 尚未提供 caption ledger 守恒；
 - 页面包含图片且用户没有显式指定 `--allow-unprocessed-images`；
+- 独立于已识别公式容器的 MathJax v2 `<script type="math/tex">`；这类 source script 会在 compaction 中被删除，且无法与渲染节点可靠绑定，必须用原始页面进入 strict；
 - fast path 不支持的结构。
 
 ## 公式批处理与验证
@@ -71,6 +73,8 @@ python html-to-markdown/pipeline.py input.html \
 2. 使用 `.formula-cache.json` 缓存解析结果；
 3. 为待验证公式生成 `formula-validation.html` 和 `formula-results.json`；
 4. 在验证完成前保留 `{{FORMULA:formula-0001}}` 占位符，将状态设为 `blocked`，且不生成最终 ZIP。
+
+独立的 MathJax v2 source script 不属于上述 batch 输入。pipeline 会在 fast 转换前检测它们并返回 `strict_required`；只有嵌入 `.katex`、Slate KaTeX 等已识别公式容器的 `math/tex` script 才能作为对应 FormulaRecord 的原始 LaTeX。
 
 运行 `formula-validation.html` 中的批量验证逻辑并保存 JSON 报告后，使用：
 
