@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Any
+import unicodedata
 from urllib.parse import unquote_to_bytes
 import zipfile
 
@@ -73,7 +74,15 @@ def title_from_root(root: Tag, fallback: str) -> str:
 
 
 def safe_package_name(value: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
+    """Return a portable package name without discarding non-ASCII text.
+
+    Python's ``\w`` is Unicode-aware, so Chinese and other letter/digit scripts
+    remain distinct while punctuation and path separators collapse to ``-``.
+    NFKC normalization also makes visually equivalent full-width forms stable.
+    """
+
+    value = unicodedata.normalize("NFKC", value)
+    value = re.sub(r"[^\w.-]+", "-", value, flags=re.UNICODE).strip("-._")
     return value or "article"
 
 
