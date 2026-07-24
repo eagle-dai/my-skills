@@ -94,21 +94,29 @@ description: Extract and validate LaTeX from KaTeX, MathJax, or MathML formula D
 
 以下字符串本身可能合法，不得自动改写：
 
-- 相邻希腊符号；
-- 同时包含上下标的变量；
+- `\pi\theta`、`\mu\theta` 等相邻符号；
+- `V^\pi_\theta`、`Q^\pi_\theta` 等同时含上下标的表达式；
+- `sumt`、`maxa`、`e\phi` 等可能是普通变量或乘积的字符串；
 - 看起来像命令粘连、但无法证明来自两个独立 parser part 的字符串。
 
 ## parser join 边界
 
-命令边界修复只能发生在 parser token/part 的 join 阶段。
+命令边界修复只能发生在 parser token/part 的 join 阶段。以下反例都以 parser parts 表示：
 
 ```text
-parts = ["\sim", "p"]   -> "\sim p"
-parts = ["\simeq"]      -> "\simeq"
-parts = ["\sim", "\nu"] -> "\sim \nu"
+parts = ["\sim", "p"]      -> "\sim p"
+parts = ["\simeq"]         -> "\simeq"
+parts = ["\simneqq"]       -> "\simneqq"
+parts = ["\sim", "\nu"]  -> "\sim \nu"
 ```
 
-不得在最终 LaTeX 字符串上用宽泛正则拆“命令前缀 + 字母”，否则会破坏合法长命令。
+**禁止**在最终字符串执行：
+
+```text
+\\sim([a-zA-Zα-ωΑ-Ω]) -> \\sim \1
+```
+
+该规则会把合法命令 `\simeq`、`\simneqq` 等拆坏。不得在最终 LaTeX 字符串上用宽泛正则拆“命令前缀 + 字母”。
 
 KaTeX HTML 的详细 join、`.mspace`、多 `.base` 和 fail-closed 规则以 @katex-html-parser.md 与 `html-to-markdown/formula_batch.py` 为准。
 
@@ -123,7 +131,7 @@ KaTeX HTML 的详细 join、`.mspace`、多 `.base` 和 fail-closed 规则以 @k
 - `\text{}` 内需要转义的特殊字符；
 - 已由 parser part 边界证明的命令分隔。
 
-不得全局把 `\mid` 改成 `\vert`，也不得借 Unicode 映射改变上下标关系。
+不得全局执行 `\mid → \vert`。`\mid` 是关系符号，`\vert` 更接近竖线或定界符；替换会改变间距或语义，而且不能解决 Markdown 表格分隔符冲突。不得借 Unicode 映射改变上下标关系。
 
 ## 验证
 
