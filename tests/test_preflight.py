@@ -60,6 +60,40 @@ class PreflightTests(unittest.TestCase):
             result.manifest["signals"]["strict_reasons"],
         )
 
+    def test_distinct_lazy_source_recommends_strict(self) -> None:
+        html = """
+        <html><body><article>
+          <p>This substantial article body contains an image whose src is only a
+          placeholder while data-src points to the real chart resource.</p>
+          <img src="placeholder.gif" data-src="real-chart.png" alt="chart">
+        </article></body></html>
+        """
+
+        result = preflight.build_preflight(html)
+
+        self.assertEqual(result.manifest["recommended_mode"], "strict")
+        self.assertEqual(result.assets[0].source_kind, "lazy:data-src")
+        self.assertTrue(result.assets[0].lazy)
+        self.assertIn(
+            "1 lazy or missing resource placeholders",
+            result.manifest["signals"]["strict_reasons"],
+        )
+
+    def test_matching_lazy_source_does_not_force_strict(self) -> None:
+        html = """
+        <html><body><article>
+          <p>This substantial article body contains duplicate source metadata, but
+          both attributes identify exactly the same image resource.</p>
+          <img src="chart.png" data-src="chart.png" alt="chart">
+        </article></body></html>
+        """
+
+        result = preflight.build_preflight(html)
+
+        self.assertEqual(result.manifest["recommended_mode"], "fast")
+        self.assertEqual(result.assets[0].source_kind, "url")
+        self.assertFalse(result.assets[0].lazy)
+
     def test_ambiguous_body_fails_closed(self) -> None:
         body = (
             "This is substantial article text that deliberately exceeds the "
