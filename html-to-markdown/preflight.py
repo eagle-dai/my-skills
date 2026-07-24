@@ -8,7 +8,6 @@ This module deliberately fails closed when it cannot identify one body
 container. The strict workflow can then inspect the original page instead of a
 fast-path converter silently guessing the wrong content range.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -31,6 +30,12 @@ BODY_SELECTORS: tuple[str, ...] = (
 )
 FORMULA_SELECTOR = '[data-slate-type*="katex"], .katex, math'
 REMOVABLE_TAGS: tuple[str, ...] = ("script", "style", "noscript", "template")
+LAZY_SOURCE_ATTRIBUTES: tuple[str, ...] = (
+    "data-src",
+    "data-original",
+    "data-lazy",
+    "srcset",
+)
 STRICT_MARKERS: dict[str, tuple[str, ...]] = {
     "notebook": (
         "jp-cell",
@@ -285,15 +290,30 @@ def collect_formulas(root: Tag) -> tuple[FormulaRecord, ...]:
 
 
 def _asset_source(node: Tag) -> tuple[str, str]:
-    source = str(node.attrs.get("src", ""))
+    """Return the effective source class without trusting placeholder ``src``.
+
+    SingleFile pages commonly retain both a placeholder ``src`` and the real
+    resource in ``data-src``/``srcset``. Any distinct lazy candidate is routed
+    to strict mode rather than allowing the fast path to emit the placeholder.
+    """
+
+    source = str(node.attrs.get("src", "")).strip()
+    lazy_candidates = [
+        (attribute, str(node.attrs.get(attribute, "")).strip())
+        for attribute in LAZY_SOURCE_ATTRIBUTES
+        if str(node.attrs.get(attribute, "")).strip()
+    ]
+    for attribute, fallback in lazy_candidates:
+        if fallback != source:
+            return f"lazy:{attribute}", fallback
+
     if source.startswith("data:"):
         return "data-uri", source
     if source:
         return "url", source
-    for attribute in ("data-src", "data-original", "data-lazy", "srcset"):
-        fallback = str(node.attrs.get(attribute, ""))
-        if fallback:
-            return f"lazy:{attribute}", fallback
+    if lazy_candidates:
+        attribute, fallback = lazy_candidates[0]
+        return f"lazy:{attribute}", fallback
     return "missing", ""
 
 
