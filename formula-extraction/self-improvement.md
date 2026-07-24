@@ -13,6 +13,9 @@
 | `\sim` + Greek token | parser parts `["\sim", "\nu"]` | `\sim \nu` | 单一 part `["\simneqq"]` → 不变 |
 | 已有空格 | `\sim p` | 不变 | 不重复插空格 |
 | LaTeX token 拼接 | parser parts `["\gamma", "V"]` | `\gamma V` | 单一 part `["\Gamma"]` → 不变 |
+| 跨 base 命令边界 | parser parts（跨 base）`["\leq", "L"]` | `\leq L` | `["=", "L"]` → `=L`（非命令收尾不插空格） |
+| 跨 base 非命令 | parser parts `["E_{t}", "="]` | `E_{t}=` | `["A_{t}", "="]` → `A_{t}=`（不插空格） |
+| 空 part 过滤 | parser parts `["\leq", "", "L"]`（中间为 .mspace） | `\leq L` | `["x", "", "y"]` → `xy`（过滤空 part 后非命令收尾，不插空格） |
 | `\text{}` 后粘连 | `\text{prob}1` | `\text{prob} 1` | `\text{prob} 1` → 不变 |
 | Unicode ϵ | `ϵ` | `\epsilon` | `\epsilon` → 不变 |
 | Unicode ∗ | `∗` | `*`（数学）/ `\ast`（GitHub） | 见平台差异 |

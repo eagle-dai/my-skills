@@ -52,6 +52,23 @@ Content span：排除 `.vlist-s` 和 `.strut` 后的直接 `<span>` 子节点。
 
 CSS `top`：从 `style="top: -Xem"` 中提取数值。
 
+## 多 `.base` 拼接与命令边界（易漏）
+
+一个 `.katex-html` 常被 KaTeX 切成**多个 `.base` span**：每个关系符/二元运算符（`=`、`≤`、`+` 等）后会开一个新 `.base`。例如 `A_t=E_t≤L` 渲染为 3 个 `.base`。
+
+解析器合并多个 base 的结果时，**必须和 base 内 token join 走同一条命令边界规则**，不能 `''.join`：
+
+- 前一 part 以 LaTeX 命令结尾（`\leq`、`\gamma`、`\text{...}` 等控制序列或花括号命令），后一 part 以字母/数字开头时，必须插一个空格。否则 `\leq` + `L` 粘连成 `\leqL`（未定义控制序列，KaTeX/MathJax 报错）。
+- 前一 part 是普通符号（`=`、数字、已闭合分组），后一 part 任意时，不额外插空格。
+
+机制：`\leqL` 会被 LaTeX 当成一个控制序列名去查，查不到即 `Undefined control sequence`；`\leq L` 才是"关系符 + 变量"。边界规则只认"前一 token 是不是以命令收尾"，与它在 base 内还是跨 base 无关。
+
+### `.mspace` 空 part 破坏边界判断
+
+`.mspace` 渲染为空格，解析后是**空串 part**。若它夹在命令 part 和字母 part 之间（`[\leq, "", L]`），朴素的"看 `parts[i-1]`"会指向空串而非真正的前一命令 → 边界误判、漏插空格。
+
+规则：**join 前先过滤掉空串 part，再判断相邻边界**。KaTeX 的 `.mspace` 只表示视觉间距，不携带语义，过滤不丢信息；真正需要的空格由命令边界规则补回。
+
 ## op-limits 结构
 
 ```text
@@ -162,7 +179,8 @@ def parse_katex_node(node) -> ParseResult:
     # 1. 判断节点类型
     # 2. 分派处理函数
     # 3. 递归处理子节点
-    # 4. 在 token/part join 边界处理命令空格
+    # 4. 过滤空 part（含 .mspace），再在 token/part join 边界处理命令空格
+    #    ——base 内和跨 base 合并都走同一规则（见「多 .base 拼接与命令边界」）
     # 5. 任一未知语义节点 → success=False
     ...
 
@@ -174,7 +192,7 @@ def post_process(latex: str) -> str:
 关键设计决策：
 
 - 递归下降，每个 CSS 类对应一个处理函数
-- 命令边界只在 parser parts 的 join 阶段处理
+- 命令边界只在 parser parts 的 join 阶段处理；**base 内与跨 base 合并共用同一 join，先过滤空 part**
 - 后处理管道作为最后一步统一应用
 - **未知结构 fail-closed**：返回失败标记和节点信息，由调用方截图或人工复核
 - **禁止**把 `textContent` 当作可交付公式；它会静默丢失分式、上下标、矩阵等结构
