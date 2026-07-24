@@ -14,6 +14,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
 from fast_converter import EmittedCounts, FastPathUnsupported, MarkdownConverter
+from formula_batch import resolve_formulas
 from pipeline_utils import (
     canonicalize_manifest_counts,
     deterministic_zip,
@@ -46,12 +47,7 @@ def validate_counts(expected: dict[str, int], emitted: EmittedCounts) -> list[st
 
 
 def clear_previous_delivery(output: Path, package: str) -> None:
-    """Remove stale deliverables before starting a new run.
-
-    A previous successful ZIP must never survive a later blocked or strict run,
-    because callers could otherwise mistake it for the current conversion.
-    Preflight and diagnostic files are overwritten separately.
-    """
+    """Remove stale deliverables before starting a new run."""
 
     article_dir = output / package
     zip_path = output / f"{package}.zip"
@@ -79,7 +75,13 @@ def strict_outcome(
     return PipelineOutcome("strict_required", report)
 
 
-def run_pipeline(input_path: Path, output: Path, *, mode: str = "auto") -> PipelineOutcome:
+def run_pipeline(
+    input_path: Path,
+    output: Path,
+    *,
+    mode: str = "auto",
+    formula_validation_report: Path | None = None,
+) -> PipelineOutcome:
     if mode not in {"auto", "fast", "strict"}:
         raise ValueError(f"unsupported mode: {mode}")
 
@@ -106,9 +108,17 @@ def run_pipeline(input_path: Path, output: Path, *, mode: str = "auto") -> Pipel
 
     article_dir = output / package
     title = title_from_root(root, input_path.stem)
+    batch = resolve_formulas(
+        result.compact_html,
+        result.formulas,
+        cache_path=output / ".formula-cache.json",
+        validation_path=output / "formula-validation.html",
+        results_path=output / "formula-results.json",
+        validation_report_path=formula_validation_report,
+    )
     converter = MarkdownConverter(
         root,
-        result.formulas,
+        batch.records,
         result.assets,
         article_dir / "files" / package,
         f"files/{package}",
@@ -122,7 +132,15 @@ def run_pipeline(input_path: Path, output: Path, *, mode: str = "auto") -> Pipel
     count_errors = validate_counts(result.manifest["counts"], conversion.counts)
     unresolved = list(conversion.unresolved_formulas)
     blockers = list(count_errors)
-    if unresolved:
+    if batch.failures:
+        blockers.append(f"{len(batch.failures)} formula parse failures")
+    if batch.pending_validation:
+        blockers.append(
+            f"{len(batch.pending_validation)} formulas await batch KaTeX validation"
+        )
+    if batch.validation_error:
+        blockers.append(batch.validation_error)
+    if unresolved and not (batch.failures or batch.pending_validation):
         blockers.append(f"{len(unresolved)} formulas require batch resolution")
     status = "blocked" if blockers else "converted"
 
@@ -141,6 +159,10 @@ def run_pipeline(input_path: Path, output: Path, *, mode: str = "auto") -> Pipel
         "image_ledger": [asdict(entry) for entry in conversion.image_ledger],
         "markdown": str(markdown_path.relative_to(output)),
         "blockers": blockers,
+        "formula_batch": batch.stats,
+        "formula_failures": list(batch.failures),
+        "formula_pending_validation": list(batch.pending_validation),
+        "formula_validation_error": batch.validation_error,
     }
     write_json(output / "report.json", report)
 
@@ -156,13 +178,23 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("input", type=Path)
     value.add_argument("--output", type=Path, required=True)
     value.add_argument("--mode", choices=("auto", "fast", "strict"), default="auto")
+    value.add_argument(
+        "--formula-validation-report",
+        type=Path,
+        help="JSON emitted after running formula-validation.html with a pinned KaTeX runtime",
+    )
     return value
 
 
 def main() -> int:
     args = parser().parse_args()
     try:
-        outcome = run_pipeline(args.input, args.output, mode=args.mode)
+        outcome = run_pipeline(
+            args.input,
+            args.output,
+            mode=args.mode,
+            formula_validation_report=args.formula_validation_report,
+        )
     except (OSError, UnicodeError, ValueError, preflight.BodySelectionError) as error:
         print(f"pipeline failed: {error}")
         return 2
