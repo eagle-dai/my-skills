@@ -9,6 +9,8 @@ import shutil
 import sys
 from typing import Any
 
+from bs4 import BeautifulSoup
+
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
@@ -58,6 +60,25 @@ def clear_previous_delivery(output: Path, package: str) -> None:
         zip_path.unlink()
 
 
+def standalone_math_tex_script_count(html: str) -> int:
+    """Count MathJax v2 source scripts outside recognized formula containers.
+
+    A script nested inside a KaTeX/Slate formula candidate can be indexed by
+    preflight and used as original LaTeX. A standalone MathJax v2 source script
+    is not part of the executable formula selector; compaction removes it and a
+    fast conversion could otherwise report success after silently losing the
+    formula. Those pages must enter the rendered-DOM strict workflow.
+    """
+
+    soup = BeautifulSoup(html, "lxml")
+    return sum(
+        1
+        for node in soup.find_all("script")
+        if str(node.attrs.get("type", "")).strip().lower().startswith("math/tex")
+        and not preflight._inside_formula(node)
+    )
+
+
 def strict_outcome(
     output: Path,
     mode: str,
@@ -94,7 +115,9 @@ def run_pipeline(
     output.mkdir(parents=True, exist_ok=True)
     clear_previous_delivery(output, package)
 
-    result = preflight.build_preflight(input_path.read_text(encoding="utf-8"))
+    source_html = input_path.read_text(encoding="utf-8")
+    standalone_math_tex_scripts = standalone_math_tex_script_count(source_html)
+    result = preflight.build_preflight(source_html)
     root = root_from_html(result.compact_html)
     canonical_error = ""
     try:
@@ -106,6 +129,12 @@ def run_pipeline(
     reasons = list(result.manifest["signals"]["strict_reasons"])
     if canonical_error:
         reasons.append(canonical_error)
+
+    if standalone_math_tex_scripts:
+        reasons.append(
+            f"{standalone_math_tex_scripts} standalone math/tex script formulas require "
+            "strict MathJax handling because preflight cannot bind them to a formula node"
+        )
 
     caption_count = len(root.select(contracts.CSS_SELECTORS["caption"]))
     if caption_count:
