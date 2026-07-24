@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -10,12 +11,20 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "html-to-markdown" / "pipeline.py"
+FORMULA_MODULE_PATH = ROOT / "html-to-markdown" / "formula_batch.py"
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "pipeline_article.html"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_pipeline", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 pipeline = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = pipeline
 SPEC.loader.exec_module(pipeline)
+FORMULA_SPEC = importlib.util.spec_from_file_location(
+    "html_to_markdown_formula_batch_for_pipeline_tests", FORMULA_MODULE_PATH
+)
+assert FORMULA_SPEC is not None and FORMULA_SPEC.loader is not None
+formula_batch = importlib.util.module_from_spec(FORMULA_SPEC)
+sys.modules[FORMULA_SPEC.name] = formula_batch
+FORMULA_SPEC.loader.exec_module(formula_batch)
 
 
 class PipelineTests(unittest.TestCase):
@@ -121,28 +130,77 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "strict_required")
             self.assertIn("unsupported semantic element <details>", outcome.report["strict_reasons"][0])
 
-    def test_katex_html_only_formula_blocks_final_package(self) -> None:
+    def test_katex_html_only_formula_requires_matching_validation_report(self) -> None:
         html = """
         <html><body><article>
           <p>This article body is sufficiently long for deterministic selection
-          and contains one formula without an original semantic source.</p>
-          <span class="katex"><span class="mord mathnormal">x</span></span>
+          and contains one simple formula without an original semantic source.</p>
+          <span class="katex"><span class="katex-html"><span class="base"><span class="mord mathnormal">x</span></span></span></span>
         </article></body></html>
         """
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "formula.html"
+            output = root / "out"
+            source.write_text(html, encoding="utf-8")
+
+            pending = pipeline.run_pipeline(source, output, mode="fast")
+
+            self.assertEqual(pending.status, "blocked")
+            self.assertIsNone(pending.zip_path)
+            self.assertEqual(pending.report["formula_batch"]["pending_validation"], 1)
+            self.assertIn("validation report is required", pending.report["formula_validation_error"])
+            self.assertIn("{{FORMULA:formula-0001}}", pending.markdown_path.read_text(encoding="utf-8"))
+
+            report_path = root / "validation-report.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": formula_batch.VALIDATION_SCHEMA_VERSION,
+                        "parser_version": formula_batch.PARSER_VERSION,
+                        "validator_version": formula_batch.VALIDATOR_VERSION,
+                        "runtime_loaded": True,
+                        "completed": True,
+                        "katex_version": "test-runtime",
+                        "total": 1,
+                        "passed": 1,
+                        "failures": [],
+                        "items": pending.report["formula_pending_validation"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolved = pipeline.run_pipeline(
+                source,
+                output,
+                mode="fast",
+                formula_validation_report=report_path,
+            )
+
+            self.assertEqual(resolved.status, "converted")
+            self.assertIsNotNone(resolved.zip_path)
+            assert resolved.markdown_path is not None
+            self.assertIn("$x$", resolved.markdown_path.read_text(encoding="utf-8"))
+            self.assertEqual(resolved.report["formula_batch"]["pending_validation"], 0)
+
+    def test_unknown_katex_structure_blocks_final_package(self) -> None:
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and contains an unsupported matrix structure that must fail closed.</p>
+          <span class="katex"><span class="katex-html"><span class="mtable">x</span></span></span>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "unknown-formula.html"
             source.write_text(html, encoding="utf-8")
             outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
 
             self.assertEqual(outcome.status, "blocked")
             self.assertIsNone(outcome.zip_path)
-            self.assertEqual(len(outcome.report["unresolved_formulas"]), 1)
-            assert outcome.markdown_path is not None
-            self.assertIn(
-                "{{FORMULA:formula-0001}}",
-                outcome.markdown_path.read_text(encoding="utf-8"),
-            )
+            self.assertEqual(outcome.report["formula_batch"]["failures"], 1)
 
     def test_blocked_run_removes_previous_successful_zip(self) -> None:
         blocked_html = """
