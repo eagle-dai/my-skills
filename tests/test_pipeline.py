@@ -91,6 +91,36 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
 
+    def test_adjacent_inline_formulas_separated_inside_transparent_span(self) -> None:
+        """Adjacent formulas nested in a transparent <span> must also separate.
+
+        When the two formulas share a wrapping <span>, the outer paragraph sees
+        one fragment and the inner transparent span joins them. That join must
+        also go through the separator rule, otherwise ``$a$$b$`` still leaks.
+        """
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with two formulas wrapped in a single transparent span.</p>
+          <p><span><span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">D_t=1</annotation></math></span></span><span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">T_t=2</annotation></math></span></span></span></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "adjacent-span.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("$D_t=1$ $T_t=2$", markdown)
+            self.assertNotIn("$D_t=1$$T_t=2$", markdown)
+            self.assertNotIn("$$", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
+
     def test_virtualized_page_routes_to_strict_without_markdown(self) -> None:
         html = """
         <html><body><main>

@@ -230,7 +230,7 @@ class MarkdownConverter:
             text = self.inline_children(node)
             return f"<{node.name}>{text}</{node.name}>" if text else ""
         if node.name in INLINE_TRANSPARENT_TAGS:
-            return "".join(self.inline(child) for child in node.children)
+            return _join_inline(self.inline(child) for child in node.children)
         raise FastPathUnsupported(f"unsupported inline semantic element <{node.name}>")
 
     def formula(self, node: Tag) -> str:
@@ -260,7 +260,7 @@ class MarkdownConverter:
                 else:
                     content.append(self.inline(child))
             marker = f"{index}." if node.name == "ol" else "-"
-            lines.append(f"{'  ' * level}{marker} {clean_inline(''.join(content))}".rstrip())
+            lines.append(f"{'  ' * level}{marker} {clean_inline(_join_inline(content))}".rstrip())
             for child in nested:
                 lines.extend(self.list_block(child, level + 1).splitlines())
         return "\n".join(lines)
