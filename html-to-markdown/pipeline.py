@@ -17,6 +17,7 @@ from fast_converter import EmittedCounts, FastPathUnsupported, MarkdownConverter
 from formula_batch import resolve_formulas
 from pipeline_utils import (
     canonicalize_manifest_counts,
+    contracts,
     deterministic_zip,
     preflight,
     root_from_html,
@@ -62,12 +63,15 @@ def strict_outcome(
     mode: str,
     manifest: dict[str, Any],
     reasons: list[str],
+    *,
+    allow_unprocessed_images: bool = False,
 ) -> PipelineOutcome:
     report = {
         "schema_version": SCHEMA_VERSION,
         "status": "strict_required",
         "requested_mode": mode,
-        "recommended_mode": manifest["recommended_mode"],
+        "recommended_mode": "strict",
+        "allow_unprocessed_images": allow_unprocessed_images,
         "strict_reasons": reasons,
         "preflight": manifest,
     }
@@ -81,6 +85,7 @@ def run_pipeline(
     *,
     mode: str = "auto",
     formula_validation_report: Path | None = None,
+    allow_unprocessed_images: bool = False,
 ) -> PipelineOutcome:
     if mode not in {"auto", "fast", "strict"}:
         raise ValueError(f"unsupported mode: {mode}")
@@ -101,10 +106,32 @@ def run_pipeline(
     reasons = list(result.manifest["signals"]["strict_reasons"])
     if canonical_error:
         reasons.append(canonical_error)
+
+    caption_count = len(root.select(contracts.CSS_SELECTORS["caption"]))
+    if caption_count:
+        reasons.append(
+            f"{caption_count} captions require strict handling because the fast path "
+            "does not yet provide caption ledger conservation"
+        )
+
+    image_count = int(result.manifest["counts"].get("images", 0))
+    if image_count and not allow_unprocessed_images:
+        reasons.append(
+            f"{image_count} images require strict handling because the fast path "
+            "does not perform the default backup, dewatermarking, compression, and "
+            "original-size validation contract"
+        )
+
     if mode == "strict":
         reasons.append("strict mode explicitly requested")
     if reasons:
-        return strict_outcome(output, mode, result.manifest, reasons)
+        return strict_outcome(
+            output,
+            mode,
+            result.manifest,
+            reasons,
+            allow_unprocessed_images=allow_unprocessed_images,
+        )
 
     article_dir = output / package
     title = title_from_root(root, input_path.stem)
@@ -127,7 +154,13 @@ def run_pipeline(
         conversion = converter.convert()
     except FastPathUnsupported as error:
         clear_previous_delivery(output, package)
-        return strict_outcome(output, mode, result.manifest, [str(error)])
+        return strict_outcome(
+            output,
+            mode,
+            result.manifest,
+            [str(error)],
+            allow_unprocessed_images=allow_unprocessed_images,
+        )
 
     count_errors = validate_counts(result.manifest["counts"], conversion.counts)
     unresolved = list(conversion.unresolved_formulas)
@@ -151,6 +184,7 @@ def run_pipeline(
         "schema_version": SCHEMA_VERSION,
         "status": status,
         "requested_mode": mode,
+        "allow_unprocessed_images": allow_unprocessed_images,
         "preflight": result.manifest,
         "emitted_counts": conversion.counts.as_dict(),
         "count_errors": count_errors,
@@ -183,6 +217,15 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="JSON emitted after running formula-validation.html with a pinned KaTeX runtime",
     )
+    value.add_argument(
+        "--allow-unprocessed-images",
+        action="store_true",
+        help=(
+            "Allow the fast path to package original images without the default "
+            "backup/dewatermark/compression/visual-validation workflow. Use only "
+            "when the user explicitly opts out of image post-processing."
+        ),
+    )
     return value
 
 
@@ -194,6 +237,7 @@ def main() -> int:
             args.output,
             mode=args.mode,
             formula_validation_report=args.formula_validation_report,
+            allow_unprocessed_images=args.allow_unprocessed_images,
         )
     except (OSError, UnicodeError, ValueError, preflight.BodySelectionError) as error:
         print(f"pipeline failed: {error}")

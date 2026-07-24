@@ -31,7 +31,12 @@ class PipelineTests(unittest.TestCase):
     def test_fast_path_converts_and_packages_static_article(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            outcome = pipeline.run_pipeline(FIXTURE_PATH, output, mode="auto")
+            outcome = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                output,
+                mode="auto",
+                allow_unprocessed_images=True,
+            )
 
             self.assertEqual(outcome.status, "converted")
             assert outcome.markdown_path is not None
@@ -53,6 +58,7 @@ class PipelineTests(unittest.TestCase):
             )
             self.assertEqual(outcome.report["count_errors"], [])
             self.assertEqual(outcome.report["unresolved_formulas"], [])
+            self.assertTrue(outcome.report["allow_unprocessed_images"])
 
             with zipfile.ZipFile(outcome.zip_path) as archive:
                 self.assertIn("Fast path article.md", archive.namelist())
@@ -121,6 +127,22 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
 
+    def test_images_route_to_strict_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            outcome = pipeline.run_pipeline(FIXTURE_PATH, Path(directory), mode="auto")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertIsNone(outcome.markdown_path)
+            self.assertIsNone(outcome.zip_path)
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+            self.assertFalse(outcome.report["allow_unprocessed_images"])
+            self.assertTrue(
+                any(
+                    "dewatermarking" in reason
+                    for reason in outcome.report["strict_reasons"]
+                )
+            )
+
     def test_virtualized_page_routes_to_strict_without_markdown(self) -> None:
         html = """
         <html><body><main>
@@ -138,6 +160,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "strict_required")
             self.assertIsNone(outcome.markdown_path)
             self.assertTrue(outcome.report["strict_reasons"])
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
 
     def test_complex_table_routes_to_strict(self) -> None:
         html = """
@@ -154,6 +177,7 @@ class PipelineTests(unittest.TestCase):
             outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
 
             self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
             self.assertIn("rowspan/colspan", outcome.report["strict_reasons"][0])
 
     def test_external_image_routes_to_strict(self) -> None:
@@ -168,10 +192,17 @@ class PipelineTests(unittest.TestCase):
             root = Path(directory)
             source = root / "external.html"
             source.write_text(html, encoding="utf-8")
-            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+            outcome = pipeline.run_pipeline(
+                source,
+                root / "out",
+                mode="fast",
+                allow_unprocessed_images=True,
+            )
 
             self.assertEqual(outcome.status, "strict_required")
             self.assertIsNone(outcome.zip_path)
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+            self.assertTrue(outcome.report["allow_unprocessed_images"])
             self.assertIn("must be localized", outcome.report["strict_reasons"][0])
 
     def test_unknown_semantic_element_routes_to_strict(self) -> None:
@@ -189,6 +220,7 @@ class PipelineTests(unittest.TestCase):
             outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
 
             self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
             self.assertIn("unsupported semantic element <details>", outcome.report["strict_reasons"][0])
 
     def test_katex_html_only_formula_requires_matching_validation_report(self) -> None:
@@ -274,7 +306,12 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "out"
-            first = pipeline.run_pipeline(FIXTURE_PATH, output, mode="fast")
+            first = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                output,
+                mode="fast",
+                allow_unprocessed_images=True,
+            )
             assert first.zip_path is not None
             self.assertTrue(first.zip_path.exists())
 
@@ -287,8 +324,18 @@ class PipelineTests(unittest.TestCase):
 
     def test_zip_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            first_outcome = pipeline.run_pipeline(FIXTURE_PATH, Path(first), mode="fast")
-            second_outcome = pipeline.run_pipeline(FIXTURE_PATH, Path(second), mode="fast")
+            first_outcome = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                Path(first),
+                mode="fast",
+                allow_unprocessed_images=True,
+            )
+            second_outcome = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                Path(second),
+                mode="fast",
+                allow_unprocessed_images=True,
+            )
             assert first_outcome.zip_path is not None
             assert second_outcome.zip_path is not None
             self.assertEqual(
