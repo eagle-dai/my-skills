@@ -1,182 +1,150 @@
 ---
 name: formula-extraction
-description: Extract LaTeX from a single formula DOM node (KaTeX/MathJax/MathML). Input: one formula node. Output: one LaTeX string. Covers annotation extraction, MathML parsing, KaTeX HTML systematic reconstruction, post-processing pipeline, and Playwright render verification.
+description: Extract and validate LaTeX from KaTeX, MathJax, or MathML formula DOM. Use for either one formula node or a page-level formula batch. Single-node work returns structured success/failure; the html-to-markdown batch integration deduplicates, caches, and validates supported sources. Do not claim a source type is supported by the deterministic fast path unless formula_batch.py implements it.
 ---
 
-# 公式提取 (Formula Extraction)
+# 公式提取（Formula Extraction）
 
-从单个公式 DOM 节点中提取语义正确的 LaTeX 字符串。
+从公式 DOM 中恢复语义正确的 LaTeX。既支持分析单个公式节点，也支持由页面转换流程批量解析多个公式。
 
-> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md`（通用两道闸）+ @self-improvement.md（本 skill 专属回归用例表）。尤其是命令边界修正：不得从最终字符串表面猜测 token 边界，改前构造合法命令反例，改后跑全表。
+> **改这个 skill 本身？** 先读 `../_meta/skill-self-improvement.md` 和 @self-improvement.md。可确定的规则必须与可执行实现和测试一致；不得把设计目标写成已经落地的能力。
 
-## 职责边界
+## 两种执行模式
 
-- **输入**：单个公式 DOM 节点（`.katex` / `<math>` / `<annotation>` / `.MathJax` 等）
-- **输出**：一个 LaTeX 字符串（如 `\pi_\theta(a|s)`）
-- **不负责**：定位公式节点、决定 block/inline 分界符、上下文文本处理
-- **失败原则**：缺乏结构证据时返回失败，不通过“看起来像某领域公式”来猜测或改写
+### 单节点模式
+
+- **输入**：一个公式 DOM 节点，以及调用方可选提供的页面上下文。
+- **输出**：LaTeX 成功结果，或包含原因和诊断信息的结构化失败结果。
+- **不负责**：在整页中定位公式节点、决定 block/inline 定界符、处理上下文正文。
+- 页面 hydration JSON、Slate 邻近字段等不在节点内部的证据，只有调用方显式提供页面上下文时才能使用。
+
+### 批量模式
+
+`html-to-markdown` 的确定性路径调用 `html-to-markdown/formula_batch.py::resolve_formulas()`：
+
+- 输入 compact HTML 和按 DOM 顺序排列的 FormulaRecord；
+- 按 `dom_hash` 去重；
+- 缓存解析结果，但缓存不代表已经通过浏览器验证；
+- 为需要验证的重建结果生成一个批量验证页面；
+- 输出 resolved、pending_validation 和 failures，而不是特殊占位字符串。
+
+公式数量阈值、是否编写可复用 parser、是否切换 strict 流程，属于页面级调用方决策，不属于单节点 extractor 自己可判断的信息。
+
+## 当前 fast pipeline 的真实能力边界
+
+以 `html-to-markdown/formula_batch.py` 为权威实现：
+
+- `annotation`、`data-tex`、`data-latex`、`data-math`、`alttext`、`math/tex script` 等由 preflight 写入 `original_latex`，batch resolver 可直接使用；
+- `katex-html-only` 由现有 KaTeX HTML parser 重建，并且必须通过匹配的浏览器验证报告后才能解锁；
+- `mathml` 会被 preflight 正确识别，但当前 deterministic batch resolver **尚未实现 MathML parser**，必须 fail closed，转 strict 流程或由后续专门实现处理；
+- 未知来源必须返回结构化失败，不得退化为 `textContent` 成功结果。
+
+因此，文档中的 MathML 映射表是 strict/manual parser 的实现指南，不表示 fast pipeline 已经支持 MathML 自动转换。
 
 ## 核心原则
 
-**公式能渲染 ≠ 公式语义正确。** 只有原始 DOM/MathML/annotation 等结构证据才能判定语义退化。例如原 DOM 明确含 `<msub>` 时，输出缺少 `_` 才能判错；仅看到 `\pi\theta` 这一字符串，不能推断它一定应为 `\pi_\theta`。
+**公式能渲染不等于公式语义正确。** 只有 DOM、MathML、annotation 或调用方提供的原始字段才能证明结构。
 
-**上下标方向必须忠实原文：** 不得把 `V_\pi` 改成 `V^\pi`，也不得反向。修复 Double subscript 只能补分组（如 `d_{\pi_\theta}`），不能改变方向。
+- 上下标方向必须忠实原文；不得把下标改成上标或反向。
+- 修复连续下标只能补分组，不能改变方向。
+- 缺乏结构证据时保持原样并标记人工复核，不能按领域常识猜公式。
+- 未知语义节点必须 fail closed，不能把渲染文字当作完整公式。
 
-## 提取优先级
+## 来源优先级
 
-按优先级依次尝试，成功即停：
+在可用证据范围内按顺序尝试，成功即停：
 
-1. **`annotation[encoding="application/x-tex"]`** — KaTeX/MathJax 语义层原始 LaTeX
-2. **`data-tex` / `data-latex` / `data-math` / `alttext`** — 属性中的原始 LaTeX
-3. **`<script type="math/tex">`** — MathJax v2 内嵌脚本
-4. **页面 JSON / hydration 数据** — SSR 框架序列化数据中的原始公式
-5. **富文本节点附近原始公式字段** — Slate 等编辑器节点数据
-6. **MathML 结构重建**
-7. **KaTeX HTML 系统性重建** — 详见 @katex-html-parser.md
-8. **无法提取** → 返回 `__FORMULA_EXTRACTION_FAILED__`，由调用方截图保存
+1. `annotation[encoding="application/x-tex"]`；
+2. `data-tex`、`data-latex`、`data-math`、`alttext`；
+3. `<script type="math/tex">`；
+4. 调用方显式提供的 hydration JSON 或富文本原始字段；
+5. MathML 结构重建；
+6. KaTeX HTML 系统性重建，详见 @katex-html-parser.md；
+7. 结构证据不足时返回结构化失败，由调用方截图或人工复核。
 
-### 策略选择（优先级 1-5 均不可用时）
+**禁止手动逐公式从渲染文字拼接。** 要么使用可复用 parser，要么 fail closed。
 
-| 情况 | 策略 |
-|------|------|
-| 有 MathML（含 `<msub>` 等语义元素） | MathML 结构重建 |
-| 无 MathML，公式数量多（>10） | 编写可复用的 KaTeX HTML 解析器 |
-| 无 MathML，公式数量少（≤10） | 返回失败，调用方截图 |
+## MathML strict/manual parser 要点
 
-**禁止手动逐公式从渲染层拼接。** 要么编写可复用解析器，要么截图。
+以下是实现 parser 时的结构映射，不是当前 fast resolver 的能力声明：
 
-### MathML 结构重建要点
-
-| MathML 元素 | LaTeX 等价 |
-|-------------|-----------|
+| MathML 元素 | LaTeX 结构 |
+|---|---|
 | `<msub>` | `_{...}` |
 | `<msup>` | `^{...}` |
 | `<msubsup>` | `_{...}^{...}` |
 | `<mfrac>` | `\frac{...}{...}` |
 | `<msqrt>` | `\sqrt{...}` |
 | `<mroot>` | `\sqrt[n]{...}` |
-| `<mover>` | `\hat{}` / `\bar{}` / `\overline{}` 等 |
-| `<munder>` | `\underbrace{}` / 下方注释 |
-| `<mtable>` | `\begin{array/matrix/cases}` |
-| `<mrow>` | 分组容器，递归处理子节点 |
+| `<mover>` / `<munder>` | 根据实际 accent/annotation 结构选择命令 |
+| `<mtable>` | 根据结构选择 array、matrix 或 cases；无法确认时失败 |
+| `<mrow>` | 递归分组容器 |
 
-## 公式源码异常检测
+## 确定错误与结构警告
 
-提取完成后扫描异常模式。检查分为“确定错误”和“需要结构证据的警告”，二者不得混用。
+### 确定错误
 
-### 确定错误（必须修复）
+- replacement character、无法解释的占位符；
+- 括号或环境不平衡；
+- 渲染器确认的 undefined control sequence；
+- 命令被双反斜杠转义成普通文本；
+- 原结构明确含分式、上下标、根号、矩阵或 limits，而输出对应结构消失。
 
-- Unicode replacement character `�`、无法解释的占位符 `□`
-- 括号或环境不平衡
-- 渲染器确认的 `Undefined control sequence`
-- LaTeX 命令被双反斜杠转义为普通文本
+### 需要结构证据的警告
 
-```text
-�  □  \approxrt  \gammaV  \sumk  \deltat
-\\mathcal  \\mathbb  \\mathrm  \\operatorname  \\frac  \\dfrac
-\\sum  \\prod  \\max  \\min  \\arg  \\left  \\right  \\begin  \\end
-\\pi  \\theta  \\mu  \\sigma  \\alpha  \\gamma  \\epsilon  \\phi
-```
+以下字符串本身可能合法，不得自动改写：
 
-### 需要结构证据的警告（不得自动改写）
+- 相邻希腊符号；
+- 同时包含上下标的变量；
+- 看起来像命令粘连、但无法证明来自两个独立 parser part 的字符串。
 
-以下形态本身可以是合法数学表达式。只有原始 DOM/MathML 明确表明结构丢失时，才可修复：
+## parser join 边界
 
-- `\pi\theta`、`\mu\theta` 等相邻符号
-- `V^\pi_\theta`、`Q^\pi_\theta` 等同时含上下标的表达式
-- `sumt`、`maxa`、`e\phi` 等可能是普通变量或乘积的字符串
-
-### 通用规则
-
-- `^` / `_` 后不能直接结束
-- 未分组的连续下标（如 `d_\pi_\theta`）只有在原始结构证明第二个下标属于第一个下标时，才补成 `d_{\pi_\theta}`
-- Unicode 希腊字母可按字符映射转为 LaTeX 命令，但不得借机改变上下标关系
-- `^'` / `^{'}` → `'`
-- `^^` → `^`
-- 行内公式中 `\\[A-Za-z]+` 一律阻断；多行环境中的 `\\` 换行除外
-
-## 语义退化检测
-
-即使 LaTeX 能渲染，以下“原始结构 → 输出结构”不一致也视为提取失败：
-
-1. 原公式有分式 → 输出无 `\frac` / `\dfrac`
-2. 原公式有上下标 → 输出摊平
-3. 上下标方向反转
-4. 原公式有指数 → 指数内容变成普通文本
-5. 原公式有带 limits 的运算符 → limits 丢失
-6. `\mathcal{N}` / `\mathbb{E}` → 普通 `N` / `E`
-7. 矩阵、cases、根号、嵌套分式 → 一行扁平字符
-8. LaTeX 命令被双反斜杠转义
-
-## 后处理管道
-
-从 KaTeX HTML 或 MathML 重建的结果必须统一执行后处理。后处理只能修复有机械证据的问题，不能进行领域猜测。
-
-| 问题 | 模式 | 修正 | 原因 |
-|------|------|------|------|
-| Prime | `^'` 或 `^{'}` | `'` | 非法 prime 形态 |
-| Double caret | `^^` | `^` | 重复 caret |
-| `\sim` 与后续 token 粘连 | 解析节点序列中，前一独立 token 恰为 `\sim`，后一独立 token 为变量 | join 时插空格 | 必须依据 token 边界；禁止在最终字符串上全局拆分 |
-| Unicode ϵ | `ϵ` | `\epsilon` | KaTeX 兼容 |
-| Unicode ∗ | `∗` | `*` | 之后按目标平台决定是否转 `\ast` |
-| Unicode ∥ | `∥` | `\|` | 规范化 |
-| Unicode 上标/下标 | `⁻¹`、`₀` 等 | `^{-1}`、`_{0}` | Unicode 规范化 |
-| NBSP | U+00A0 | 普通空格 | 避免 unknownSymbol |
-| 裸 CJK in math mode | 排除 `\text{}` 后仍有连续 CJK | 包进 `\text{...}` | KaTeX warning |
-| `\text{}` 内 `_` / `^` | `\text{signal_source}` | 拆到 `\text{}` 外 | 兼容 GitHub MathJax |
-| `\text{}` 内 `# % &` | 未转义字符 | `\# \% \&` | text mode 转义 |
-| 数学段内裸 `*`（GitHub） | 未转义 `*` | `\ast` | 避免 GFM emphasis 破坏 |
-| LaTeX token 拼接 | parser parts 中，前一 token 是完整命令、后一 token 是独立字母 token | join 时插空格 | 依据 parser token，而不是最终字符串正则 |
-| `\text{}` 后粘连 | `\text{probability}1` | `\text{probability} 1` | 视觉粘连 |
-| `\mid` 间距 | `\mid` 后无空格 | `\mid ` | 条件概率排版 |
-| PUA / zero-width | 对应 Unicode 范围 | 删除 | 干扰匹配 |
-| Prime inside frac | 已确认的大括号错位 | 修复平衡 | 语法错误 |
-
-**不得全局执行 `\mid → \vert`。** `\mid` 是关系符号，`\vert` 更接近竖线/定界符，替换会改变数学间距或语义；并且二者源码都没有裸 `|`，不能解决 Markdown 表格分隔符冲突。若实际问题来自裸 `|` 或 `\|`，应在对应 Markdown/表格上下文中局部检测和处理，不能改写所有条件关系符。
-
-### `\sim` token 边界规则
-
-**禁止**对最终字符串执行：
+命令边界修复只能发生在 parser token/part 的 join 阶段。
 
 ```text
-\\sim([a-zA-Zα-ωΑ-Ω]) → \\sim \1
+parts = ["\sim", "p"]   -> "\sim p"
+parts = ["\simeq"]      -> "\simeq"
+parts = ["\sim", "\nu"] -> "\sim \nu"
 ```
 
-该规则会把合法命令 `\simeq`、`\simneqq` 等拆坏。
+不得在最终 LaTeX 字符串上用宽泛正则拆“命令前缀 + 字母”，否则会破坏合法长命令。
 
-正确做法只发生在 parser 的 join 阶段：
+KaTeX HTML 的详细 join、`.mspace`、多 `.base` 和 fail-closed 规则以 @katex-html-parser.md 与 `html-to-markdown/formula_batch.py` 为准。
 
-```text
-parts = ["\sim", "p"]  → "\sim p"
-parts = ["\simeq"]     → "\simeq"
-parts = ["\sim", "\nu"] → "\sim \nu"
-```
+## 后处理
 
-若无法证明 `\sim` 与后续字符来自两个独立节点，保持原样并标记人工复核。
+后处理只能修复有机械证据的问题：
 
-### LaTeX 命令边界
+- prime、重复 caret、大括号平衡；
+- Unicode 数学字符、NBSP、zero-width/PUA；
+- 裸 CJK 的 text-mode 包装；
+- GitHub 平台上的数学裸星号；
+- `\text{}` 内需要转义的特殊字符；
+- 已由 parser part 边界证明的命令分隔。
 
-同样只在解析器的 token/part 边界上插空格。不得在已经拼成的 LaTeX 字符串中用“命令名前缀 + 字母”的宽泛正则拆分，因为无法区分合法长命令与粘连 token。
+不得全局把 `\mid` 改成 `\vert`，也不得借 Unicode 映射改变上下标关系。
 
 ## 验证
 
-### 单公式 Playwright 渲染验证
+### 单公式验证
 
-1. 创建最小 HTML 页面，引入固定版本 KaTeX
-2. 渲染提取结果
-3. `.katex-error` 数量必须为 0
-4. `mstyle[mathcolor="#cc0000"]` 数量必须为 0
-5. 捕获 `unicodeTextInMathMode` / `unknownSymbol` warning
-6. 任一异常 → 定位、修复、重新验证
+1. 使用固定版本渲染器创建最小页面；
+2. `.katex-error` 必须为 0；
+3. MathML 红色错误节点必须为 0；
+4. 捕获 unknown-symbol 与 Unicode-in-math warning；
+5. 对照原 DOM 验证上下标、分式、limits、字体和矩阵结构。
 
 ### 批量验证
 
-可将所有公式写入一个 HTML 页面批量渲染，并保留公式序号到 DOM 节点的映射。
+- 保持 source_id、dom_hash、LaTeX 一一对应；
+- 验证报告的 schema、parser version、validator version、总数和通过数必须与 pending batch 完全匹配；
+- cache hit 仍需满足当前批次的验证要求；
+- 任一 mismatch、失败或未完成报告都不能解锁最终公式。
 
-### 上下标方向验证
+## 参考
 
-对每个含上下标的公式：
-
-- 记录原始 DOM 中的方向（`<msub>` / `<msup>` / vlist 结构）
-- 对比输出中的 `_` / `^`
-- 方向不一致 → 阻断
+- @katex-html-parser.md — KaTeX HTML 重建规则
+- @self-improvement.md — 公式回归用例
+- `html-to-markdown/formula_batch.py` — 当前确定性 batch resolver
+- `html-to-markdown/preflight.py` — source_kind 与 FormulaRecord 生成
