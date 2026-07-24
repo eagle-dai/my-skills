@@ -104,6 +104,19 @@ class DocumentationAlignmentTests(unittest.TestCase):
         self.assertNotRegex(meta, r"本质.{0,4}无\s*CI")
         self.assertNotRegex(meta, r"无\s*(?:hook\s*/\s*)?CI\s*强制")
 
+    def test_formula_skill_scopes_single_node_and_batch_capabilities(self) -> None:
+        skill = self.read("formula-extraction/SKILL.md")
+        fast_boundary = self.section(skill, "当前 fast pipeline 的真实能力边界")
+
+        self.assertIn("单节点模式", skill)
+        self.assertIn("批量模式", skill)
+        self.assertIn("formula_batch.py::resolve_formulas()", skill)
+        self.assertIn("结构化失败", skill)
+        self.assertNotIn("__FORMULA_EXTRACTION_FAILED__", skill)
+        self.assertIn("尚未实现 MathML parser", fast_boundary)
+        self.assertIn("必须 fail closed", fast_boundary)
+        self.assertIn("不表示 fast pipeline 已经支持 MathML 自动转换", skill)
+
 
 if __name__ == "__main__":
     unittest.main()
