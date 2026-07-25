@@ -5,16 +5,14 @@
 1. 将 SingleFile 保存的完整网页转换为结构清晰、可离线阅读且可审计的 Markdown 包；
 2. 从 KaTeX、MathJax 或 MathML 公式节点中提取语义正确的 LaTeX。
 
-仓库强调内容完整性、可执行合同、fail-closed 路由，以及修改 skill 时的回归保护。
+仓库把可复用的规则固化到 Python 合同和测试里，而不是让 LLM 反复判断，遇到无法无损处理的情况一律 fail closed。
 
 ## Skills
 
 | Skill | 入口 | 用途 |
 |---|---|---|
-| `html-to-markdown` | [`html-to-markdown/SKILL.md`](html-to-markdown/SKILL.md) | 默认先运行确定性 `pipeline.py --mode auto`，对可支持的静态 SingleFile 执行 compact snapshot、公式批处理、结构守恒和确定性打包；Notebook、虚拟化、lazy-load、题注、默认图片处理合同或其他歧义则进入 Playwright/sub-agent strict 工作流。 |
+| `html-to-markdown` | [`html-to-markdown/SKILL.md`](html-to-markdown/SKILL.md) | 默认先跑确定性 `pipeline.py --mode auto` 处理静态 SingleFile；遇到 Notebook、虚拟化、lazy-load、题注、图片等歧义则转入 Playwright/sub-agent strict 工作流。 |
 | `formula-extraction` | [`formula-extraction/SKILL.md`](formula-extraction/SKILL.md) | 从 KaTeX、MathJax 或 MathML 公式节点中提取 LaTeX。单节点模式优先读取原始语义来源；页面级批处理由 `html-to-markdown/formula_batch.py` 负责去重、缓存和浏览器验证门禁。 |
-
-`html-to-markdown` 在处理公式密集页面时引用 `formula-extraction` 的规则；可执行的批量解析、缓存和验证合同位于 `html-to-markdown/formula_batch.py`。
 
 ## 关键目录与文件
 
@@ -40,15 +38,13 @@
 │   ├── pipeline_utils.py
 │   ├── contracts.py
 │   ├── image_disposition.py
-│   ├── markdown_fences.py
-│   └── ...
+│   └── markdown_fences.py
 └── tests/
     ├── fixtures/
     ├── test_pipeline.py
     ├── test_formula_batch.py
     ├── test_preflight.py
-    ├── test_benchmark.py
-    └── ...
+    └── test_benchmark.py
 ```
 
 ### `_meta/`
@@ -75,7 +71,7 @@
 - `pipeline_utils.py`：共享的文件名规范化、DOM 合同加载、JSON 写入和确定性 ZIP 工具。
 - `contracts.py`：selector、复杂度、DOM semantic identity/canonicalization 和 comment ledger 合同。
 - `image_disposition.py`：图片保留、删除或人工复核判定，以及 image ledger 守恒。
-- `markdown_fences.py`：按行扫描 fenced code block，避免使用 fence 奇偶或跨行正则进行错误验证。
+- `markdown_fences.py`：按行扫描 fenced code block 做结构校验。
 - 其余 Markdown 文件：strict 工作流的图片、题注、Notebook、阻断条件、验收清单和维护规则。
 
 ## 默认转换入口
