@@ -415,8 +415,9 @@ def resolve_formulas(
     results_path: Path,
     validation_report_path: Path | None = None,
     target_platform: str = "github",
+    root: Tag | None = None,
 ) -> BatchResult:
-    root = root_from_html(compact_html)
+    root = root if root is not None else root_from_html(compact_html)
     nodes = preflight._top_level_formula_nodes(root)
     if len(nodes) != len(records):
         raise ValueError("formula records do not match compact DOM")

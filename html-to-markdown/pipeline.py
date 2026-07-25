@@ -10,7 +10,6 @@ import sys
 import time
 from typing import Any
 
-from bs4 import BeautifulSoup
 
 MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
@@ -80,25 +79,6 @@ def clear_previous_delivery(output: Path, package: str) -> None:
         zip_path.unlink()
 
 
-def standalone_math_tex_script_count(html: str) -> int:
-    """Count MathJax v2 source scripts outside recognized formula containers.
-
-    A script nested inside a KaTeX/Slate formula candidate can be indexed by
-    preflight and used as original LaTeX. A standalone MathJax v2 source script
-    is not part of the executable formula selector; compaction removes it and a
-    fast conversion could otherwise report success after silently losing the
-    formula. Those pages must enter the rendered-DOM strict workflow.
-    """
-
-    soup = BeautifulSoup(html, "lxml")
-    return sum(
-        1
-        for node in soup.find_all("script")
-        if str(node.attrs.get("type", "")).strip().lower().startswith("math/tex")
-        and not preflight._inside_formula(node)
-    )
-
-
 def strict_outcome(
     output: Path,
     mode: str,
@@ -129,6 +109,7 @@ def run_pipeline(
     mode: str = "auto",
     formula_validation_report: Path | None = None,
     allow_unprocessed_images: bool = False,
+    _reuse_compact_root: bool = True,
 ) -> PipelineOutcome:
     if mode not in {"auto", "fast", "strict"}:
         raise ValueError(f"unsupported mode: {mode}")
@@ -141,9 +122,12 @@ def run_pipeline(
 
     preflight_started = time.perf_counter()
     source_html = input_path.read_text(encoding="utf-8")
-    standalone_math_tex_scripts = standalone_math_tex_script_count(source_html)
     result = preflight.build_preflight(source_html)
-    root = root_from_html(result.compact_html)
+    root = (
+        result.compact_root
+        if _reuse_compact_root
+        else root_from_html(result.compact_html)
+    )
     canonical_error = ""
     try:
         canonicalize_manifest_counts(root, result.manifest)
@@ -158,12 +142,6 @@ def run_pipeline(
     reasons = list(result.manifest["signals"]["strict_reasons"])
     if canonical_error:
         reasons.append(canonical_error)
-
-    if standalone_math_tex_scripts:
-        reasons.append(
-            f"{standalone_math_tex_scripts} standalone math/tex script formulas require "
-            "strict MathJax handling because preflight cannot bind them to a formula node"
-        )
 
     caption_count = len(root.select(contracts.CSS_SELECTORS["caption"]))
     if caption_count:
@@ -203,6 +181,7 @@ def run_pipeline(
         validation_path=output / "formula-validation.html",
         results_path=output / "formula-results.json",
         validation_report_path=formula_validation_report,
+        root=root if _reuse_compact_root else None,
     )
     formula_elapsed = _elapsed_ms(formula_started)
     # Browser execution happens outside this Python process. On the rerun that

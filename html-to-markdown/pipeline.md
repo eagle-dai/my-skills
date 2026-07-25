@@ -51,6 +51,10 @@ python html-to-markdown/pipeline.py input.html \
 - image ledger、fence scanner 和结构数量守恒；
 - 确定性 ZIP 时间戳与文件顺序。
 
+## DOM 复用
+
+进程内 fast pipeline 只解析完整 SingleFile 一次。preflight 为隔离正文而保留一次 selected-body detach/reparse，并将该 `compact_root` 直接交给 canonical count、公式解析和 Markdown 转换；不会再从 `compact_html` 重建两棵相同 DOM。序列化的 `preflight/content.html` 仍保留为外部工具与 strict handoff 的稳定边界。测试会比较 root-reuse 与 serialize/reparse 路径的 Markdown、manifest、formula result 和 ZIP，要求字节一致。
+
 ## Strict 路由
 
 以下情况不猜测：
@@ -78,7 +82,7 @@ python html-to-markdown/pipeline.py input.html \
 
 因此，`pending_validation` 统计等待解锁的 source node 数量，而 `validation_jobs` 统计实际需要浏览器渲染的唯一公式数。`validation_nodes_saved` 表示通过 `dom_hash` 去重省掉的重复渲染节点数。
 
-独立的 MathJax v2 source script 不属于上述 batch 输入。pipeline 会在 fast 转换前检测它们并返回 `strict_required`；只有嵌入 `.katex`、Slate KaTeX 等已识别公式容器的 `math/tex` script 才能作为对应 FormulaRecord 的原始 LaTeX。
+独立的 MathJax v2 source script 不属于上述 batch 输入。preflight 会在首次解析完整页面时同步检测它们并返回 `strict_required`；不会为了这项检测再次解析 CSS-heavy SingleFile。只有嵌入 `.katex`、Slate KaTeX 等已识别公式容器的 `math/tex` script 才能作为对应 FormulaRecord 的原始 LaTeX。
 
 运行 `formula-validation.html` 中的批量验证逻辑并保存 JSON 报告后，使用：
 
@@ -97,7 +101,7 @@ python html-to-markdown/pipeline.py input.html \
 
 | 字段 | 包含内容 |
 |---|---|
-| `preflight` | 读取输入、独立 MathJax source 检测、正文选择、compact snapshot 构建、manifest/canonical count 分析 |
+| `preflight` | 读取并解析输入一次，在同一 DOM 上完成 MathJax source 检测与正文选择，再构建 detached compact snapshot、manifest 和 canonical count |
 | `snapshot` | 将 `content.html`、`manifest.json`、`formulas.json`、`assets.json` 写入磁盘 |
 | `formula` | 首次运行时的公式去重、cache 查找/写入、解析和 validation batch 生成 |
 | `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用和验证报告摄取/核对 |
@@ -122,11 +126,12 @@ python html-to-markdown/benchmark.py --iterations 5
 - 常见标题、列表、表格和代码块；
 - 无图片、Notebook、virtualized/lazy-load 等 strict 信号。
 
-输出为 JSON，字段包括 snapshot 缩减比例、公式 total/unique、最后一次运行的 cache hit，以及各阶段中位耗时。benchmark 只把以下稳定合同作为失败条件：
+输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、validation job 去重和 source mapping。benchmark 只把以下稳定合同作为失败条件：
 
-- 每次运行必须 `status=converted` 并生成 ZIP；
+- 原始 LaTeX 场景必须转换并生成 ZIP；
+- KaTeX HTML-only cold pass 必须在验证前阻断，validation/warm pass 必须转换并生成 ZIP；
 - compact snapshot 必须至少缩减 80%；
-- 公式总数和唯一数必须保持一致。
+- 公式总数、唯一数、validation job 和 source mapping 必须守恒。
 
 可以保留生成文件并调整规模：
 
