@@ -4,9 +4,12 @@ from __future__ import annotations
 import base64
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import sys
+import tempfile
 from typing import Any
 import unicodedata
 from urllib.parse import unquote_to_bytes
@@ -76,7 +79,7 @@ def title_from_root(root: Tag, fallback: str) -> str:
 def safe_package_name(value: str) -> str:
     """Return a portable package name without discarding non-ASCII text.
 
-    Python's ``\w`` is Unicode-aware, so Chinese and other letter/digit scripts
+    Python's ``\\w`` is Unicode-aware, so Chinese and other letter/digit scripts
     remain distinct while punctuation and path separators collapse to ``-``.
     NFKC normalization also makes visually equivalent full-width forms stable.
     """
@@ -92,11 +95,41 @@ def safe_file_name(value: str) -> str:
 
 
 def write_json(path: Path, payload: Any) -> None:
+    """Atomically replace a UTF-8 JSON file in its destination directory.
+
+    Writing to a same-directory temporary file and committing with ``os.replace``
+    prevents an interrupted cache/report update from leaving a partially written
+    JSON file. Existing permissions are preserved; a new file uses mode ``0644``.
+    If any step fails, the previous destination remains unchanged and the temporary
+    file is removed.
+    """
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        destination_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        destination_mode = 0o644
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
     )
+    temporary_path = Path(temporary_name)
+    descriptor_open = True
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor_open = False
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary_path, destination_mode)
+        os.replace(temporary_path, path)
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+        temporary_path.unlink(missing_ok=True)
 
 
 def decode_data_uri(source: str) -> tuple[str, bytes]:
