@@ -29,7 +29,7 @@ class BenchmarkTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["schema_version"], "1.1")
+        self.assertEqual(result["schema_version"], "1.2")
         self.assertEqual(
             set(result["scenarios"]),
             {"original_latex", "katex_html_only"},
@@ -53,8 +53,23 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(html_only["formula_cache_hits_validation"], 3)
         self.assertEqual(html_only["formula_cache_hits_warm"], 3)
         self.assertEqual(html_only["passes"]["cold"]["status"], "blocked")
+        self.assertFalse(html_only["passes"]["cold"]["resume_used"])
         self.assertEqual(html_only["passes"]["validation"]["status"], "converted")
+        self.assertTrue(html_only["passes"]["validation"]["resume_used"])
         self.assertEqual(html_only["passes"]["warm"]["status"], "converted")
+        self.assertTrue(html_only["passes"]["warm"]["resume_used_all"])
+        self.assertEqual(
+            html_only["passes"]["warm"]["resume_fallback_reasons"], []
+        )
+        self.assertGreater(
+            html_only["passes"]["validation"]["timings_ms"]["resume"], 0.0
+        )
+        self.assertEqual(
+            html_only["passes"]["validation"]["timings_ms"]["preflight"], 0.0
+        )
+        self.assertEqual(
+            html_only["passes"]["validation"]["timings_ms"]["snapshot"], 0.0
+        )
 
         for scenario in (original, html_only):
             pass_records = scenario["passes"]
@@ -81,10 +96,10 @@ class BenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(original["passes"]["cold"]["parse_total"], 2)
         self.assertEqual(html_only["passes"]["cold"]["parse_total"], 2)
-        self.assertEqual(html_only["passes"]["validation"]["parse_total"], 2)
+        self.assertEqual(html_only["passes"]["validation"]["parse_total"], 1)
         self.assertEqual(
             html_only["passes"]["warm"]["median_parse_total"],
-            2,
+            1,
         )
 
         # Dirty tracking writes the cache only when entries change.
