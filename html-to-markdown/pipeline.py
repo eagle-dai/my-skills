@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import time
 from typing import Any
 
 from bs4 import BeautifulSoup
@@ -30,6 +31,15 @@ from pipeline_utils import (
 )
 
 SCHEMA_VERSION = "1.0"
+TIMING_FIELDS = (
+    "preflight",
+    "snapshot",
+    "formula",
+    "validation",
+    "conversion",
+    "package",
+    "total",
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +48,16 @@ class PipelineOutcome:
     report: dict[str, Any]
     markdown_path: Path | None = None
     zip_path: Path | None = None
+
+
+def _elapsed_ms(started_at: float) -> float:
+    """Return a stable, JSON-friendly wall-clock duration in milliseconds."""
+
+    return round((time.perf_counter() - started_at) * 1000, 3)
+
+
+def _new_timings() -> dict[str, float]:
+    return {field: 0.0 for field in TIMING_FIELDS}
 
 
 def validate_counts(expected: dict[str, int], emitted: EmittedCounts) -> list[str]:
@@ -86,6 +106,7 @@ def strict_outcome(
     reasons: list[str],
     *,
     allow_unprocessed_images: bool = False,
+    timings_ms: dict[str, float] | None = None,
 ) -> PipelineOutcome:
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -95,6 +116,7 @@ def strict_outcome(
         "allow_unprocessed_images": allow_unprocessed_images,
         "strict_reasons": reasons,
         "preflight": manifest,
+        "timings_ms": timings_ms or _new_timings(),
     }
     write_json(output / "report.json", report)
     return PipelineOutcome("strict_required", report)
@@ -111,10 +133,13 @@ def run_pipeline(
     if mode not in {"auto", "fast", "strict"}:
         raise ValueError(f"unsupported mode: {mode}")
 
+    total_started = time.perf_counter()
+    timings = _new_timings()
     package = safe_package_name(input_path.stem)
     output.mkdir(parents=True, exist_ok=True)
     clear_previous_delivery(output, package)
 
+    preflight_started = time.perf_counter()
     source_html = input_path.read_text(encoding="utf-8")
     standalone_math_tex_scripts = standalone_math_tex_script_count(source_html)
     result = preflight.build_preflight(source_html)
@@ -124,8 +149,12 @@ def run_pipeline(
         canonicalize_manifest_counts(root, result.manifest)
     except ValueError as error:
         canonical_error = str(error)
+    timings["preflight"] = _elapsed_ms(preflight_started)
 
+    snapshot_started = time.perf_counter()
     preflight.write_preflight(result, output / "preflight")
+    timings["snapshot"] = _elapsed_ms(snapshot_started)
+
     reasons = list(result.manifest["signals"]["strict_reasons"])
     if canonical_error:
         reasons.append(canonical_error)
@@ -154,16 +183,19 @@ def run_pipeline(
     if mode == "strict":
         reasons.append("strict mode explicitly requested")
     if reasons:
+        timings["total"] = _elapsed_ms(total_started)
         return strict_outcome(
             output,
             mode,
             result.manifest,
             reasons,
             allow_unprocessed_images=allow_unprocessed_images,
+            timings_ms=timings,
         )
 
     article_dir = output / package
     title = title_from_root(root, input_path.stem)
+    formula_started = time.perf_counter()
     batch = resolve_formulas(
         result.compact_html,
         result.formulas,
@@ -172,6 +204,15 @@ def run_pipeline(
         results_path=output / "formula-results.json",
         validation_report_path=formula_validation_report,
     )
+    formula_elapsed = _elapsed_ms(formula_started)
+    # Browser execution happens outside this Python process. On the rerun that
+    # ingests --formula-validation-report, the cache makes this stage primarily
+    # validation-report checking, so report it separately from first-pass formula work.
+    if formula_validation_report is None:
+        timings["formula"] = formula_elapsed
+    else:
+        timings["validation"] = formula_elapsed
+
     converter = MarkdownConverter(
         root,
         batch.records,
@@ -179,17 +220,22 @@ def run_pipeline(
         article_dir / "files" / package,
         f"files/{package}",
     )
+    conversion_started = time.perf_counter()
     try:
         conversion = converter.convert()
     except FastPathUnsupported as error:
+        timings["conversion"] = _elapsed_ms(conversion_started)
         clear_previous_delivery(output, package)
+        timings["total"] = _elapsed_ms(total_started)
         return strict_outcome(
             output,
             mode,
             result.manifest,
             [str(error)],
             allow_unprocessed_images=allow_unprocessed_images,
+            timings_ms=timings,
         )
+    timings["conversion"] = _elapsed_ms(conversion_started)
 
     count_errors = validate_counts(result.manifest["counts"], conversion.counts)
     unresolved = list(conversion.unresolved_formulas)
@@ -206,9 +252,17 @@ def run_pipeline(
         blockers.append(f"{len(unresolved)} formulas require batch resolution")
     status = "blocked" if blockers else "converted"
 
+    package_started = time.perf_counter()
     article_dir.mkdir(parents=True, exist_ok=True)
     markdown_path = article_dir / f"{safe_file_name(title)}.md"
     markdown_path.write_text(conversion.markdown, encoding="utf-8")
+    zip_path = None
+    if status == "converted":
+        zip_path = output / f"{package}.zip"
+        deterministic_zip(article_dir, zip_path)
+    timings["package"] = _elapsed_ms(package_started)
+    timings["total"] = _elapsed_ms(total_started)
+
     report = {
         "schema_version": SCHEMA_VERSION,
         "status": status,
@@ -226,13 +280,9 @@ def run_pipeline(
         "formula_failures": list(batch.failures),
         "formula_pending_validation": list(batch.pending_validation),
         "formula_validation_error": batch.validation_error,
+        "timings_ms": timings,
     }
     write_json(output / "report.json", report)
-
-    zip_path = None
-    if status == "converted":
-        zip_path = output / f"{package}.zip"
-        deterministic_zip(article_dir, zip_path)
     return PipelineOutcome(status, report, markdown_path, zip_path)
 
 

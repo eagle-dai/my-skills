@@ -1,6 +1,6 @@
 # Fast/Auto 转换 Pipeline
 
-`pipeline.py` 将常见静态文章的转换规则落到确定性代码中。它不替代现有 strict 流程；遇到动态、虚拟化、无法无损表达的结构，或 fast path 尚未实现的完整性合同，输出 `strict_required`，由主 agent 进入 Playwright 与人工验收流程。
+`pipeline.py` 将常见静态文章的转换规则落到确定性代码中。它不替代 strict 流程；遇到动态、虚拟化、无法无损表达的结构，或 fast path 尚未实现的完整性合同，输出 `strict_required`，由主 agent 进入 Playwright 与人工验收流程。
 
 ## 使用
 
@@ -86,6 +86,55 @@ python html-to-markdown/pipeline.py input.html \
 ```
 
 验证报告的 schema、parser/validator 版本、条目集合或 DOM hash 不匹配时继续 fail-closed。解析失败、待验证项目或未解决占位符都会记录在 `report.json`，最终 ZIP 只在 `status=converted` 时生成。
+
+## Timing 字段
+
+所有成功、阻断和 strict 路由报告都包含 `report.json.timings_ms`：
+
+| 字段 | 包含内容 |
+|---|---|
+| `preflight` | 读取输入、独立 MathJax source 检测、正文选择、compact snapshot 构建、manifest/canonical count 分析 |
+| `snapshot` | 将 `content.html`、`manifest.json`、`formulas.json`、`assets.json` 写入磁盘 |
+| `formula` | 首次运行时的公式去重、cache 查找/写入、解析和 validation batch 生成 |
+| `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用和验证报告摄取/核对 |
+| `conversion` | Markdown 转换、结构计数、ledger 和 blocker 计算 |
+| `package` | 写 Markdown，并在 `converted` 时生成确定性 ZIP |
+| `total` | 从进入 `run_pipeline()` 到最终报告内容定格前的总 wall-clock 时间；不包含最后一次 `report.json` 写盘，也不包含外部浏览器实际运行 validation HTML 的等待时间 |
+
+这些字段用于同一机器、相近环境下的前后对比。绝对值会受 Python 版本、CPU 和文件系统影响，不应设置跨环境的固定性能阈值。`report.json` 自身写盘被明确排除，是因为报告必须先包含已经定格的 timing 值，避免为计入自身写盘而进行递归式重复写入。
+
+## 可重复 Benchmark
+
+仓库提供 synthetic benchmark，不使用付费文章、私有页面或客户数据：
+
+```bash
+python html-to-markdown/benchmark.py --iterations 5
+```
+
+默认输入模拟：
+
+- 大量 page-level `<style>` 和脚本噪声；
+- 168 个公式节点，其中只有 12 个 normalized DOM 唯一公式；
+- 常见标题、列表、表格和代码块；
+- 无图片、Notebook、virtualized/lazy-load 等 strict 信号。
+
+输出为 JSON，字段包括 snapshot 缩减比例、公式 total/unique、最后一次运行的 cache hit，以及各阶段中位耗时。benchmark 只把以下稳定合同作为失败条件：
+
+- 每次运行必须 `status=converted` 并生成 ZIP；
+- compact snapshot 必须至少缩减 80%；
+- 公式总数和唯一数必须保持一致。
+
+可以保留生成文件并调整规模：
+
+```bash
+python html-to-markdown/benchmark.py \
+  --iterations 5 \
+  --workdir work/benchmark \
+  --style-blocks 800 \
+  --formula-count 168 \
+  --unique-formulas 12 \
+  --json-output work/benchmark/result.json
+```
 
 ## 输出
 
