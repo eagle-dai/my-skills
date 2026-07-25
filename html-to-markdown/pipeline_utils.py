@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 from typing import Any
@@ -98,12 +99,18 @@ def write_json(path: Path, payload: Any) -> None:
 
     Writing to a same-directory temporary file and committing with ``os.replace``
     prevents an interrupted cache/report update from leaving a partially written
-    JSON file. If any step fails, the previous destination remains unchanged and
-    the temporary file is removed.
+    JSON file. Existing permissions are preserved; a new file uses mode ``0644``.
+    If any step fails, the previous destination remains unchanged and the temporary
+    file is removed.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        destination_mode = stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        destination_mode = 0o644
+
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.",
         suffix=".tmp",
@@ -117,6 +124,7 @@ def write_json(path: Path, payload: Any) -> None:
             handle.write(rendered)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(temporary_path, destination_mode)
         os.replace(temporary_path, path)
     finally:
         if descriptor_open:
