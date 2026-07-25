@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
@@ -26,8 +26,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -39,27 +37,5 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Apply PR 34 source transfer
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/resume-formula-validation'
-        run: |
-          cat .pr34-transfer/chunk* > /tmp/pr34-changes.tar.gz.b64
-          base64 --decode /tmp/pr34-changes.tar.gz.b64 > /tmp/pr34-changes.tar.gz
-          echo 'af27294777855181960fad4d85ac3664bb9984d80d00e93521bb97385745dc5a  /tmp/pr34-changes.tar.gz' | sha256sum --check
-          tar -xzf /tmp/pr34-changes.tar.gz
-          rm -rf .pr34-transfer
-
       - name: Run tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
-
-      - name: Commit PR 34 source changes
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent/resume-formula-validation'
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add html-to-markdown/pipeline.py html-to-markdown/pipeline.md html-to-markdown/benchmark.py tests/test_benchmark.py tests/test_pipeline_resume.py .pr34-transfer
-          if git diff --cached --quiet; then
-            echo 'No source changes to commit.'
-          else
-            git commit -m 'pipeline: safely resume formula validation reruns'
-            git push origin HEAD:agent/resume-formula-validation
-          fi
