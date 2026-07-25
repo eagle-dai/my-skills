@@ -11,7 +11,7 @@ fast-path converter silently guessing the wrong content range.
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 from pathlib import Path
@@ -85,6 +85,7 @@ class PreflightResult:
     manifest: dict[str, Any]
     formulas: tuple[FormulaRecord, ...]
     assets: tuple[AssetRecord, ...]
+    compact_root: Tag = field(compare=False, repr=False)
 
 
 def _normalized_text(node: Tag) -> str:
@@ -135,6 +136,23 @@ def _inside_formula(node: Tag) -> bool:
         parent = current.parent
         current = parent if isinstance(parent, Tag) else None
     return False
+
+
+def standalone_math_tex_script_count(soup: BeautifulSoup) -> int:
+    """Count MathJax v2 source scripts outside recognized formula containers.
+
+    The full document has already been parsed for body selection. Reusing that
+    tree avoids a second expensive parse of CSS-heavy SingleFile input while
+    preserving fail-closed routing for scripts compaction cannot bind to a
+    formula node.
+    """
+
+    return sum(
+        1
+        for node in soup.find_all("script")
+        if str(node.attrs.get("type", "")).strip().lower().startswith("math/tex")
+        and not _inside_formula(node)
+    )
 
 
 def compact_body(body: Tag) -> Tag:
@@ -369,7 +387,13 @@ def structural_counts(root: Tag, formulas: Sequence[FormulaRecord]) -> dict[str,
     }
 
 
-def detect_signals(original_html: str, root: Tag, assets: Sequence[AssetRecord]) -> dict[str, Any]:
+def detect_signals(
+    original_html: str,
+    root: Tag,
+    assets: Sequence[AssetRecord],
+    *,
+    standalone_math_tex_scripts: int = 0,
+) -> dict[str, Any]:
     lowered = original_html.lower()
     signals: dict[str, Any] = {
         name: any(marker in lowered for marker in markers)
@@ -377,6 +401,7 @@ def detect_signals(original_html: str, root: Tag, assets: Sequence[AssetRecord])
     }
     signals["lazy_placeholders"] = sum(item.lazy for item in assets)
     signals["iframes"] = len(root.select("iframe"))
+    signals["standalone_math_tex_scripts"] = standalone_math_tex_scripts
     signals["strict_reasons"] = []
 
     if signals["notebook"]:
@@ -387,17 +412,28 @@ def detect_signals(original_html: str, root: Tag, assets: Sequence[AssetRecord])
         signals["strict_reasons"].append(
             f"{signals['lazy_placeholders']} lazy or missing resource placeholders"
         )
+    if standalone_math_tex_scripts:
+        signals["strict_reasons"].append(
+            f"{standalone_math_tex_scripts} standalone math/tex script formulas require "
+            "strict MathJax handling because preflight cannot bind them to a formula node"
+        )
     return signals
 
 
 def build_preflight(html: str) -> PreflightResult:
     soup = BeautifulSoup(html, "lxml")
+    standalone_math_tex_scripts = standalone_math_tex_script_count(soup)
     body, body_selector = select_body(soup)
     compact_root = compact_body(body)
     compact_html = compact_root.decode(formatter="minimal")
     formulas = collect_formulas(compact_root)
     assets = collect_assets(compact_root)
-    signals = detect_signals(html, compact_root, assets)
+    signals = detect_signals(
+        html,
+        compact_root,
+        assets,
+        standalone_math_tex_scripts=standalone_math_tex_scripts,
+    )
     source_counts: dict[str, int] = {}
     for item in formulas:
         source_counts[item.source_kind] = source_counts.get(item.source_kind, 0) + 1
@@ -424,7 +460,7 @@ def build_preflight(html: str) -> PreflightResult:
         "signals": signals,
         "recommended_mode": recommended_mode,
     }
-    return PreflightResult(compact_html, manifest, formulas, assets)
+    return PreflightResult(compact_html, manifest, formulas, assets, compact_root)
 
 
 def _write_json(path: Path, payload: Any) -> None:
