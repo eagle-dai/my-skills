@@ -99,9 +99,9 @@ python html-to-markdown/pipeline.py input.html \
 | `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用和验证报告摄取/核对 |
 | `conversion` | Markdown 转换、结构计数、ledger 和 blocker 计算 |
 | `package` | 写 Markdown，并在 `converted` 时生成确定性 ZIP |
-| `total` | 本次 `run_pipeline()` 的总 wall-clock 时间，不包含外部浏览器实际运行 validation HTML 的等待时间 |
+| `total` | 从进入 `run_pipeline()` 到最终报告内容定格前的总 wall-clock 时间；不包含最后一次 `report.json` 写盘，也不包含外部浏览器实际运行 validation HTML 的等待时间 |
 
-这些字段用于同一机器、相近环境下的前后对比。绝对值会受 Python 版本、CPU 和文件系统影响，不应设置跨环境的固定性能阈值。
+这些字段用于同一机器、相近环境下的前后对比。绝对值会受 Python 版本、CPU 和文件系统影响，不应设置跨环境的固定性能阈值。`report.json` 自身写盘被明确排除，是因为报告必须先包含已经定格的 timing 值，避免为计入自身写盘而进行递归式重复写入。
 
 ## 可重复 Benchmark
 
