@@ -69,14 +69,14 @@ python html-to-markdown/pipeline.py input.html \
 
 存在原始 LaTeX 的公式可直接输出。对于只有 KaTeX HTML 的公式，`formula_batch.py` 会：
 
-1. 按 DOM hash 去重并尝试确定性解析；
+1. 按 `dom_hash` 去重并尝试确定性解析；
 2. 使用 `.formula-cache.json` 缓存解析结果；
-3. 每个需要验证的唯一 DOM hash 只生成一个 browser validation job；
+3. 每个需要验证的唯一 `dom_hash` 只生成一个 browser validation job；
 4. 使用首个 `source_id` 作为 job 的稳定代表，并在 `formula-results.json.validation_jobs[].source_ids` 中保留全部重复来源；
 5. 在验证完成前为每个 source node 保留 `{{FORMULA:formula-0001}}` 占位符，将状态设为 `blocked`，且不生成最终 ZIP；
-6. 一次 hash-level 验证成功后，将结果映射回该 hash 对应的全部 source node。
+6. 一次 hash-level 验证成功后，将结果映射回该 `dom_hash` 对应的全部 source node。
 
-因此，`pending_validation` 统计等待解锁的 source node 数量，而 `validation_jobs` 统计实际需要浏览器渲染的唯一公式数。`validation_nodes_saved` 表示通过 hash 去重省掉的重复渲染节点数。
+因此，`pending_validation` 统计等待解锁的 source node 数量，而 `validation_jobs` 统计实际需要浏览器渲染的唯一公式数。`validation_nodes_saved` 表示通过 `dom_hash` 去重省掉的重复渲染节点数。
 
 独立的 MathJax v2 source script 不属于上述 batch 输入。pipeline 会在 fast 转换前检测它们并返回 `strict_required`；只有嵌入 `.katex`、Slate KaTeX 等已识别公式容器的 `math/tex` script 才能作为对应 FormulaRecord 的原始 LaTeX。
 
@@ -89,7 +89,7 @@ python html-to-markdown/pipeline.py input.html \
   --formula-validation-report validation-report.json
 ```
 
-验证报告只包含每个唯一 job 的代表 `source_id`、DOM hash 和 LaTeX。schema、parser/validator 版本、唯一 job 集合、数量或映射不匹配时继续 fail-closed；重复 report source ID 也会被拒绝。解析失败、待验证 source node 或未解决占位符都会记录在 `report.json`，最终 ZIP 只在 `status=converted` 时生成。
+验证报告只包含每个唯一 job 的代表 `source_id`、`dom_hash` 和 LaTeX。schema、parser/validator 版本、唯一 job 集合、数量或映射不匹配时继续 fail-closed；重复 report source ID 也会被拒绝。解析失败、待验证 source node 或未解决占位符都会记录在 `report.json`，最终 ZIP 只在 `status=converted` 时生成。
 
 ## Timing 字段
 
