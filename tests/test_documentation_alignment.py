@@ -117,6 +117,36 @@ class DocumentationAlignmentTests(unittest.TestCase):
         self.assertIn("必须 fail closed", fast_boundary)
         self.assertIn("不表示 fast pipeline 已经支持 MathML 自动转换", skill)
 
+    def test_formula_validation_is_deduplicated_by_dom_hash(self) -> None:
+        skill = self.read("formula-extraction/SKILL.md")
+        pipeline = self.read("html-to-markdown/pipeline.md")
+        formula_batch = self.read("html-to-markdown/formula-batch.md")
+        batch_section = self.section(skill, "两种执行模式")
+        validation_section = self.section(skill, "验证")
+        pipeline_formula_section = self.section(pipeline, "公式批处理与验证")
+        formula_batch_mapping = self.section(formula_batch, "Validation job 与 source 映射")
+        formula_batch_validation = self.section(formula_batch, "批量验证")
+
+        for text in (
+            batch_section,
+            validation_section,
+            pipeline_formula_section,
+            formula_batch_mapping,
+            formula_batch_validation,
+        ):
+            self.assertIn("dom_hash", text)
+            self.assertIn("source_ids", text)
+        self.assertIn("只生成一个 browser validation job", batch_section)
+        self.assertIn("重复 source node 不得重复渲染", validation_section)
+        self.assertIn("validation_nodes_saved", pipeline_formula_section)
+        self.assertIn("首个来源的稳定代表", formula_batch_mapping)
+        self.assertIn("total == passed == validation_jobs", formula_batch_validation)
+        self.assertIn("不应", formula_batch_validation)
+        self.assertNotIn(
+            "与 pending batch 完全一致的 `source_id`、`dom_hash` 和 `latex`",
+            formula_batch_validation,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

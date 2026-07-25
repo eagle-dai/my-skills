@@ -18,9 +18,9 @@ if str(MODULE_DIR) not in sys.path:
 from pipeline_utils import preflight, root_from_html, write_json
 
 SCHEMA_VERSION = "1.1"
-VALIDATION_SCHEMA_VERSION = "1.0"
+VALIDATION_SCHEMA_VERSION = "1.1"
 PARSER_VERSION = "katex-html-v2"
-VALIDATOR_VERSION = "formula-batch-v1"
+VALIDATOR_VERSION = "formula-batch-v2"
 
 SYMBOLS = {
     "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
@@ -63,6 +63,7 @@ class BatchResult:
     stats: dict[str, int]
     validation_html: str
     validation_error: str = ""
+    validation_jobs: tuple[dict[str, Any], ...] = ()
 
 
 class FormulaCache:
@@ -259,11 +260,12 @@ def parse_katex(node: Tag) -> ParseResult:
     return ParseResult((result.latex or "").strip(), True, result.unknown_nodes, result.warnings)
 
 
-def validation_document(items: Sequence[dict[str, str]]) -> str:
+def validation_document(items: Sequence[dict[str, Any]]) -> str:
     rows = "\n".join(
         '<div class="formula" '
         f'data-source-id="{escape(item["source_id"])}" '
         f'data-dom-hash="{escape(item["dom_hash"])}" '
+        f'data-source-count="{len(item.get("source_ids", ())) or 1}" '
         f'data-latex="{escape(item["latex"], quote=True)}"></div>'
         for item in items
     )
@@ -318,7 +320,7 @@ window.runFormulaValidation = function () {{
 
 def _load_validation_report(
     path: Path | None,
-    expected: Sequence[dict[str, str]],
+    expected: Sequence[dict[str, Any]],
 ) -> tuple[set[str], str]:
     if not expected:
         return set(), ""
@@ -346,11 +348,16 @@ def _load_validation_report(
 
     expected_by_id = {item["source_id"]: item for item in expected}
     actual_items = payload.get("items", [])
+    if not isinstance(actual_items, list) or not all(
+        isinstance(item, dict) for item in actual_items
+    ):
+        return set(), "validation report items must be a list of objects"
     actual_by_id = {
         str(item.get("source_id", "")): item
         for item in actual_items
-        if isinstance(item, dict)
     }
+    if len(actual_by_id) != len(actual_items):
+        return set(), "validation report contains duplicate source IDs"
     if set(actual_by_id) != set(expected_by_id):
         return set(), "validation report source IDs do not match the pending batch"
     if int(payload.get("total", -1)) != len(expected) or int(payload.get("passed", -1)) != len(expected):
@@ -364,6 +371,39 @@ def _load_validation_report(
             return set(), f"validation report LaTeX mismatch for {source_id}"
 
     return {item["dom_hash"] for item in expected}, ""
+
+
+def _validation_jobs(
+    records: Sequence[Any],
+    resolved_by_hash: dict[str, ParseResult],
+) -> list[dict[str, Any]]:
+    """Create one browser-validation job per unique reconstructed DOM hash.
+
+    The first source ID is the stable representative used by the validation HTML
+    and report. ``source_ids`` preserves the complete source-to-result mapping so
+    a successful hash-level validation can unlock every duplicate source node.
+    """
+
+    jobs_by_hash: dict[str, dict[str, Any]] = {}
+    for record in records:
+        parsed = resolved_by_hash[record.dom_hash]
+        if not (
+            record.source_kind == "katex-html-only"
+            and parsed.success
+            and parsed.latex
+        ):
+            continue
+        job = jobs_by_hash.setdefault(
+            record.dom_hash,
+            {
+                "source_id": record.source_id,
+                "source_ids": [],
+                "dom_hash": record.dom_hash,
+                "latex": parsed.latex,
+            },
+        )
+        job["source_ids"].append(record.source_id)
+    return list(jobs_by_hash.values())
 
 
 def resolve_formulas(
@@ -408,28 +448,13 @@ def resolve_formulas(
         resolved_by_hash[record.dom_hash] = parsed
     cache.save()
 
-    validation: list[dict[str, str]] = []
-    for record in records:
-        parsed = resolved_by_hash[record.dom_hash]
-        if (
-            record.source_kind == "katex-html-only"
-            and parsed.success
-            and parsed.latex
-        ):
-            validation.append(
-                {
-                    "source_id": record.source_id,
-                    "dom_hash": record.dom_hash,
-                    "latex": parsed.latex,
-                }
-            )
-
-    html = validation_document(validation)
+    validation_jobs = _validation_jobs(records, resolved_by_hash)
+    html = validation_document(validation_jobs)
     validation_path.parent.mkdir(parents=True, exist_ok=True)
     validation_path.write_text(html, encoding="utf-8")
     validated_hashes, validation_error = _load_validation_report(
         validation_report_path,
-        validation,
+        validation_jobs,
     )
 
     updated: list[Any] = []
@@ -472,7 +497,9 @@ def resolve_formulas(
         "resolved": len(records) - len(failures) - len(pending),
         "failures": len(failures),
         "pending_validation": len(pending),
-        "browser_batches_planned": 1 if validation else 0,
+        "validation_jobs": len(validation_jobs),
+        "validation_nodes_saved": max(0, len(pending) - len(validation_jobs)),
+        "browser_batches_planned": 1 if validation_jobs else 0,
     }
     write_json(
         results_path,
@@ -483,6 +510,7 @@ def resolve_formulas(
             "target_platform": target_platform,
             "stats": stats,
             "validation_error": validation_error,
+            "validation_jobs": validation_jobs,
             "failures": failures,
             "pending_validation": pending,
             "items": [
@@ -496,10 +524,11 @@ def resolve_formulas(
         },
     )
     return BatchResult(
-        tuple(updated),
-        tuple(failures),
-        tuple(pending),
-        stats,
-        html,
-        validation_error,
+        records=tuple(updated),
+        failures=tuple(failures),
+        pending_validation=tuple(pending),
+        stats=stats,
+        validation_html=html,
+        validation_error=validation_error,
+        validation_jobs=tuple(validation_jobs),
     )

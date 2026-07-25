@@ -23,10 +23,12 @@ description: Extract and validate LaTeX from KaTeX, MathJax, or MathML formula D
 `html-to-markdown` 的确定性路径调用 `html-to-markdown/formula_batch.py::resolve_formulas()`：
 
 - 输入 compact HTML 和按 DOM 顺序排列的 FormulaRecord；
-- 按 `dom_hash` 去重；
+- 按 `dom_hash` 去重解析和 cache 查找；
 - 缓存解析结果，但缓存不代表已经通过浏览器验证；
-- 为需要验证的重建结果生成一个批量验证页面；
-- 输出 resolved、pending_validation 和 failures，而不是特殊占位字符串。
+- 每个需要验证的唯一 `dom_hash` 只生成一个 browser validation job；
+- job 使用首个 `source_id` 作为稳定代表，并用 `source_ids` 保存全部重复来源映射；
+- 一次 hash-level 验证成功后解锁映射到该 hash 的所有 source node；
+- 输出 resolved、pending_validation、validation_jobs 和 failures，而不是特殊占位字符串。
 
 公式数量阈值、是否编写可复用 parser、是否切换 strict 流程，属于页面级调用方决策，不属于单节点 extractor 自己可判断的信息。
 
@@ -145,10 +147,11 @@ KaTeX HTML 的详细 join、`.mspace`、多 `.base` 和 fail-closed 规则以 @k
 
 ### 批量验证
 
-- 保持 source_id、dom_hash、LaTeX 一一对应；
-- 验证报告的 schema、parser version、validator version、总数和通过数必须与 pending batch 完全匹配；
+- 验证 job 按唯一 `dom_hash` 生成；重复 source node 不得重复渲染；
+- 每个 job 保持代表 `source_id`、完整 `source_ids`、`dom_hash`、LaTeX 的稳定映射；
+- 验证报告的 schema、parser version、validator version、唯一 job 总数和通过数必须与 pending batch 完全匹配；
 - cache hit 仍需满足当前批次的验证要求；
-- 任一 mismatch、失败或未完成报告都不能解锁最终公式。
+- 任一 mismatch、重复 report ID、失败或未完成报告都不能解锁最终公式。
 
 ## 参考
 

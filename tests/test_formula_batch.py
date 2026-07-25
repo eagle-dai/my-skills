@@ -49,7 +49,7 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIsNone(result.latex)
         self.assertEqual(result.diagnostic_text, "x")
 
-    def test_duplicate_formulas_parse_once_and_then_hit_cache(self) -> None:
+    def test_duplicate_formulas_parse_and_validate_once_then_hit_cache(self) -> None:
         html = """
         <article>
           <p>This body is long enough for the normal preflight body selector and formula indexing.</p>
@@ -80,12 +80,64 @@ class FormulaBatchTests(unittest.TestCase):
             self.assertEqual(first.stats["parsed_unique"], 1)
             self.assertEqual(first.stats["resolved"], 0)
             self.assertEqual(first.stats["pending_validation"], 2)
+            self.assertEqual(first.stats["validation_jobs"], 1)
+            self.assertEqual(first.stats["validation_nodes_saved"], 1)
             self.assertEqual(second.stats["cache_hits"], 1)
             self.assertEqual(len(first.pending_validation), 2)
+            self.assertEqual(len(first.validation_jobs), 1)
+            self.assertEqual(
+                first.validation_jobs[0]["source_ids"],
+                ["formula-0001", "formula-0002"],
+            )
             self.assertIn('data-source-id="formula-0001"', first.validation_html)
-            self.assertIn('data-source-id="formula-0002"', first.validation_html)
+            self.assertNotIn('data-source-id="formula-0002"', first.validation_html)
+            self.assertIn('data-source-count="2"', first.validation_html)
             self.assertIn("KaTeX runtime is missing", first.validation_html)
             self.assertIn("runFormulaValidation", first.validation_html)
+
+            report_path = root / "validation-report.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": formula_batch.VALIDATION_SCHEMA_VERSION,
+                        "parser_version": formula_batch.PARSER_VERSION,
+                        "validator_version": formula_batch.VALIDATOR_VERSION,
+                        "runtime_loaded": True,
+                        "completed": True,
+                        "katex_version": "test-runtime",
+                        "total": 1,
+                        "passed": 1,
+                        "failures": [],
+                        "items": [
+                            {
+                                "source_id": first.validation_jobs[0]["source_id"],
+                                "dom_hash": first.validation_jobs[0]["dom_hash"],
+                                "latex": first.validation_jobs[0]["latex"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            resolved = formula_batch.resolve_formulas(
+                preflight.compact_html,
+                preflight.formulas,
+                cache_path=root / "cache.json",
+                validation_path=root / "validation-3.html",
+                results_path=root / "results-3.json",
+                validation_report_path=report_path,
+            )
+
+            self.assertEqual(resolved.stats["resolved"], 2)
+            self.assertEqual(resolved.stats["pending_validation"], 0)
+            self.assertEqual([record.original_latex for record in resolved.records], ["x", "x"])
+
+            results = json.loads((root / "results.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(results["validation_jobs"]), 1)
+            self.assertEqual(
+                results["validation_jobs"][0]["source_ids"],
+                ["formula-0001", "formula-0002"],
+            )
 
             cache = json.loads((root / "cache.json").read_text(encoding="utf-8"))
             entry = next(iter(cache["entries"].values()))
@@ -121,7 +173,13 @@ class FormulaBatchTests(unittest.TestCase):
                         "total": 1,
                         "passed": 1,
                         "failures": [],
-                        "items": list(pending.pending_validation),
+                        "items": [
+                            {
+                                "source_id": pending.validation_jobs[0]["source_id"],
+                                "dom_hash": pending.validation_jobs[0]["dom_hash"],
+                                "latex": pending.validation_jobs[0]["latex"],
+                            }
+                        ],
                     }
                 ),
                 encoding="utf-8",
@@ -187,6 +245,59 @@ class FormulaBatchTests(unittest.TestCase):
 
             self.assertEqual(result.stats["pending_validation"], 1)
             self.assertIn("source IDs", result.validation_error)
+
+    def test_duplicate_source_ids_in_validation_report_fail_closed(self) -> None:
+        html = """
+        <article>
+          <p>This body is long enough for the normal preflight body selector and formula indexing.</p>
+          <span class="katex"><span class="katex-html"><span class="base"><span class="mord">x</span></span></span></span>
+        </article>
+        """
+        preflight = formula_batch.preflight.build_preflight(html)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pending = formula_batch.resolve_formulas(
+                preflight.compact_html,
+                preflight.formulas,
+                cache_path=root / "cache.json",
+                validation_path=root / "validation.html",
+                results_path=root / "results.json",
+            )
+            item = {
+                "source_id": pending.validation_jobs[0]["source_id"],
+                "dom_hash": pending.validation_jobs[0]["dom_hash"],
+                "latex": pending.validation_jobs[0]["latex"],
+            }
+            report_path = root / "validation-report.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": formula_batch.VALIDATION_SCHEMA_VERSION,
+                        "parser_version": formula_batch.PARSER_VERSION,
+                        "validator_version": formula_batch.VALIDATOR_VERSION,
+                        "runtime_loaded": True,
+                        "completed": True,
+                        "katex_version": "test-runtime",
+                        "total": 2,
+                        "passed": 2,
+                        "failures": [],
+                        "items": [item, item],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = formula_batch.resolve_formulas(
+                preflight.compact_html,
+                preflight.formulas,
+                cache_path=root / "cache.json",
+                validation_path=root / "validation-2.html",
+                results_path=root / "results-2.json",
+                validation_report_path=report_path,
+            )
+
+            self.assertEqual(result.stats["pending_validation"], 1)
+            self.assertIn("duplicate source IDs", result.validation_error)
 
     def test_cache_key_changes_with_parser_version(self) -> None:
         key = formula_batch.FormulaCache.key("abc", "github")
