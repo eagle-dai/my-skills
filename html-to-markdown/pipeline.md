@@ -95,13 +95,30 @@ python html-to-markdown/pipeline.py input.html \
 
 验证报告只包含每个唯一 job 的代表 `source_id`、`dom_hash` 和 LaTeX。schema、parser/validator 版本、唯一 job 集合、数量或映射不匹配时继续 fail-closed；重复 report source ID 也会被拒绝。解析失败、待验证 source node 或未解决占位符都会记录在 `report.json`，最终 ZIP 只在 `status=converted` 时生成。
 
+## Validation rerun resume
+
+首次 KaTeX HTML-only 运行因等待验证而 `blocked` 时，pipeline 会原子写入 `.validation-resume.json`。后续带 `--formula-validation-report` 的运行先验证这份 ledger，再决定是否复用首次运行产物。fingerprint 至少覆盖：
+
+- 源文件 SHA-256 和输出 package；
+- pipeline、preflight、formula、validation schema；
+- parser、validator、converter 和 contract 版本；
+- target platform、mode、图片放宽参数；
+- 有序 validation jobs 的 digest。
+
+ledger 同时记录每个实际复用 artifact 的相对路径、字节数、schema 和 SHA-256，包括 compact snapshot、三个 preflight manifest、formula cache、formula results 和 validation HTML。复用前必须逐项验证；缺失文件、损坏 JSON、schema/version 不匹配、路径集合变化、大小或 digest 不匹配都会放弃 resume 并执行完整 pipeline。fallback 不会直接解锁公式，外部 validation report 仍须经过原有 job 集合、hash、LaTeX 和计数校验。
+
+resume 成功时只重新解析已验证的 compact snapshot，不再解析完整 SingleFile、重新选择正文或重写 preflight snapshot。`report.json` 记录 `resume_used`、`resume_fallback_reason`、`resume_ledger_written` 和 `resume_ledger_error`。ledger 使用与 #29 相同的原子 JSON writer；写入失败会删除 ledger 并继续当前转换，不把优化性状态误当成交付前提。
+
+这些 digest 用于发现意外损坏和陈旧状态，不构成对“可同时修改 artifact 与 ledger 的攻击者”的身份认证或防篡改保证。pipeline 不复用首次运行生成的 blocked Markdown 或 ZIP，而是从已校验的 compact DOM、formula/asset manifest 和 cache 重新完成转换及确定性打包。
+
 ## Timing 字段
 
 所有成功、阻断和 strict 路由报告都包含 `report.json.timings_ms`：
 
 | 字段 | 包含内容 |
 |---|---|
-| `preflight` | 读取并解析输入一次，在同一 DOM 上完成 MathJax source 检测与正文选择，再构建 detached compact snapshot、manifest 和 canonical count |
+| `resume` | 带 validation report 的运行读取源文件 hash，验证原子 resume ledger、artifact 大小/schema/digest，并从可信 compact snapshot 恢复内存状态；未请求 resume 时为 0 |
+| `preflight` | 完整运行时读取并解析输入一次，在同一 DOM 上完成 MathJax source 检测与正文选择，再构建 detached compact snapshot、manifest 和 canonical count；resume 成功时为 0 |
 | `snapshot` | 将 `content.html`、`manifest.json`、`formulas.json`、`assets.json` 写入磁盘 |
 | `formula` | 首次运行时的公式去重、cache 查找/必要写入、解析和 validation batch 生成 |
 | `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用、无变化写入跳过和验证报告摄取/核对 |
@@ -126,7 +143,7 @@ python html-to-markdown/benchmark.py --iterations 5
 - 常见标题、列表、表格和代码块；
 - 无图片、Notebook、virtualized/lazy-load 等 strict 信号。
 
-输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、validation job 去重和 source mapping。cold pass 必须写入新 cache；validation/warm pass 在 entry 未变化时必须报告零次 cache write。benchmark 只把以下稳定合同作为失败条件：
+输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、resume 使用情况、validation job 去重和 source mapping。cold pass 使用完整页面 + detached body 两次 parse 并写入新 cache；validation/warm pass 必须通过已验证 ledger resume，只解析一次 compact snapshot，且 entry 未变化时报告零次 cache write。benchmark 只把以下稳定合同作为失败条件：
 
 - 原始 LaTeX 场景必须转换并生成 ZIP；
 - KaTeX HTML-only cold pass 必须在验证前阻断，validation/warm pass 必须转换并生成 ZIP；
@@ -155,6 +172,7 @@ dist/
 │   ├── formulas.json
 │   └── assets.json
 ├── .formula-cache.json
+├── .validation-resume.json   # 可安全恢复两阶段 validation rerun 时
 ├── formula-validation.html   # 有待验证公式时
 ├── formula-results.json
 ├── report.json

@@ -202,6 +202,10 @@ def _median_integer_metrics(
 def _pass_record(outcome: Any, metrics: _Instrumentation) -> dict[str, Any]:
     return {
         "status": outcome.status,
+        "resume_used": bool(outcome.report.get("resume_used", False)),
+        "resume_fallback_reason": str(
+            outcome.report.get("resume_fallback_reason", "")
+        ),
         "timings_ms": dict(outcome.report["timings_ms"]),
         **metrics.snapshot(),
     }
@@ -214,6 +218,16 @@ def _warm_summary(
     return {
         "iterations": len(outcomes),
         "status": "converted",
+        "resume_used_all": all(
+            bool(outcome.report.get("resume_used", False)) for outcome in outcomes
+        ),
+        "resume_fallback_reasons": sorted(
+            {
+                str(outcome.report.get("resume_fallback_reason", ""))
+                for outcome in outcomes
+                if outcome.report.get("resume_fallback_reason")
+            }
+        ),
         "median_timings_ms": _median_timings(
             [outcome.report for outcome in outcomes]
         ),
@@ -543,7 +557,7 @@ def run_benchmark(
             )
 
         return {
-            "schema_version": "1.1",
+            "schema_version": "1.2",
             "iterations": iterations,
             "warm_iterations": warm_iterations,
             "status": "passed",
