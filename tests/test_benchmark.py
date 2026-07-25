@@ -20,7 +20,7 @@ class BenchmarkTests(unittest.TestCase):
     def test_synthetic_benchmark_meets_reduction_and_reports_timings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = benchmark.run_benchmark(
-                iterations=1,
+                iterations=2,
                 workdir=Path(directory),
                 style_blocks=120,
                 style_payload_bytes=768,
@@ -32,6 +32,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertGreaterEqual(result["snapshot_reduction_percent"], 80.0)
         self.assertEqual(result["formula_total"], 12)
         self.assertEqual(result["formula_unique"], 3)
+        self.assertEqual(result["formula_cache_hits_last_run"], 3)
         self.assertEqual(
             set(result["median_timings_ms"]),
             set(benchmark.pipeline.TIMING_FIELDS),
