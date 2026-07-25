@@ -60,7 +60,7 @@ class BatchResult:
     records: tuple[Any, ...]
     failures: tuple[dict[str, Any], ...]
     pending_validation: tuple[dict[str, str], ...]
-    stats: dict[str, int]
+    stats: dict[str, int | bool]
     validation_html: str
     validation_error: str = ""
     validation_jobs: tuple[dict[str, Any], ...] = ()
@@ -72,6 +72,7 @@ class FormulaCache:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.entries: dict[str, dict[str, Any]] = {}
+        self.dirty = False
         if path.exists():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -95,13 +96,27 @@ class FormulaCache:
             str(parsed.get("diagnostic_text", "")),
         )
 
-    def put(self, dom_hash: str, target: str, result: ParseResult) -> None:
-        self.entries[self.key(dom_hash, target)] = {
-            "parse_result": asdict(result),
+    def put(self, dom_hash: str, target: str, result: ParseResult) -> bool:
+        key = self.key(dom_hash, target)
+        entry = {
+            "parse_result": {
+                "latex": result.latex,
+                "success": result.success,
+                "unknown_nodes": list(result.unknown_nodes),
+                "warnings": list(result.warnings),
+                "diagnostic_text": result.diagnostic_text,
+            },
             "validation_status": "not_validated",
         }
+        if self.entries.get(key) == entry:
+            return False
+        self.entries[key] = entry
+        self.dirty = True
+        return True
 
-    def save(self) -> None:
+    def save(self) -> bool:
+        if not self.dirty:
+            return False
         write_json(
             self.path,
             {
@@ -110,6 +125,21 @@ class FormulaCache:
                 "entries": self.entries,
             },
         )
+        self.dirty = False
+        return True
+
+
+def _write_text_if_changed(path: Path, content: str) -> bool:
+    """Write UTF-8 text only when the destination bytes would change."""
+
+    try:
+        if path.read_text(encoding="utf-8") == content:
+            return False
+    except FileNotFoundError:
+        pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
 
 
 def _classes(node: Tag) -> set[str]:
@@ -447,12 +477,11 @@ def resolve_formulas(
             parsed = ParseResult(None, False, (f"unsupported-source:{record.source_kind}",))
         cache.put(record.dom_hash, target_platform, parsed)
         resolved_by_hash[record.dom_hash] = parsed
-    cache.save()
+    cache_written = cache.save()
 
     validation_jobs = _validation_jobs(records, resolved_by_hash)
     html = validation_document(validation_jobs)
-    validation_path.parent.mkdir(parents=True, exist_ok=True)
-    validation_path.write_text(html, encoding="utf-8")
+    validation_html_written = _write_text_if_changed(validation_path, html)
     validated_hashes, validation_error = _load_validation_report(
         validation_report_path,
         validation_jobs,
@@ -494,12 +523,16 @@ def resolve_formulas(
         "formula_total": len(records),
         "formula_unique": len(first_by_hash),
         "cache_hits": cache_hits,
+        "cache_written": cache_written,
         "parsed_unique": parsed_unique,
         "resolved": len(records) - len(failures) - len(pending),
         "failures": len(failures),
         "pending_validation": len(pending),
         "validation_jobs": len(validation_jobs),
-        "validation_nodes_saved": max(0, len(pending) - len(validation_jobs)),
+        "validation_html_written": validation_html_written,
+        "validation_nodes_saved": sum(
+            len(job["source_ids"]) for job in validation_jobs
+        ) - len(validation_jobs),
         "browser_batches_planned": 1 if validation_jobs else 0,
     }
     write_json(

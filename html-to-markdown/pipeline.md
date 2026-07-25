@@ -74,7 +74,7 @@ python html-to-markdown/pipeline.py input.html \
 存在原始 LaTeX 的公式可直接输出。对于只有 KaTeX HTML 的公式，`formula_batch.py` 会：
 
 1. 按 `dom_hash` 去重并尝试确定性解析；
-2. 使用 `.formula-cache.json` 缓存解析结果；
+2. 使用 `.formula-cache.json` 缓存解析结果；只有 cache entry 变化时才原子重写；
 3. 每个需要验证的唯一 `dom_hash` 只生成一个 browser validation job；
 4. 使用首个 `source_id` 作为 job 的稳定代表，并在 `formula-results.json.validation_jobs[].source_ids` 中保留全部重复来源；
 5. 在验证完成前为每个 source node 保留 `{{FORMULA:formula-0001}}` 占位符，将状态设为 `blocked`，且不生成最终 ZIP；
@@ -103,8 +103,8 @@ python html-to-markdown/pipeline.py input.html \
 |---|---|
 | `preflight` | 读取并解析输入一次，在同一 DOM 上完成 MathJax source 检测与正文选择，再构建 detached compact snapshot、manifest 和 canonical count |
 | `snapshot` | 将 `content.html`、`manifest.json`、`formulas.json`、`assets.json` 写入磁盘 |
-| `formula` | 首次运行时的公式去重、cache 查找/写入、解析和 validation batch 生成 |
-| `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用和验证报告摄取/核对 |
+| `formula` | 首次运行时的公式去重、cache 查找/必要写入、解析和 validation batch 生成 |
+| `validation` | 带 `--formula-validation-report` 重跑时的 cache 复用、无变化写入跳过和验证报告摄取/核对 |
 | `conversion` | Markdown 转换、结构计数、ledger 和 blocker 计算 |
 | `package` | 写 Markdown，并在 `converted` 时生成确定性 ZIP |
 | `total` | 从进入 `run_pipeline()` 到最终报告内容定格前的总 wall-clock 时间；不包含最后一次 `report.json` 写盘，也不包含外部浏览器实际运行 validation HTML 的等待时间 |
@@ -126,7 +126,7 @@ python html-to-markdown/benchmark.py --iterations 5
 - 常见标题、列表、表格和代码块；
 - 无图片、Notebook、virtualized/lazy-load 等 strict 信号。
 
-输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、validation job 去重和 source mapping。benchmark 只把以下稳定合同作为失败条件：
+输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、validation job 去重和 source mapping。cold pass 必须写入新 cache；validation/warm pass 在 entry 未变化时必须报告零次 cache write。benchmark 只把以下稳定合同作为失败条件：
 
 - 原始 LaTeX 场景必须转换并生成 ZIP；
 - KaTeX HTML-only cold pass 必须在验证前阻断，validation/warm pass 必须转换并生成 ZIP；
