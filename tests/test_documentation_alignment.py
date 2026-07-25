@@ -117,6 +117,20 @@ class DocumentationAlignmentTests(unittest.TestCase):
         self.assertIn("必须 fail closed", fast_boundary)
         self.assertIn("不表示 fast pipeline 已经支持 MathML 自动转换", skill)
 
+    def test_formula_validation_is_deduplicated_by_dom_hash(self) -> None:
+        skill = self.read("formula-extraction/SKILL.md")
+        pipeline = self.read("html-to-markdown/pipeline.md")
+        batch_section = self.section(skill, "两种执行模式")
+        validation_section = self.section(skill, "验证")
+        pipeline_formula_section = self.section(pipeline, "公式批处理与验证")
+
+        for text in (batch_section, validation_section, pipeline_formula_section):
+            self.assertIn("dom_hash", text)
+            self.assertIn("source_ids", text)
+        self.assertIn("只生成一个 browser validation job", batch_section)
+        self.assertIn("重复 source node 不得重复渲染", validation_section)
+        self.assertIn("validation_nodes_saved", pipeline_formula_section)
+
 
 if __name__ == "__main__":
     unittest.main()
