@@ -132,23 +132,34 @@ def write_json(path: Path, payload: Any) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+# RFC 2045/2397 token: one or more characters excluding CTLs, SP, and tspecials.
+_MIME_TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+_MIME_TYPE_RE = re.compile(rf"{_MIME_TOKEN}/{_MIME_TOKEN}")
+# Parameter is name=value where value is a token or a quoted-string.
+_MIME_PARAM_RE = re.compile(rf'{_MIME_TOKEN}=(?:{_MIME_TOKEN}|"[^"]*")')
+# A percent sign not followed by exactly two hex digits is malformed.
+_BAD_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
 def decode_data_uri(source: str) -> tuple[str, bytes]:
     match = re.fullmatch(r"data:([^,]*),(.*)", source, flags=re.DOTALL | re.IGNORECASE)
     if match is None:
         raise ValueError("invalid data URI")
 
     metadata = match.group(1).split(";")
-    mime = metadata.pop(0) or "application/octet-stream"
+    # RFC 2397: an omitted media type defaults to text/plain.
+    mime = (metadata.pop(0) or "text/plain").lower()
     is_base64 = bool(metadata and metadata[-1].lower() == "base64")
     if is_base64:
         metadata.pop()
-    if (
-        not re.fullmatch(r"[^/\s;,]+/[^\s;,]+", mime)
-        or any("=" not in parameter for parameter in metadata)
+    if not _MIME_TYPE_RE.fullmatch(mime) or any(
+        not _MIME_PARAM_RE.fullmatch(parameter) for parameter in metadata
     ):
         raise ValueError("invalid data URI media type")
 
     payload = match.group(2)
+    if not is_base64 and _BAD_PERCENT_RE.search(payload):
+        raise ValueError("invalid data URI payload: malformed percent-encoding")
     try:
         data = (
             base64.b64decode(payload, validate=True)

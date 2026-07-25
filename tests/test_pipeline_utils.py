@@ -28,7 +28,10 @@ class PipelineUtilsTests(unittest.TestCase):
                 "image/svg+xml",
                 b"<svg></svg>",
             ),
-            ("data:,plain%20text", "application/octet-stream", b"plain text"),
+            # RFC 2397: omitted media type defaults to text/plain.
+            ("data:,plain%20text", "text/plain", b"plain text"),
+            # Media type is normalized to lower case.
+            ("data:IMAGE/PNG;base64,iVBORw==", "image/png", b"\x89PNG"),
         )
 
         for source, expected_mime, expected_payload in cases:
@@ -43,6 +46,15 @@ class PipelineUtilsTests(unittest.TestCase):
             "not-data:image/png;base64,iVBORw==",
             "data:image/png;charset,iVBORw==",
             "data:image/png;base64,not base64!",
+            # Malformed media type: extra slash / illegal token character.
+            "data:image/png/extra,x",
+            "data:im@ge/png,x",
+            # Malformed parameters: empty name / empty value.
+            "data:image/png;=utf-8,x",
+            "data:image/png;charset=,x",
+            # Malformed percent-encoding must fail closed (not preserved literally).
+            "data:image/png,%ZZ",
+            "data:image/png,%2",
         )
 
         for source in malformed_sources:
