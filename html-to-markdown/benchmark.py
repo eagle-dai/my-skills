@@ -148,6 +148,21 @@ def run_benchmark(
         sizes = first["preflight"]["sizes"]
         reduction_percent = round((1.0 - float(sizes["reduction_ratio"])) * 100.0, 3)
         formula_stats = first["formula_batch"]
+        actual_formula_total = int(formula_stats["formula_total"])
+        actual_formula_unique = int(formula_stats["formula_unique"])
+        if actual_formula_total != formula_count or actual_formula_unique != unique_formulas:
+            raise RuntimeError(
+                "formula conservation failed: "
+                f"expected total/unique {formula_count}/{unique_formulas}, "
+                f"got {actual_formula_total}/{actual_formula_unique}"
+            )
+
+        cache_hits = int(reports[-1]["formula_batch"]["cache_hits"])
+        if iterations > 1 and cache_hits != unique_formulas:
+            raise RuntimeError(
+                f"formula cache reuse failed: expected {unique_formulas} hits, got {cache_hits}"
+            )
+
         result = {
             "schema_version": "1.0",
             "iterations": iterations,
@@ -157,9 +172,9 @@ def run_benchmark(
             "input_bytes": int(sizes["input_bytes"]),
             "compact_bytes": int(sizes["compact_bytes"]),
             "visible_text_bytes": int(sizes["visible_text_bytes"]),
-            "formula_total": int(formula_stats["formula_total"]),
-            "formula_unique": int(formula_stats["formula_unique"]),
-            "formula_cache_hits_last_run": int(reports[-1]["formula_batch"]["cache_hits"]),
+            "formula_total": actual_formula_total,
+            "formula_unique": actual_formula_unique,
+            "formula_cache_hits_last_run": cache_hits,
             "median_timings_ms": _median_timings(reports),
         }
         if result["status"] != "passed":
