@@ -106,11 +106,14 @@ class FormulaBatchTests(unittest.TestCase):
             self.assertEqual(first.stats["formula_total"], 2)
             self.assertEqual(first.stats["formula_unique"], 1)
             self.assertEqual(first.stats["parsed_unique"], 1)
+            self.assertTrue(first.stats["cache_written"])
+            self.assertTrue(first.stats["validation_html_written"])
             self.assertEqual(first.stats["resolved"], 0)
             self.assertEqual(first.stats["pending_validation"], 2)
             self.assertEqual(first.stats["validation_jobs"], 1)
             self.assertEqual(first.stats["validation_nodes_saved"], 1)
             self.assertEqual(second.stats["cache_hits"], 1)
+            self.assertFalse(second.stats["cache_written"])
             self.assertEqual(len(first.pending_validation), 2)
             self.assertEqual(len(first.validation_jobs), 1)
             self.assertEqual(
@@ -158,6 +161,7 @@ class FormulaBatchTests(unittest.TestCase):
 
             self.assertEqual(resolved.stats["resolved"], 2)
             self.assertEqual(resolved.stats["pending_validation"], 0)
+            self.assertEqual(resolved.stats["validation_nodes_saved"], 1)
             self.assertEqual([record.original_latex for record in resolved.records], ["x", "x"])
 
             results = json.loads((root / "results.json").read_text(encoding="utf-8"))
@@ -326,6 +330,50 @@ class FormulaBatchTests(unittest.TestCase):
 
             self.assertEqual(result.stats["pending_validation"], 1)
             self.assertIn("duplicate source IDs", result.validation_error)
+
+    def test_validation_document_is_byte_deterministic(self) -> None:
+        jobs = [
+            {
+                "source_id": "formula-0001",
+                "source_ids": ["formula-0001", "formula-0003"],
+                "dom_hash": "hash-a",
+                "latex": "x+1",
+            },
+            {
+                "source_id": "formula-0002",
+                "source_ids": ["formula-0002"],
+                "dom_hash": "hash-b",
+                "latex": "y^2",
+            },
+        ]
+
+        first = formula_batch.validation_document(jobs)
+        second = formula_batch.validation_document(jobs)
+
+        self.assertEqual(first.encode("utf-8"), second.encode("utf-8"))
+
+    def test_formula_cache_skips_unchanged_save(self) -> None:
+        parsed = formula_batch.ParseResult("x+1", True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            first = formula_batch.FormulaCache(path)
+            self.assertTrue(first.put("hash-a", "github", parsed))
+            self.assertTrue(first.save())
+            before = path.read_bytes()
+
+            warm = formula_batch.FormulaCache(path)
+            self.assertFalse(warm.put("hash-a", "github", parsed))
+            self.assertFalse(warm.save())
+
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_validation_html_write_is_skipped_when_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "validation.html"
+            self.assertTrue(formula_batch._write_text_if_changed(path, "stable\n"))
+            before = path.read_bytes()
+            self.assertFalse(formula_batch._write_text_if_changed(path, "stable\n"))
+            self.assertEqual(path.read_bytes(), before)
 
     def test_cache_key_changes_with_parser_version(self) -> None:
         key = formula_batch.FormulaCache.key("abc", "github")

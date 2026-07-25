@@ -38,6 +38,8 @@ formula records + compact DOM
 
 解析器版本或目标平台变化会自然失效。成功和失败的 parse result 都可缓存，避免重复执行 DOM 重建；浏览器验证仍是独立交付闸门。
 
+`FormulaCache` 使用 dirty tracking：只有新增 entry 或已有 entry 的序列化内容变化时才重写 `.formula-cache.json`。全 cache-hit 的 validation/warm run 不执行 JSON 序列化、临时文件写入、`fsync()` 或 `os.replace()`；真正需要写入时仍沿用原子写入合同。
+
 ## 当前解析覆盖
 
 - 普通 token、希腊字母、关系符和常用运算符；
@@ -72,7 +74,7 @@ formula records + compact DOM
 
 ## 批量验证
 
-每次转换只生成一个 `formula-validation.html`。页面不会在 KaTeX 缺失时静默跳过，而是提供：
+每次转换只生成一个确定性的 `formula-validation.html`。相同且顺序一致的 validation jobs 必须生成 byte-identical HTML；目标文件内容未变化时跳过写盘。页面不会在 KaTeX 缺失时静默跳过，而是提供：
 
 ```javascript
 window.runFormulaValidation()
@@ -108,7 +110,7 @@ python html-to-markdown/pipeline.py input.html \
 - `.formula-cache.json`：版本化 parse cache，不冒充验证缓存；
 - `formula-results.json`：统计、`validation_jobs`、parse failures、source-level pending validation 和验证错误；
 - `formula-validation.html`：每个唯一 `dom_hash` 一个节点的单批次渲染输入与结构化验证函数；
-- `report.json.formula_batch`：total、unique、cache hit、parsed unique、resolved、failure、pending validation、validation jobs、saved validation nodes 和 planned browser batch 数；
+- `report.json.formula_batch`：total、unique、cache hit、`cache_written`、parsed unique、resolved、failure、pending validation、validation jobs、`validation_html_written`、saved validation nodes 和 planned browser batch 数；
 - `report.json.formula_pending_validation`：等待浏览器验证的 source ID、DOM hash 和 LaTeX。
 
 任一 parse failure 或 pending validation 都保留 `{{FORMULA:source-id}}`，pipeline 状态为 `blocked`，不得生成最终 ZIP。

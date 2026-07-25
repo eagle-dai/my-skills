@@ -87,21 +87,20 @@ class BenchmarkTests(unittest.TestCase):
             2,
         )
 
-        # PR 1 measures the current unconditional cache write. PR 3 will
-        # change warm/validation passes to zero when no entry changed.
+        # Dirty tracking writes the cache only when entries change.
         self.assertEqual(original["passes"]["cold"]["formula_cache_writes"], 1)
         self.assertEqual(
             original["passes"]["warm"]["median_formula_cache_writes"],
-            1,
+            0,
         )
         self.assertEqual(html_only["passes"]["cold"]["formula_cache_writes"], 1)
         self.assertEqual(
             html_only["passes"]["validation"]["formula_cache_writes"],
-            1,
+            0,
         )
         self.assertEqual(
             html_only["passes"]["warm"]["median_formula_cache_writes"],
-            1,
+            0,
         )
 
     def test_benchmark_requires_a_warm_iteration(self) -> None:
