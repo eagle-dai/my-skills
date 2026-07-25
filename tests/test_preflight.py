@@ -41,6 +41,33 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(result.manifest["counts"]["formula_unique"], 1)
         self.assertEqual(len(result.assets), 1)
         self.assertEqual(result.assets[0].source_kind, "data-uri")
+        self.assertEqual(
+            result.compact_root.decode(formatter="minimal"),
+            result.compact_html,
+        )
+
+    def test_standalone_math_tex_signal_is_collected_during_preflight(self) -> None:
+        html = """
+        <html><body><article>
+          <p>This substantial article body includes a standalone MathJax v2 source
+          script that compaction cannot bind to a recognized formula container.</p>
+          <script type="math/tex; mode=display">x^2</script>
+        </article></body></html>
+        """
+
+        result = preflight.build_preflight(html)
+
+        self.assertEqual(result.manifest["recommended_mode"], "strict")
+        self.assertEqual(
+            result.manifest["signals"]["standalone_math_tex_scripts"],
+            1,
+        )
+        self.assertTrue(
+            any(
+                "standalone math/tex script formulas" in reason
+                for reason in result.manifest["signals"]["strict_reasons"]
+            )
+        )
 
     def test_virtualized_editor_recommends_strict(self) -> None:
         html = """

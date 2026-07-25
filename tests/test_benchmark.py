@@ -69,22 +69,22 @@ class BenchmarkTests(unittest.TestCase):
                 )
                 self.assertGreater(timings["total"], 0.0)
 
-        # PR 1 locks in measurable current behavior. PR 2 will deliberately
-        # update this regression from five parses to two.
+        # PR 2 reuses the preflight DOM: one full-document parse plus one
+        # selected-body detach/reparse, with no compact-snapshot reparses.
         self.assertEqual(
             original["passes"]["cold"]["parse_counts"],
             {
-                "full_document": 2,
+                "full_document": 1,
                 "detached_body": 1,
-                "compact_snapshot": 2,
+                "compact_snapshot": 0,
             },
         )
-        self.assertEqual(original["passes"]["cold"]["parse_total"], 5)
-        self.assertEqual(html_only["passes"]["cold"]["parse_total"], 5)
-        self.assertEqual(html_only["passes"]["validation"]["parse_total"], 5)
+        self.assertEqual(original["passes"]["cold"]["parse_total"], 2)
+        self.assertEqual(html_only["passes"]["cold"]["parse_total"], 2)
+        self.assertEqual(html_only["passes"]["validation"]["parse_total"], 2)
         self.assertEqual(
             html_only["passes"]["warm"]["median_parse_total"],
-            5,
+            2,
         )
 
         # PR 1 measures the current unconditional cache write. PR 3 will

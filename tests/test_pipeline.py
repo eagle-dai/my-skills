@@ -66,6 +66,52 @@ class PipelineTests(unittest.TestCase):
                     "files/pipeline_article/asset-0001.png", archive.namelist()
                 )
 
+    def test_reused_root_matches_serialize_and_reparse_path_byte_for_byte(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as reused_dir,
+            tempfile.TemporaryDirectory() as reparsed_dir,
+        ):
+            reused_root = Path(reused_dir)
+            reparsed_root = Path(reparsed_dir)
+            reused = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                reused_root,
+                mode="fast",
+                allow_unprocessed_images=True,
+            )
+            reparsed = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                reparsed_root,
+                mode="fast",
+                allow_unprocessed_images=True,
+                _reuse_compact_root=False,
+            )
+
+            self.assertEqual(reused.status, "converted")
+            self.assertEqual(reparsed.status, "converted")
+            relative_files = (
+                "preflight/content.html",
+                "preflight/manifest.json",
+                "preflight/formulas.json",
+                "preflight/assets.json",
+                "formula-results.json",
+                "formula-validation.html",
+                "pipeline_article/Fast path article.md",
+                "pipeline_article.zip",
+            )
+            for relative in relative_files:
+                self.assertEqual(
+                    (reused_root / relative).read_bytes(),
+                    (reparsed_root / relative).read_bytes(),
+                    relative,
+                )
+
+            reused_report = dict(reused.report)
+            reparsed_report = dict(reparsed.report)
+            reused_report.pop("timings_ms", None)
+            reparsed_report.pop("timings_ms", None)
+            self.assertEqual(reused_report, reparsed_report)
+
     def test_adjacent_inline_formulas_are_separated(self) -> None:
         """Two adjacent inline formulas must not collide into a ``$$`` delimiter.
 

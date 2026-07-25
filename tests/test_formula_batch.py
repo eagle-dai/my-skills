@@ -49,6 +49,34 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIsNone(result.latex)
         self.assertEqual(result.diagnostic_text, "x")
 
+
+    def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
+        html = """
+        <article>
+          <p>This article is long enough for deterministic selection and contains
+          a simple KaTeX HTML-only formula for root reuse validation.</p>
+          <span class="katex"><span class="katex-html"><span class="base"><span class="mord">x</span></span></span></span>
+        </article>
+        """
+        preflight = formula_batch.preflight.build_preflight(html)
+        before = preflight.compact_root.decode(formatter="minimal")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            formula_batch.resolve_formulas(
+                preflight.compact_html,
+                preflight.formulas,
+                cache_path=root / "cache.json",
+                validation_path=root / "validation.html",
+                results_path=root / "results.json",
+                root=preflight.compact_root,
+            )
+
+        self.assertEqual(
+            preflight.compact_root.decode(formatter="minimal"),
+            before,
+        )
+
     def test_duplicate_formulas_parse_and_validate_once_then_hit_cache(self) -> None:
         html = """
         <article>

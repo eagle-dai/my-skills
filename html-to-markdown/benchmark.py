@@ -130,7 +130,7 @@ class _Instrumentation:
 def _instrument_pipeline(metrics: _Instrumentation) -> Iterator[None]:
     """Count parser and formula-cache writes without changing production schemas."""
 
-    original_pipeline_soup = pipeline.BeautifulSoup
+    original_pipeline_soup = getattr(pipeline, "BeautifulSoup", None)
     original_preflight_soup = pipeline.preflight.BeautifulSoup
     original_utils_soup = pipeline_utils.BeautifulSoup
     original_formula_write_json = formula_batch.write_json
@@ -158,14 +158,16 @@ def _instrument_pipeline(metrics: _Instrumentation) -> Iterator[None]:
             metrics.formula_cache_writes += 1
         original_formula_write_json(path, payload)
 
-    pipeline.BeautifulSoup = pipeline_soup
+    if original_pipeline_soup is not None:
+        pipeline.BeautifulSoup = pipeline_soup
     pipeline.preflight.BeautifulSoup = preflight_soup
     pipeline_utils.BeautifulSoup = utils_soup
     formula_batch.write_json = measured_write_json
     try:
         yield
     finally:
-        pipeline.BeautifulSoup = original_pipeline_soup
+        if original_pipeline_soup is not None:
+            pipeline.BeautifulSoup = original_pipeline_soup
         pipeline.preflight.BeautifulSoup = original_preflight_soup
         pipeline_utils.BeautifulSoup = original_utils_soup
         formula_batch.write_json = original_formula_write_json
