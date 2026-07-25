@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -66,7 +67,19 @@ class PipelineUtilsTests(unittest.TestCase):
             )
             self.assertEqual(len(replacements), 1)
             self.assertEqual(replacements[0][1], destination)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o644)
             self.assertEqual(list(destination.parent.glob(f".{destination.name}.*.tmp")), [])
+
+    def test_write_json_preserves_existing_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "cache.json"
+            destination.write_text('{"old": true}\n', encoding="utf-8")
+            destination.chmod(0o640)
+
+            pipeline_utils.write_json(destination, {"old": False})
+
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
+            self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), {"old": False})
 
     def test_write_json_failure_preserves_previous_file_and_cleans_temp(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -74,6 +87,7 @@ class PipelineUtilsTests(unittest.TestCase):
             destination = root / "cache.json"
             previous = '{"stable": true}\n'
             destination.write_text(previous, encoding="utf-8")
+            destination.chmod(0o640)
 
             with mock.patch.object(
                 pipeline_utils.os,
@@ -84,6 +98,7 @@ class PipelineUtilsTests(unittest.TestCase):
                     pipeline_utils.write_json(destination, {"stable": False})
 
             self.assertEqual(destination.read_text(encoding="utf-8"), previous)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
             self.assertEqual(list(root.glob(f".{destination.name}.*.tmp")), [])
 
 
