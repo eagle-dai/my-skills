@@ -20,6 +20,36 @@ SPEC.loader.exec_module(pipeline_utils)
 
 
 class PipelineUtilsTests(unittest.TestCase):
+    def test_decode_data_uri_supports_standard_encodings_and_parameters(self) -> None:
+        cases = (
+            ("data:image/png;base64,iVBORw==", "image/png", b"\x89PNG"),
+            (
+                "data:image/svg+xml;charset=utf-8,%3Csvg%3E%3C/svg%3E",
+                "image/svg+xml",
+                b"<svg></svg>",
+            ),
+            ("data:,plain%20text", "application/octet-stream", b"plain text"),
+        )
+
+        for source, expected_mime, expected_payload in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    pipeline_utils.decode_data_uri(source),
+                    (expected_mime, expected_payload),
+                )
+
+    def test_decode_data_uri_rejects_malformed_metadata(self) -> None:
+        malformed_sources = (
+            "not-data:image/png;base64,iVBORw==",
+            "data:image/png;charset,iVBORw==",
+            "data:image/png;base64,not base64!",
+        )
+
+        for source in malformed_sources:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(ValueError, "invalid data URI"):
+                    pipeline_utils.decode_data_uri(source)
+
     def test_safe_package_name_preserves_chinese_text(self) -> None:
         self.assertEqual(
             pipeline_utils.safe_package_name("导读｜量化知识背景与研究能力地图"),

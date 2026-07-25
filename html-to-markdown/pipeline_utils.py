@@ -133,15 +133,26 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def decode_data_uri(source: str) -> tuple[str, bytes]:
-    match = re.fullmatch(r"data:([^;,]+)?(;base64)?,(.*)", source, flags=re.DOTALL)
+    match = re.fullmatch(r"data:([^,]*),(.*)", source, flags=re.DOTALL | re.IGNORECASE)
     if match is None:
         raise ValueError("invalid data URI")
-    mime = match.group(1) or "application/octet-stream"
-    payload = match.group(3)
+
+    metadata = match.group(1).split(";")
+    mime = metadata.pop(0) or "application/octet-stream"
+    is_base64 = bool(metadata and metadata[-1].lower() == "base64")
+    if is_base64:
+        metadata.pop()
+    if (
+        not re.fullmatch(r"[^/\s;,]+/[^\s;,]+", mime)
+        or any("=" not in parameter for parameter in metadata)
+    ):
+        raise ValueError("invalid data URI media type")
+
+    payload = match.group(2)
     try:
         data = (
             base64.b64decode(payload, validate=True)
-            if match.group(2)
+            if is_base64
             else unquote_to_bytes(payload)
         )
     except (ValueError, base64.binascii.Error) as error:

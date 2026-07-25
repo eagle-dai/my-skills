@@ -119,7 +119,7 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 基础规则：
 
-- base64 图片解码到 `files/<zip-name>/`；
+- `data:` 图片（base64 或百分号编码）解码到 `files/<zip-name>/`，并接受合法的媒体类型参数（例如 `charset=utf-8`）；
 - Markdown 使用相对路径；
 - 评论说明图使用 `comment_` 前缀；
 - lazy-load 源缺失时按 notebook 规则回填或标注；

@@ -106,7 +106,7 @@ python html-to-markdown/benchmark.py --iterations 5
 
 - input/compact/visible-text bytes；
 - compact snapshot 缩减百分比；
-- formula total/unique 和后续运行的 cache hit；
+- formula total/unique 和后续运行的 cache-hit；
 - `preflight`、`snapshot`、`formula`、`validation`、`conversion`、`package`、`total` 的中位耗时。
 
 benchmark 只对至少 80% 的 snapshot 缩减设置稳定门槛。绝对耗时受机器、Python 和文件系统影响，仅作为本机前后对比，不作为跨环境 CI 阈值。
