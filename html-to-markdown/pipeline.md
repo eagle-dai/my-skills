@@ -199,4 +199,6 @@ dist/
 
 ZIP 根目录内同样是 `<name>.md` 和 `files/<name>/...`。标题仅保留在
 Markdown 内容中，不参与第二套文件命名。默认 `<name>` 取输入文件 stem；
-`--output-name` 可显式覆盖。两者都经过 NFKC 和统一 `-` 分隔符规范化。
+`--output-name` 可显式覆盖。两者都经过 NFKC 和统一 `-` 分隔符规范化；
+空白、下划线、点号和其他标点/路径分隔符都会转成 `-`，例如
+`report v1.2` 固定为 `report-v1-2`。

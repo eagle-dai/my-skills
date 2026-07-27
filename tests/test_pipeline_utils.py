@@ -82,6 +82,7 @@ class PipelineUtilsTests(unittest.TestCase):
                 "05_安全边界_研究不等于实盘执行",
                 "05-安全边界-研究不等于实盘执行",
             ),
+            ("report v1.2", "report-v1-2"),
             ("ＡＩ／量化：证据", "AI-量化-证据"),
         )
 

@@ -111,6 +111,8 @@ class DocumentationAlignmentTests(unittest.TestCase):
         self.assertIn("numbered_document_name", conversion)
         self.assertIn("--output-name", pipeline)
         self.assertIn("随机后缀", blocking)
+        self.assertIn("report v1.2", skill)
+        self.assertIn("agent-driven strict handoff", skill)
 
     def test_meta_guidance_matches_current_ci(self) -> None:
         meta = self.read("_meta/skill-self-improvement.md")

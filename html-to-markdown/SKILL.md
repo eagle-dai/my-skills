@@ -67,10 +67,10 @@ python html-to-markdown/pipeline.py input.html \
 命名是数据合同，不是文案创作。禁止让 agent 翻译、概括标题或自由生成 slug。
 
 - pipeline 默认把输入文件 stem 传给 `canonical_output_name()` 一次；也可由用户通过 `--output-name` 明确指定逻辑名。
-- 规范化只做机械转换：NFKC、空白/标点/路径分隔符统一为 `-`、连续 `-` 合并、Windows 保留名加 `article-` 前缀；中文不会被翻译或丢弃。
+- 规范化只做机械转换：NFKC、空白、下划线、点号和其他标点/路径分隔符统一为 `-`、连续 `-` 合并、Windows 保留名加 `article-` 前缀；中文不会被翻译或丢弃。例如 `report v1.2` 固定为 `report-v1-2`。
 - 结果写入 `report.json.output_name`，并原样复用于 `<name>/<name>.md`、`<name>/files/<name>/` 和 `<name>.zip`。目录、Markdown、资源目录和 ZIP 不得再分别命名。
 - strict handoff 必须携带 `output_name`。单文档 strict 输出原样复用它，禁止根据正文标题另起名字。
-- 一个 strict 输入拆成多个 Markdown 时，先按渲染 DOM 中的稳定文档顺序从 1 编号，再调用 `numbered_document_name(exact_title, ordinal)`；标题必须是 DOM 原文，禁止翻译、摘要或自由 slug。Markdown stem 与其资源子目录必须完全相同。
+- 一个 strict 输入拆成多个 Markdown 时，先按渲染 DOM 中的稳定文档顺序从 1 编号，再调用 `numbered_document_name(exact_title, ordinal)`；标题必须是 DOM 原文，禁止翻译、摘要或自由 slug。Markdown stem 与其资源子目录必须完全相同。这个 helper 是给 agent-driven strict handoff 使用的确定性合同；pipeline 当前只处理单文档，因此有意不直接调用它。
 - dispatch 前写出完整 naming manifest；sub-agent 只能照表创建路径，不得自行更改。
 
 ## Phase 1：strict 主 agent 分析
