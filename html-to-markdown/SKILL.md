@@ -163,15 +163,16 @@ Prompt 必须包含已确认参数，不得让 sub agent 重新猜 selector 或�
 fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性执行去站点水印和完整图片合同（fail-closed，永不抛、永不丢图）；只有用户明确要求保留原始水印（`--allow-unprocessed-images`）时才跳过：
 
 1. 保存原图副本（写入 `files/<package>/images_orig/`，进 ZIP 可离线核对）；
-2. 尝试安全去站点水印（仅四角 ROI、右下优先、特征色半透明灰）；
+2. 尝试安全去站点水印（仅四角 ROI、右下优先；不写死颜色——按“与局部背景的半透明偏离带”识别，任意色的站点叠加都命中，见 @watermark.py）；
 3. 记录处理文件和 bbox（写入 `report.json.image_ledger`）；
 4. 使用原图而不是缩略图检测；
-5. 特征色命中正文时只处理最右下连通块，禁止扩大擦除范围；
-6. 原尺寸逐图验证正文未被擦除（擦除区外零容差全等；区内内容色占比超阈值判水印压正文 → 回退保留原图）；
-7. 无法安全去除时保留原图（`fallback_to_original=True`）；
-8. 去水印后再压缩（宽 > 1600 等比缩放，webp q82；webp 变大则保留原格式；svg/gif 不转）。
+5. 命中区域按连通块合并邻近块成单一水印框，只处理最右下的那个，禁止扩大擦除范围；
+6. 用 cv2.inpaint（TELEA）填充而非纯色覆盖，渐变底/压内容都能补；缺 cv2 时降级为跳过去水印（不退回纯色填充）；
+7. 原尺寸逐图验证正文未被擦除（inpaint mask 外零容差全等；区内相对局部背景强对比占比超阈值判水印压正文 → 回退保留原图；inpaint 残留过多也回退）；
+8. 无法安全去除时保留原图（`fallback_to_original=True`）；
+9. 去水印后再压缩（宽 > 1600 等比缩放，webp q82；webp 变大则保留原格式；svg/gif 不转）。
 
-图片保留/删除/人工复核与 ledger 规则见 @image-disposition.md、@image_disposition.py、@image_processing.py 和 @conversion-rules.md。
+图片保留/删除/人工复核与 ledger 规则见 @image-disposition.md、@image_disposition.py、@image_processing.py、@watermark.py 和 @conversion-rules.md。
 
 ### 输出路径
 

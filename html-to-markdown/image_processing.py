@@ -13,54 +13,50 @@ imports so it stays independently unit-testable.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from dataclasses import dataclass, field
 from io import BytesIO
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from PIL import Image
 
+# Load the sibling watermark module by path so this works whether we were
+# imported normally (pipeline puts MODULE_DIR on sys.path) or via importlib with
+# a custom name (the unit tests). The watermark module owns detection + inpaint;
+# this module keeps the fail-closed contract, validation, and compression.
+_WM_SPEC = importlib.util.spec_from_file_location(
+    "html_to_markdown_watermark", Path(__file__).resolve().parent / "watermark.py"
+)
+assert _WM_SPEC is not None and _WM_SPEC.loader is not None
+watermark = importlib.util.module_from_spec(_WM_SPEC)
+# Register before exec so dataclass field-type resolution (which looks the
+# module up in sys.modules via __module__) works under importlib loading.
+sys.modules.setdefault(_WM_SPEC.name, watermark)
+_WM_SPEC.loader.exec_module(watermark)
+
 # Formats we never re-encode: vector / animated. They pass through untouched.
 _PASSTHROUGH_MIMES = {"image/svg+xml", "image/gif"}
 
-# Default watermark feature colour: semi-transparent grey overlays flatten to a
-# mid grey with low saturation once composited on a light page. Not a site name.
-_WATERMARK_GREY = 128
-_WATERMARK_GREY_TOL = 34          # |channel - 128| <= tol on all of R,G,B
-_WATERMARK_SAT_MAX = 28           # max(R,G,B) - min(R,G,B) <= this (low saturation)
-
-# Corner ROI where a watermark may live. Bottom-right is checked first because
-# that is where site logos sit; the fractions bound how far in we ever erase.
-_ROI_W_FRAC = 0.35
-_ROI_H_FRAC = 0.22
-
-# Connected-component size filters, as a fraction of the ROI pixel area.
-_CC_MIN_FRAC = 0.0008             # smaller than this = noise, ignore
-_CC_MAX_FRAC = 0.60               # larger than this = likely body content, ignore
-
-# Guardrail: the erased bbox must not hug the ROI's outer corner too tightly, or
-# we risk painting over content that runs to the edge.
-_BBOX_EDGE_MARGIN_FRAC = 0.02
-
-# Validation: fraction of the erased bbox (in the ORIGINAL image) that is
-# "content colour" (not near-white, not the watermark grey). Above this we judge
-# the watermark to overlap real content and refuse the erase.
+# Validation thresholds. Detection and inpaint now live in watermark.py; this
+# module keeps the fail-closed contract, so it independently re-checks the
+# result before shipping it.
+#
+# A pixel in the bbox that deviates from the local background by more than this
+# is "strong content" (chart stroke, text), not a semi-transparent watermark.
+_STRONG_CONTRAST_MIN = 130
+# If more than this fraction of the bbox is strong content, the mark overlaps
+# real content and the erase is refused.
 _CONTENT_IN_BBOX_MAX_FRAC = 0.15
-_NEAR_WHITE_MIN = 244             # pixels this bright count as background
+# After inpaint, the masked region's edge energy must drop to at most this
+# fraction of the original watermark's, or the fill did not cover the mark.
+_RESIDUAL_MAX_FRAC = 0.5
 
 # Compression defaults.
 _DEFAULT_MAX_WIDTH = 1600
 _DEFAULT_WEBP_QUALITY = 82
-
-
-@dataclass(frozen=True)
-class WatermarkResult:
-    """Outcome of the detect+erase step, before validation."""
-
-    removed: bool
-    bbox: Optional[tuple[int, int, int, int]] = None  # (left, top, right, bottom)
-    method: str = "none"                               # fill_background | none | ...
-    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -169,7 +165,9 @@ def process_image(
         validation_reason = ""
         working = original_rgb
         if wm.removed and wm.bbox is not None:
-            ok, reason = validate_dewatermark(original_rgb, watermarked, wm.bbox)
+            ok, reason = validate_dewatermark(
+                original_rgb, watermarked, wm.bbox, wm.mask
+            )
             validation_passed = ok
             validation_reason = reason
             if ok:
@@ -218,74 +216,46 @@ def process_image(
         return _fallback("processing_error")
 
 
-def detect_and_remove_watermark(image: "Image.Image") -> tuple["Image.Image", WatermarkResult]:
-    """Detect a corner watermark by feature colour and paint it out.
+def detect_and_remove_watermark(
+    image: "Image.Image",
+) -> tuple["Image.Image", "watermark.WatermarkResult"]:
+    """Delegate to the generalized watermark module and adapt to PIL.
 
-    Only the corner ROIs are searched (bottom-right first). The feature mask is
-    connected-component labelled; only the bottom-right-most qualifying block is
-    erased, and only if its bbox does not hug the outer corner. The erased region
-    is filled with the dominant background colour just outside the bbox.
+    The heavy lifting -- colour-agnostic detection, nearby-block merging, and
+    cv2 inpaint fill -- lives in ``watermark.py`` so it stays independently
+    testable. This wrapper converts to/from a PIL image and preserves the old
+    return shape (image, result) for the fail-closed orchestration below.
     """
 
     arr = np.asarray(image, dtype=np.uint8)
-    height, width = arr.shape[0], arr.shape[1]
-    if height < 8 or width < 8:
-        return image, WatermarkResult(removed=False, reason="too_small")
-
-    roi_w = max(1, int(round(width * _ROI_W_FRAC)))
-    roi_h = max(1, int(round(height * _ROI_H_FRAC)))
-
-    # Bottom-right corner first, then the other three. Each entry is the ROI's
-    # absolute (x0, y0) offset in the full image plus a slice.
-    corners = [
-        (width - roi_w, height - roi_h),   # bottom-right (priority)
-        (0, height - roi_h),               # bottom-left
-        (width - roi_w, 0),                # top-right
-        (0, 0),                            # top-left
-    ]
-
-    for x0, y0 in corners:
-        roi = arr[y0:y0 + roi_h, x0:x0 + roi_w, :]
-        mask = _feature_color_mask(roi)
-        if not mask.any():
-            continue
-
-        bbox = _bottom_right_component_bbox(mask, roi_h, roi_w)
-        if bbox is None:
-            continue
-
-        # Guardrail: reject a bbox that hugs the ROI's outer corner (content that
-        # runs to the image edge). The "outer" corner depends on which corner ROI.
-        margin_x = max(1, int(round(roi_w * _BBOX_EDGE_MARGIN_FRAC)))
-        margin_y = max(1, int(round(roi_h * _BBOX_EDGE_MARGIN_FRAC)))
-        rl, rt, rr, rb = bbox  # roi-relative
-        if _bbox_hugs_outer_corner(
-            (rl, rt, rr, rb), roi_w, roi_h, x0, y0, width, height, margin_x, margin_y
-        ):
-            continue
-
-        # Absolute bbox in the full image.
-        abs_bbox = (x0 + rl, y0 + rt, x0 + rr, y0 + rb)
-        out = arr.copy()
-        fill = _background_color(arr, abs_bbox)
-        out[abs_bbox[1]:abs_bbox[3], abs_bbox[0]:abs_bbox[2], :] = fill
-        return Image.fromarray(out), WatermarkResult(
-            removed=True, bbox=abs_bbox, method="fill_background"
-        )
-
-    return image, WatermarkResult(removed=False, reason="no_feature_color")
+    result = watermark.remove_corner_watermark(arr)
+    if result.removed and result.image is not None:
+        return Image.fromarray(result.image), result
+    return image, result
 
 
 def validate_dewatermark(
-    original: "Image.Image", processed: "Image.Image", bbox: tuple[int, int, int, int]
+    original: "Image.Image",
+    processed: "Image.Image",
+    bbox: tuple[int, int, int, int],
+    mask: Optional[np.ndarray] = None,
 ) -> tuple[bool, str]:
-    """Confirm we only changed pixels inside ``bbox`` and did not erase content.
+    """Confirm we only changed masked pixels and did not erase real content.
 
-    Two checks:
-      1. Zero-tolerance: every pixel *outside* bbox must be byte-identical.
-      2. In the original, the fraction of ``bbox`` that is content colour
-         (neither near-white nor watermark grey) must be below a threshold; a
-         watermark overlapping real content is refused.
+    Three checks (fail-closed: any failure means keep the original):
+      1. Zero-tolerance: every pixel *outside* the inpaint mask must be
+         byte-identical. The mask is tighter than the bbox -- inpaint only
+         touched the watermark strokes, so the rest of the bbox must be intact
+         too. (Falls back to the bbox rectangle if no mask is supplied.)
+      2. Content-overlap: within the bbox but *outside the watermark mask*, the
+         fraction of pixels that contrast strongly with the local background
+         must stay below a threshold. The mask pixels are the mark itself (the
+         icon may be highly saturated -- that is fine to erase); strong contrast
+         *around* the mark means it overlaps real content (chart strokes, a
+         framed box), so refuse. This replaces the old colour-locked test.
+      3. Inpaint residual: after painting, the masked region must not retain
+         strong high-frequency structure. Leftover edges mean the fill did not
+         cover the mark; refuse rather than ship a half-erased watermark.
     """
 
     orig = np.asarray(original, dtype=np.uint8)
@@ -295,22 +265,40 @@ def validate_dewatermark(
 
     left, top, right, bottom = bbox
 
-    # 1. Outside-bbox pixels must be identical. Build a boolean mask of the bbox.
-    outside = np.ones(orig.shape[:2], dtype=bool)
-    outside[top:bottom, left:right] = False
+    # 1. Everything outside the touched mask must be identical.
+    if mask is not None:
+        outside = ~mask
+    else:
+        outside = np.ones(orig.shape[:2], dtype=bool)
+        outside[top:bottom, left:right] = False
     if not np.array_equal(orig[outside], proc[outside]):
         return False, "pixels_changed_outside_bbox"
 
-    # 2. Content coverage inside the bbox (measured on the ORIGINAL).
-    region = orig[top:bottom, left:right, :]
+    # 2. Strong-contrast coverage inside the bbox but OUTSIDE the mark (measured
+    #    on the ORIGINAL), relative to the local background -- no hard-coded
+    #    colour. Mask pixels are the watermark itself; only content around it
+    #    that stays strongly-contrasting counts as an overlap.
+    region = orig[top:bottom, left:right, :].astype(np.int16)
     if region.size == 0:
         return False, "empty_bbox"
-    near_white = np.all(region >= _NEAR_WHITE_MIN, axis=2)
-    wm_grey = _feature_color_mask(region)
-    content = ~(near_white | wm_grey)
-    content_frac = float(content.mean())
-    if content_frac > _CONTENT_IN_BBOX_MAX_FRAC:
+    bg = _local_bbox_background(orig, bbox)
+    dev = np.abs(region - bg).max(axis=2)
+    strong = dev > _STRONG_CONTRAST_MIN
+    if mask is not None:
+        strong = strong & ~mask[top:bottom, left:right]
+    if float(strong.mean()) > _CONTENT_IN_BBOX_MAX_FRAC:
         return False, "watermark_overlaps_content"
+
+    # 3. Inpaint residual: the painted region should be smoother than the
+    #    original watermark it replaced. Compare masked-region gradient energy.
+    if mask is not None and mask[top:bottom, left:right].any():
+        region_mask = mask[top:bottom, left:right]
+        orig_region = orig[top:bottom, left:right, :].astype(np.int16)
+        proc_region = proc[top:bottom, left:right, :].astype(np.int16)
+        before = _edge_energy(orig_region, region_mask)
+        after = _edge_energy(proc_region, region_mask)
+        if before > 0 and after > before * _RESIDUAL_MAX_FRAC:
+            return False, "dewatermark_residual"
 
     return True, "ok"
 
@@ -380,111 +368,13 @@ def _extract_alpha(image: "Image.Image") -> "Image.Image | None":
     return None
 
 
-def _feature_color_mask(arr: np.ndarray) -> np.ndarray:
-    """Boolean mask of pixels near the watermark grey with low saturation."""
-
-    a = arr.astype(np.int16)
-    near_grey = np.all(np.abs(a - _WATERMARK_GREY) <= _WATERMARK_GREY_TOL, axis=2)
-    sat = a.max(axis=2) - a.min(axis=2)
-    low_sat = sat <= _WATERMARK_SAT_MAX
-    return near_grey & low_sat
-
-
-def _label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
-    """4-connectivity connected-component labelling on a boolean mask.
-
-    Iterative flood fill (BFS) on numpy — no scipy. Returns (labels, count)
-    where labels are 1..count and 0 is background.
-    """
-
-    h, w = mask.shape
-    labels = np.zeros((h, w), dtype=np.int32)
-    current = 0
-    # Use a plain Python stack; ROIs are small (corner crops).
-    for sy in range(h):
-        for sx in range(w):
-            if not mask[sy, sx] or labels[sy, sx] != 0:
-                continue
-            current += 1
-            stack = [(sy, sx)]
-            labels[sy, sx] = current
-            while stack:
-                y, x = stack.pop()
-                if y > 0 and mask[y - 1, x] and labels[y - 1, x] == 0:
-                    labels[y - 1, x] = current
-                    stack.append((y - 1, x))
-                if y + 1 < h and mask[y + 1, x] and labels[y + 1, x] == 0:
-                    labels[y + 1, x] = current
-                    stack.append((y + 1, x))
-                if x > 0 and mask[y, x - 1] and labels[y, x - 1] == 0:
-                    labels[y, x - 1] = current
-                    stack.append((y, x - 1))
-                if x + 1 < w and mask[y, x + 1] and labels[y, x + 1] == 0:
-                    labels[y, x + 1] = current
-                    stack.append((y, x + 1))
-    return labels, current
-
-
-def _bottom_right_component_bbox(
-    mask: np.ndarray, roi_h: int, roi_w: int
-) -> Optional[tuple[int, int, int, int]]:
-    """Return the roi-relative bbox of the bottom-right-most qualifying
-    connected component, or None. Filters tiny (noise) and huge (content) blocks.
-    """
-
-    labels, count = _label_components(mask)
-    if count == 0:
-        return None
-
-    roi_area = roi_h * roi_w
-    min_area = max(1.0, roi_area * _CC_MIN_FRAC)
-    max_area = roi_area * _CC_MAX_FRAC
-
-    best = None
-    best_key = None  # (bottom, right) — larger is more bottom-right
-    for label in range(1, count + 1):
-        ys, xs = np.where(labels == label)
-        area = xs.size
-        if area < min_area or area > max_area:
-            continue
-        left, right = int(xs.min()), int(xs.max()) + 1
-        top, bottom = int(ys.min()), int(ys.max()) + 1
-        key = (bottom, right)
-        if best_key is None or key > best_key:
-            best_key = key
-            best = (left, top, right, bottom)
-    return best
-
-
-def _bbox_hugs_outer_corner(
-    bbox: tuple[int, int, int, int],
-    roi_w: int,
-    roi_h: int,
-    x0: int,
-    y0: int,
-    width: int,
-    height: int,
-    margin_x: int,
-    margin_y: int,
-) -> bool:
-    """True if the (roi-relative) bbox touches the ROI's outer image corner
-    within the margin. The outer corner is the one nearest the image corner."""
-
-    left, top, right, bottom = bbox
-    # Which image corner is this ROI anchored to?
-    on_right = (x0 + roi_w) >= width
-    on_bottom = (y0 + roi_h) >= height
-
-    touches_x = (right >= roi_w - margin_x) if on_right else (left <= margin_x)
-    touches_y = (bottom >= roi_h - margin_y) if on_bottom else (top <= margin_y)
-    return touches_x and touches_y
-
-
-def _background_color(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
+def _local_bbox_background(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
     """Median colour of a ring strictly OUTSIDE the bbox (fallback: white).
 
-    The sample is the padded rectangle around the bbox minus the bbox itself
-    (four border strips), so the watermark pixels never contaminate the fill.
+    A padded rectangle around the bbox minus the bbox itself (four border
+    strips), so watermark pixels never contaminate the estimate. Used by
+    validation to measure how strongly bbox content contrasts with its
+    surroundings -- the colour-agnostic replacement for the old grey test.
     """
 
     h, w = arr.shape[0], arr.shape[1]
@@ -494,12 +384,10 @@ def _background_color(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.nd
     x0, x1 = max(0, left - pad), min(w, right + pad)
 
     strips = []
-    # Top and bottom strips span the full padded width.
     if y0 < top:
         strips.append(arr[y0:top, x0:x1, :].reshape(-1, 3))
     if bottom < y1:
         strips.append(arr[bottom:y1, x0:x1, :].reshape(-1, 3))
-    # Left and right strips span only the bbox's vertical extent.
     if x0 < left:
         strips.append(arr[top:bottom, x0:left, :].reshape(-1, 3))
     if right < x1:
@@ -507,8 +395,26 @@ def _background_color(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.nd
 
     ring = np.concatenate(strips, axis=0) if strips else np.empty((0, 3), np.uint8)
     if ring.size == 0:
-        return np.array([255, 255, 255], dtype=np.uint8)
-    return np.median(ring, axis=0).astype(np.uint8)
+        return np.array([255, 255, 255], dtype=np.int16)
+    return np.median(ring, axis=0).astype(np.int16)
+
+
+def _edge_energy(region: np.ndarray, region_mask: np.ndarray) -> float:
+    """Mean gradient magnitude over the masked pixels of a bbox region.
+
+    A crisp watermark has high edge energy; a clean inpaint fill is smooth.
+    Comparing before/after tells us whether the mark was actually covered.
+    ``region`` is int16 HxWx3, ``region_mask`` is bool HxW.
+    """
+
+    grey = region.mean(axis=2)
+    gy = np.zeros_like(grey)
+    gx = np.zeros_like(grey)
+    gy[1:, :] = np.abs(grey[1:, :] - grey[:-1, :])
+    gx[:, 1:] = np.abs(grey[:, 1:] - grey[:, :-1])
+    grad = gy + gx
+    sel = grad[region_mask]
+    return float(sel.mean()) if sel.size else 0.0
 
 
 def _pil_format_for_mime(mime: str) -> Optional[str]:

@@ -30,9 +30,11 @@ class ImageProcessingTests(unittest.TestCase):
     def test_corner_watermark_removed_and_validated(self) -> None:
         image = Image.new("RGB", (400, 300), (255, 255, 255))
         draw = ImageDraw.Draw(image)
-        # Content in the upper-left, a grey watermark blob in the bottom-right.
+        # Content in the upper-left; a brand watermark (saturated icon + grey
+        # lettering) in the bottom-right corner.
         draw.rectangle([20, 20, 180, 120], fill=(30, 90, 200))
-        draw.rectangle([320, 250, 380, 285], fill=(128, 128, 128))
+        draw.ellipse([322, 258, 344, 280], fill=(240, 130, 30))       # icon anchor
+        draw.rectangle([350, 262, 388, 278], fill=(140, 140, 140))    # lettering
 
         result = ip.process_image(_encode(image), "image/png", "wm")
 
@@ -59,14 +61,17 @@ class ImageProcessingTests(unittest.TestCase):
         )
 
     def test_watermark_overlapping_content_falls_back(self) -> None:
-        # A large grey block in the corner with dark content strokes running
-        # through it: the detected bbox spans real content, so erasing it would
-        # destroy the body. Validation must refuse and fall back to the original.
+        # A brand icon in the corner whose bbox also spans strong dark content
+        # strokes (a chart drawn behind the mark): erasing it would destroy the
+        # body. Detection fires on the icon, but validation must refuse the
+        # erase (strong-contrast content inside the bbox) and fall back.
         image = Image.new("RGB", (400, 300), (255, 255, 255))
         draw = ImageDraw.Draw(image)
-        draw.rectangle([300, 230, 390, 290], fill=(128, 128, 128))  # grey block
-        for y in range(238, 285, 8):
-            draw.line([305, y, 385, y], fill=(20, 20, 20), width=2)  # dark strokes
+        draw.ellipse([305, 255, 327, 277], fill=(240, 130, 30))      # icon anchor
+        # Strong dark content strokes filling the lettering side of the mark's
+        # row (kept clear of the icon so detection still anchors on it).
+        for y in range(250, 292, 5):
+            draw.line([333, y, 392, y], fill=(15, 15, 15), width=3)
 
         result = ip.process_image(_encode(image), "image/png", "overlap")
 
@@ -176,7 +181,8 @@ class ImageProcessingTests(unittest.TestCase):
         image = Image.new("RGBA", (400, 300), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle([20, 20, 180, 120], fill=(30, 90, 200, 255))
-        draw.rectangle([320, 250, 380, 285], fill=(128, 128, 128, 255))
+        draw.ellipse([322, 258, 344, 280], fill=(240, 130, 30, 255))     # icon anchor
+        draw.rectangle([350, 262, 388, 278], fill=(140, 140, 140, 255))  # lettering
         # Punch a transparent hole far from the watermark.
         draw.rectangle([10, 250, 60, 290], fill=(0, 0, 0, 0))
 
