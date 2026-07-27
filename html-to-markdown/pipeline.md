@@ -10,7 +10,7 @@
 python html-to-markdown/pipeline.py input.html --mode auto --output dist
 ```
 
-图片默认进入 strict，因为 fast path 尚未执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同。只有用户明确接受图片保持原样、跳过全部图片后处理时，才可使用：
+data-URI 图片默认走 fast path：`@image_processing.py` 在写盘前确定性执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同（fail-closed），结果写入 `report.json.image_ledger`。外部/lazy/missing 图、iframe/video、题注仍走 strict。只有用户明确接受图片保持原样、跳过全部图片后处理时，才可使用：
 
 ```bash
 python html-to-markdown/pipeline.py input.html \
@@ -19,7 +19,7 @@ python html-to-markdown/pipeline.py input.html \
   --allow-unprocessed-images
 ```
 
-该参数只放宽图片后处理要求，不会绕过外部资源、本地化失败、题注、结构守恒或其他 strict 条件。参数值会写入 `report.json.allow_unprocessed_images`，包括最终仍路由到 strict 的情况。
+该参数只跳过图片后处理、按原样打包 data-URI 图，不改变 fast/strict 路由，也不会绕过外部资源、本地化失败、题注、结构守恒或其他 strict 条件。参数值会写入 `report.json.allow_unprocessed_images`，包括最终仍路由到 strict 的情况。
 
 模式：
 
@@ -141,7 +141,7 @@ python html-to-markdown/benchmark.py --iterations 5
 - 大量 page-level `<style>` 和脚本噪声；
 - 168 个公式节点，其中只有 12 个 normalized DOM 唯一公式；
 - 常见标题、列表、表格和代码块；
-- 无图片、Notebook、virtualized/lazy-load 等 strict 信号。
+- 无 Notebook、virtualized/lazy-load、外部图片等 strict 信号（data-URI 图片走 fast，不构成 strict 信号）。
 
 输出为 JSON，同时包含 `original_latex` 与 `katex_html_only` 两个场景。后者执行 blocked cold pass、合成 validation report、converted validation pass 和 warm pass，并分别报告 timings、DOM parse count、cache write count、resume 使用情况、validation job 去重和 source mapping。cold pass 使用完整页面 + detached body 两次 parse 并写入新 cache；validation/warm pass 必须通过已验证 ledger resume，只解析一次 compact snapshot，且 entry 未变化时报告零次 cache write。benchmark 只把以下稳定合同作为失败条件：
 

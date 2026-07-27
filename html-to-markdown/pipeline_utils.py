@@ -36,6 +36,9 @@ markdown_fences = load_sibling("html_to_markdown_fences", "markdown_fences.py")
 image_disposition = load_sibling(
     "html_to_markdown_image_disposition", "image_disposition.py"
 )
+image_processing = load_sibling(
+    "html_to_markdown_image_processing", "image_processing.py"
+)
 
 
 def root_from_html(html: str) -> Tag:

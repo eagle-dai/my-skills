@@ -244,6 +244,8 @@ kept | removed_as_noise | failed | manual_review
 - 不得把 base64 直接写进 Markdown
 - 不得误保留头像/Logo/广告图/二维码
 - 有价值评论中的说明图片/截图应保留
+- 去水印默认执行（`@image_processing.py`）：擦除区外必须零容差全等、区内内容色超阈值必须回退保留原图（`fallback_to_original`），任一护栏不满足不得输出去水印结果
+- 原图副本必须落盘 `files/<package>/images_orig/`，`report.json.image_ledger` 必须记录每张图的处理结果
 
 ---
 

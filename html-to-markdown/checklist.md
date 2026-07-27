@@ -122,6 +122,7 @@ assert_valid_image_ledger(entries, source_ids=source_ids)
 ### 去水印
 
 - **默认执行**；只有用户**明确要求保留原始水印**时才跳过；
+- fast pipeline 由 `@image_processing.py` 对每张 data-URI 图自动执行，结果记入 `report.json.image_ledger`（含 `bbox`/`dewatermarked`/`validation_passed`/`fallback_to_original`/`orig_bytes`/`final_bytes`）——核对 ledger 即可验收，无需逐张肉眼比对；
 - 破坏性护栏不因默认执行而放松：
 - 必须保留原图副本；
 - 报告处理文件、方法和 bbox；
