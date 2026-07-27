@@ -236,6 +236,16 @@ class MarkdownConverter:
             return f"<{node.name}>{text}</{node.name}>" if text else ""
         if node.name in INLINE_TRANSPARENT_TAGS:
             return _join_inline(self.inline(child) for child in node.children)
+        if node.name in BLOCK_TRANSPARENT_TAGS and not slate:
+            # A semantic-free wrapper (bare div/section/article/main) carrying
+            # only inline content is transparent here, mirroring the block
+            # context (see block-transparent handling above). A wrapper hiding a
+            # real block child still fails closed and routes the page to strict.
+            if has_block_child(node):
+                raise FastPathUnsupported(
+                    f"inline wrapper <{node.name}> contains block content"
+                )
+            return _join_inline(self.inline(child) for child in node.children)
         raise FastPathUnsupported(f"unsupported inline semantic element <{node.name}>")
 
     def formula(self, node: Tag) -> str:
@@ -285,7 +295,7 @@ class MarkdownConverter:
         self.counts.codeblocks += 1
         code_node = node.find("code") if node.name == "pre" else None
         target = code_node if isinstance(code_node, Tag) else node
-        code = target.get_text().replace("\xa0", " ").rstrip("\n")
+        code = self._code_text(target).replace("\xa0", " ").rstrip("\n")
         language = "text"
         for name in list(target.get("class", ())) + list(node.get("class", ())):
             match = re.search(r"(?:language|lang)-([A-Za-z0-9_+-]+)", name)
@@ -294,6 +304,32 @@ class MarkdownConverter:
                 break
         fence = "`" * max(3, max_backticks(code) + 1)
         return f"{fence}{language}\n{code}\n{fence}"
+
+    @staticmethod
+    def _code_text(target: Tag) -> str:
+        """Return code text, honoring Slate's block-per-line layout.
+
+        The Slate/hljs code widget renders each source line as its own
+        block-level ``<div>`` and lets the block boundary carry the newline;
+        there is no ``\\n`` text node between lines. ``get_text()`` would then
+        glue the lines together (``a.jsonb.py``). When the code is laid out as
+        such per-line ``<div>`` rows, join their text with ``\\n``; otherwise
+        fall back to the raw text extraction.
+        """
+
+        lines = [
+            child
+            for child in target.descendants
+            if isinstance(child, Tag)
+            and child.name == "div"
+            and any(isinstance(c, Tag) and c.name == "span" for c in child.children)
+            and not any(
+                isinstance(c, Tag) and c.name == "div" for c in child.children
+            )
+        ]
+        if len(lines) > 1:
+            return "\n".join(line.get_text() for line in lines)
+        return target.get_text()
 
     def table_block(self, node: Tag) -> str:
         if node.select("[rowspan], [colspan]"):

@@ -62,6 +62,11 @@ python html-to-markdown/pipeline.py input.html \
 - 只有用户明确接受图片保持原样、跳过所有图片后处理时，才可传 `--allow-unprocessed-images`：它只跳过图片后处理、按原样打包 data-URI 图，不改变 fast/strict 路由，也不会绕过外部资源、本地化失败、题注、虚拟化或其他 strict 条件。
 - 已确认的 `<caption>` / `<figcaption>` 默认进入 strict，因为 deterministic converter 尚未实现 caption ledger 守恒。
 
+### 0.4 fast path 结构处理边界
+
+- **代码块行换行**：Slate/hljs 代码块每行是独立块级 `<div>`，换行靠块边界而非 `\n` 文本。`fast_converter.py::_code_text` 检测这种「每行一个 line div」布局并按行 `\n` join，多行代码不再糊成一行。
+- **无语义 wrapper 穿透**：段落内嵌无 `data-slate` 语义的 `<div>/<section>/<article>/<main>` 且无块子时，inline 上下文像 block 上下文一样递归穿透（等价 `<span>`），不再因单个包裹 div 把整页推到 strict。藏了块子的 wrapper、未知 inline 元素仍 fail-close 路由 strict。详见 `conversion-rules.md`。
+
 ### 0.4 输出命名合同
 
 命名是数据合同，不是文案创作。禁止让 agent 翻译、概括标题或自由生成 slug。

@@ -406,6 +406,102 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(second.status, "blocked")
             self.assertFalse((output / "pipeline-article.zip").exists())
 
+    def test_slate_code_block_preserves_line_breaks(self) -> None:
+        """Slate code blocks store each line as its own block-level <div>.
+
+        The hljs/simplebar wrapper emits one ``<div>`` per source line and lets
+        the block boundary carry the newline; there is no ``\\n`` text node
+        between lines. ``get_text()`` therefore glues the lines together
+        (``a.jsonb.py``). The fast path must join the per-line divs with ``\\n``
+        so a three-line snippet stays three lines.
+        """
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a multi-line Slate code block rendered by highlight.js.</p>
+          <pre data-slate-type="pre"><div class="simplebar-content"><div class="se-line"><span>Test-Path a.json</span></div><div class="se-line"><span>Test-Path b.py</span></div><div class="se-line"><span>echo done</span></div></div></pre>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "slate-code.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("Test-Path a.json\nTest-Path b.py\necho done", markdown)
+            self.assertNotIn("Test-Path a.jsonTest-Path b.py", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["codeblocks"], 1)
+
+    def test_inline_div_wrapper_is_transparent_on_fast_path(self) -> None:
+        """An inline-only <div> wrapper inside a paragraph must be transparent.
+
+        Some editors wrap inline runs in a bare ``<div>`` that carries no block
+        child. The block context already flattens such wrappers via
+        ``has_block_child``; the inline context must do the same instead of
+        forcing the whole page to strict.
+        """
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a Slate paragraph wrapping an inline div run.</p>
+          <div data-slate-type="paragraph">lead <div>wrapped <strong>text</strong> and <span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">x=1</annotation></math></span></span></div></div>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "inline-div.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("lead wrapped **text** and $x=1$", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 1)
+
+    def test_inline_div_with_block_child_still_routes_to_strict(self) -> None:
+        """A wrapper div hiding a block child must still route to strict."""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a Slate paragraph hiding a block element inside a div.</p>
+          <div data-slate-type="paragraph">lead <div>text <p>nested block</p></div></div>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "inline-div-block.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
+    def test_unknown_inline_element_still_routes_to_strict(self) -> None:
+        """An unknown inline element must still route to strict, not flatten."""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a paragraph carrying an unknown inline widget.</p>
+          <p>before <custom-widget data-x="1">inner</custom-widget> after</p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "unknown-inline.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
     def test_zip_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             first_outcome = pipeline.run_pipeline(
