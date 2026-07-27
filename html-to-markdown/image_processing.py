@@ -47,9 +47,21 @@ _PASSTHROUGH_MIMES = {"image/svg+xml", "image/gif"}
 # A pixel in the bbox that deviates from the local background by more than this
 # is "strong content" (chart stroke, text), not a semi-transparent watermark.
 _STRONG_CONTRAST_MIN = 130
-# If more than this fraction of the bbox is strong content, the mark overlaps
-# real content and the erase is refused.
-_CONTENT_IN_BBOX_MAX_FRAC = 0.15
+# If more than this fraction of the measured (padded) region is strong content
+# outside the mark, the mark overlaps real content and the erase is refused.
+# Tuned low: a clean logo on a blank corner measures ~0 here, while even sparse
+# content strokes near the mark measure ~0.10, so 0.05 separates them with
+# margin for anti-aliasing fringe.
+_CONTENT_IN_BBOX_MAX_FRAC = 0.05
+# The content-overlap check measures a region padded OUTSIDE the bbox by this
+# fraction of the bbox HEIGHT, not just the bbox itself. A watermark's bbox hugs
+# the mark tightly, so real content it collides with (a chart stroke, an axis
+# label) often sits just outside the bbox -- invisible to a bbox-only check.
+# Widening to a ring catches that overlap and refuses the destructive erase.
+# Padding scales with the mark's height (not its wider dimension) so a wide logo
+# does not over-extend sideways into unrelated chart furniture and over-refuse a
+# clean erase; a clean logo on white still measures ~0 here.
+_CONTENT_PAD_FRAC = 1.5
 # After inpaint, the masked region's edge energy must drop to at most this
 # fraction of the original watermark's, or the fill did not cover the mark.
 _RESIDUAL_MAX_FRAC = 0.5
@@ -274,18 +286,25 @@ def validate_dewatermark(
     if not np.array_equal(orig[outside], proc[outside]):
         return False, "pixels_changed_outside_bbox"
 
-    # 2. Strong-contrast coverage inside the bbox but OUTSIDE the mark (measured
-    #    on the ORIGINAL), relative to the local background -- no hard-coded
-    #    colour. Mask pixels are the watermark itself; only content around it
-    #    that stays strongly-contrasting counts as an overlap.
-    region = orig[top:bottom, left:right, :].astype(np.int16)
+    # 2. Strong-contrast coverage in a region padded OUTSIDE the bbox but with
+    #    the watermark mask excluded (measured on the ORIGINAL), relative to the
+    #    local background -- no hard-coded colour. Mask pixels are the watermark
+    #    itself; strong contrast around it (inside or just beyond the tight
+    #    bbox) means the mark collides with real content, so refuse. The ring
+    #    padding is what lets us see an axis label or chart stroke that the
+    #    watermark's tight bbox would otherwise crop out of view.
+    h_img, w_img = orig.shape[0], orig.shape[1]
+    pad = max(1, int(round((bottom - top) * _CONTENT_PAD_FRAC)))
+    py0, py1 = max(0, top - pad), min(h_img, bottom + pad)
+    px0, px1 = max(0, left - pad), min(w_img, right + pad)
+    region = orig[py0:py1, px0:px1, :].astype(np.int16)
     if region.size == 0:
         return False, "empty_bbox"
     bg = _local_bbox_background(orig, bbox)
     dev = np.abs(region - bg).max(axis=2)
     strong = dev > _STRONG_CONTRAST_MIN
     if mask is not None:
-        strong = strong & ~mask[top:bottom, left:right]
+        strong = strong & ~mask[py0:py1, px0:px1]
     if float(strong.mean()) > _CONTENT_IN_BBOX_MAX_FRAC:
         return False, "watermark_overlaps_content"
 

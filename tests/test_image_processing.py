@@ -173,6 +173,46 @@ class ImageProcessingTests(unittest.TestCase):
         # The opaque content box must stay opaque.
         self.assertGreater(int(arr[120, 120, 3]), 240)
 
+    def test_validate_sees_content_outside_the_tight_bbox(self) -> None:
+        # validate_dewatermark measures content overlap in a ring padded OUTSIDE
+        # the bbox, not just the bbox interior. A watermark's bbox hugs the mark,
+        # so colliding content (a chart stroke) sits just beyond it. Prove the
+        # padded ring catches it: identical inputs, the only difference being a
+        # dark stroke just outside the bbox, must flip pass -> refuse.
+        import numpy as np
+
+        h, w = 300, 400
+        bbox = (300, 250, 324, 274)          # a small corner mark, 24x24
+        l, t, r, b = bbox
+        mask = np.zeros((h, w), dtype=bool)
+        mask[t:b, l:r] = True                # the whole tiny bbox is "the mark"
+
+        # Original: white page + coloured mark in the bbox. Processed: mark
+        # painted out to white. No content anywhere else -> validation passes.
+        base = np.full((h, w, 3), 255, dtype=np.uint8)
+        orig_clean = base.copy()
+        orig_clean[t:b, l:r] = (240, 130, 30)
+        proc = base.copy()                   # mark erased to white
+        ok, reason = ip.validate_dewatermark(
+            Image.fromarray(orig_clean), Image.fromarray(proc), bbox, mask
+        )
+        self.assertTrue(ok, reason)
+
+        # Same, but a dark content stroke sits just OUTSIDE the bbox (within the
+        # ring). It is outside the mask, strongly contrasts the white bg, and
+        # must trip the overlap guard -> refuse.
+        orig_overlap = orig_clean.copy()
+        orig_overlap[t:b, r + 4 : r + 28] = (15, 15, 15)   # stroke past the bbox
+        # The stroke is outside the mask, so a correct erase leaves it intact:
+        # it must be present in the processed image too (else check 1 fires).
+        proc_overlap = proc.copy()
+        proc_overlap[t:b, r + 4 : r + 28] = (15, 15, 15)
+        ok2, reason2 = ip.validate_dewatermark(
+            Image.fromarray(orig_overlap), Image.fromarray(proc_overlap), bbox, mask
+        )
+        self.assertFalse(ok2)
+        self.assertEqual(reason2, "watermark_overlaps_content")
+
     def test_transparent_watermark_dewatermarked_preserves_alpha(self) -> None:
         # Alpha must also survive a successful dewatermark: erase the corner
         # watermark but keep the transparency map intact.
