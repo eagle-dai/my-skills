@@ -478,13 +478,10 @@ def run_pipeline(
             "does not yet provide caption ledger conservation"
         )
 
-    image_count = int(result.manifest["counts"].get("images", 0))
-    if image_count and not allow_unprocessed_images:
-        reasons.append(
-            f"{image_count} images require strict handling because the fast path "
-            "does not perform the default backup, dewatermarking, compression, and "
-            "original-size validation contract"
-        )
+    # Data-URI images are handled deterministically on the fast path (backup,
+    # dewatermarking, compression, original-size validation — see
+    # image_processing.py). External/lazy/missing images still route to strict
+    # via FastPathUnsupported / preflight signals, not here.
 
     if mode == "strict":
         reasons.append("strict mode explicitly requested")
@@ -526,6 +523,8 @@ def run_pipeline(
         result.assets,
         article_dir / "files" / package,
         f"files/{package}",
+        orig_dir=article_dir / "files" / package / "images_orig",
+        enable_image_processing=not allow_unprocessed_images,
     )
     conversion_started = time.perf_counter()
     try:
@@ -638,9 +637,10 @@ def parser() -> argparse.ArgumentParser:
         "--allow-unprocessed-images",
         action="store_true",
         help=(
-            "Allow the fast path to package original images without the default "
-            "backup/dewatermark/compression/visual-validation workflow. Use only "
-            "when the user explicitly opts out of image post-processing."
+            "Skip deterministic image post-processing and package data-URI "
+            "images as-is (no backup/dewatermark/compression/validation). Does "
+            "not change fast/strict routing. Use only when the user explicitly "
+            "opts out of image post-processing."
         ),
     )
     return value

@@ -40,8 +40,21 @@ class PipelineTimingTests(unittest.TestCase):
         self.assertEqual(outcome.report["timings_ms"]["validation"], 0.0)
 
     def test_strict_report_contains_preflight_and_snapshot_timings(self) -> None:
+        # A virtualized editor is detected during preflight, so the pipeline
+        # routes to strict before ever entering formula resolution — the
+        # strict-report timing contract with formula == 0.
+        html = """
+        <html><body><main>
+          <p>This substantial page contains enough text for selection but also
+          includes a Monaco editor, so the deterministic fast path must stop.</p>
+          <div class="monaco-editor"><div class="view-lines">code</div></div>
+        </main></body></html>
+        """
         with tempfile.TemporaryDirectory() as directory:
-            outcome = pipeline.run_pipeline(FIXTURE_PATH, Path(directory), mode="auto")
+            root = Path(directory)
+            source = root / "virtualized.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
 
         self.assertEqual(outcome.status, "strict_required")
         self.assert_timing_contract(outcome.report)

@@ -139,6 +139,8 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 **默认行为：默认执行去站点水印。** 只有用户明确要求保留原始水印时才跳过。去水印仍是破坏性处理，破坏性护栏一条都不能省——默认执行不等于放松验证。
 
+fast pipeline 已把这套合同下沉为确定性像素层 `@image_processing.py`（Pillow + numpy 手写连通块，fail-closed），对每张 data-URI 图自动执行，处理结果写入 `report.json.image_ledger`，无需 strict sub-agent 逐张现写脚本。
+
 强制护栏（默认执行时同样适用）：
 
 1. 保留未修改原图副本；
@@ -151,7 +153,7 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 ### 图片压缩
 
-压缩时同步扩展名和 Markdown 引用，宽图等比缩放，图表/代码截图保守处理，并抽检文字可读性。去水印和压缩均默认执行，固定顺序为“原图备份 → 去水印 → 压缩”。
+压缩时同步扩展名和 Markdown 引用，宽图等比缩放，图表/代码截图保守处理，并抽检文字可读性。去水印和压缩均默认执行，固定顺序为“原图备份 → 去水印 → 压缩”。fast pipeline 的确定性参数：宽 > 1600px 等比缩放（不放大），webp 质量 82；webp 编码反而变大时保留原格式（`format_note=webp_larger_kept_original`）；svg/gif 不转码、按原样透传。原图副本存于 `files/<package>/images_orig/`。
 
 ## 代码块语言与 fence
 

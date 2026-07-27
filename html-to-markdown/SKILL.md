@@ -57,9 +57,9 @@ python html-to-markdown/pipeline.py input.html \
 
 ### 0.3 图片与题注的 deterministic 边界
 
-- 页面包含图片时，fast path 默认返回 `strict_required`，因为它尚未执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同。
-- 只有用户明确接受图片保持原样、跳过所有图片后处理时，才可传 `--allow-unprocessed-images`。
-- 该参数只放宽图片后处理，不会绕过外部资源、本地化失败、题注、虚拟化或其他 strict 条件。
+- data-URI 图片默认走 fast path：`@image_processing.py` 在写盘前确定性执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同（fail-closed，见下方护栏）。纯 data-URI 图片页面不再因图片单独返回 `strict_required`。
+- 仍进入 strict 的图片：外部/未本地化 `src`（`fast_converter` 抛 `FastPathUnsupported`）、lazy/missing（preflight 信号）、iframe/video、已确认的 `<caption>`/`<figcaption>`（caption ledger 守恒未实现）。
+- 只有用户明确接受图片保持原样、跳过所有图片后处理时，才可传 `--allow-unprocessed-images`：它只跳过图片后处理、按原样打包 data-URI 图，不改变 fast/strict 路由，也不会绕过外部资源、本地化失败、题注、虚拟化或其他 strict 条件。
 - 已确认的 `<caption>` / `<figcaption>` 默认进入 strict，因为 deterministic converter 尚未实现 caption ledger 守恒。
 
 ## Phase 1：strict 主 agent 分析
@@ -143,18 +143,18 @@ Prompt 必须包含已确认参数，不得让 sub agent 重新猜 selector 或�
 
 ### 图片
 
-strict 流程默认执行去站点水印和完整图片合同；只有用户明确要求保留原始水印时才跳过去水印步骤：
+fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性执行去站点水印和完整图片合同（fail-closed，永不抛、永不丢图）；只有用户明确要求保留原始水印（`--allow-unprocessed-images`）时才跳过：
 
-1. 保存原图副本；
-2. 尝试安全去站点水印；
-3. 记录处理文件和 bbox；
+1. 保存原图副本（写入 `files/<package>/images_orig/`，进 ZIP 可离线核对）；
+2. 尝试安全去站点水印（仅四角 ROI、右下优先、特征色半透明灰）；
+3. 记录处理文件和 bbox（写入 `report.json.image_ledger`）；
 4. 使用原图而不是缩略图检测；
 5. 特征色命中正文时只处理最右下连通块，禁止扩大擦除范围；
-6. 原尺寸逐图验证正文未被擦除；
-7. 无法安全去除时保留原图；
-8. 去水印后再压缩。
+6. 原尺寸逐图验证正文未被擦除（擦除区外零容差全等；区内内容色占比超阈值判水印压正文 → 回退保留原图）；
+7. 无法安全去除时保留原图（`fallback_to_original=True`）；
+8. 去水印后再压缩（宽 > 1600 等比缩放，webp q82；webp 变大则保留原格式；svg/gif 不转）。
 
-图片保留/删除/人工复核与 ledger 规则见 @image-disposition.md、@image_disposition.py 和 @conversion-rules.md。
+图片保留/删除/人工复核与 ledger 规则见 @image-disposition.md、@image_disposition.py、@image_processing.py 和 @conversion-rules.md。
 
 ### 代码与 fence
 

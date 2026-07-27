@@ -12,6 +12,7 @@ from pipeline_utils import (
     decode_data_uri,
     extension_for_mime,
     image_disposition,
+    image_processing,
     markdown_fences,
     max_backticks,
     preflight,
@@ -96,10 +97,14 @@ class MarkdownConverter:
         assets: Sequence[Any],
         asset_dir: Path,
         asset_prefix: str,
+        orig_dir: Path | None = None,
+        enable_image_processing: bool = True,
     ) -> None:
         self.root = root
         self.asset_dir = asset_dir
         self.asset_prefix = asset_prefix.rstrip("/")
+        self.orig_dir = orig_dir
+        self.enable_image_processing = enable_image_processing
         self.counts = EmittedCounts()
         self.ledger: list[Any] = []
         self.unresolved: list[dict[str, str]] = []
@@ -316,14 +321,38 @@ class MarkdownConverter:
     def image(self, node: Tag) -> str:
         record = self.assets[id(node)]
         source = str(node.attrs.get("src", ""))
+        ledger_extra: dict[str, Any] = {}
         if source.startswith("data:"):
             try:
                 mime, data = decode_data_uri(source)
             except ValueError as error:
                 raise FastPathUnsupported(str(error)) from error
-            filename = f"{record.source_id}{extension_for_mime(mime)}"
+            if self.enable_image_processing:
+                processed = image_processing.process_image(data, mime, record.source_id)
+                # Back up the untouched original so the erase is auditable offline.
+                if self.orig_dir is not None:
+                    self.orig_dir.mkdir(parents=True, exist_ok=True)
+                    orig_name = (
+                        f"{record.source_id}"
+                        f"{extension_for_mime(processed.original_mime)}"
+                    )
+                    (self.orig_dir / orig_name).write_bytes(processed.original_data)
+                out_data, out_mime = processed.data, processed.mime
+                meta = processed.meta
+                ledger_extra = {
+                    "bbox": meta.watermark_bbox,
+                    "dewatermarked": meta.dewatermarked,
+                    "validation_passed": meta.validation_passed,
+                    "orig_bytes": meta.orig_bytes,
+                    "final_bytes": meta.final_bytes,
+                    "format_note": meta.format_kept_reason,
+                    "fallback_to_original": meta.fallback_to_original,
+                }
+            else:
+                out_data, out_mime = data, mime
+            filename = f"{record.source_id}{extension_for_mime(out_mime)}"
             self.asset_dir.mkdir(parents=True, exist_ok=True)
-            (self.asset_dir / filename).write_bytes(data)
+            (self.asset_dir / filename).write_bytes(out_data)
             target = f"{self.asset_prefix}/{filename}"
         elif source:
             raise FastPathUnsupported(
@@ -340,7 +369,9 @@ class MarkdownConverter:
             raise FastPathUnsupported(f"body image classified as {decision}")
         self.counts.images += 1
         self.ledger.append(
-            image_disposition.ImageLedgerEntry(record.source_id, "keep", 1)
+            image_disposition.ImageLedgerEntry(
+                record.source_id, "keep", 1, **ledger_extra
+            )
         )
         alt = str(node.attrs.get("alt", "")).replace("]", "\\]")
         return f"![{alt}]({target})"

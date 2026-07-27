@@ -51,6 +51,15 @@ class ImageLedgerEntry:
     reason: str = ""
     decoded_url: str = ""
     decoded_link_emitted: bool = False
+    # Deterministic pixel-layer processing record (see image_processing.py).
+    # All optional and default to no-op so existing ledgers stay valid.
+    bbox: tuple[int, int, int, int] | None = None
+    dewatermarked: bool = False
+    validation_passed: bool = True
+    orig_bytes: int = 0
+    final_bytes: int = 0
+    format_note: str = ""
+    fallback_to_original: bool = False
 
 
 _ALLOWED_DECISIONS = {"keep", "remove_as_ui", "manual_review"}

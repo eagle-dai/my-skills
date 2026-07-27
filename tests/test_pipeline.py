@@ -173,21 +173,24 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
 
-    def test_images_route_to_strict_by_default(self) -> None:
+    def test_data_uri_images_processed_in_fast_path(self) -> None:
+        # A data-URI image no longer forces strict handling: it is processed
+        # deterministically on the fast path. The fixture's fake PNG cannot be
+        # decoded, so it fails closed and is packaged as the original bytes.
         with tempfile.TemporaryDirectory() as directory:
             outcome = pipeline.run_pipeline(FIXTURE_PATH, Path(directory), mode="auto")
 
-            self.assertEqual(outcome.status, "strict_required")
-            self.assertIsNone(outcome.markdown_path)
-            self.assertIsNone(outcome.zip_path)
-            self.assertEqual(outcome.report["recommended_mode"], "strict")
+            # Not routed to strict: the image no longer blocks the fast path.
+            self.assertIn(outcome.status, {"converted", "blocked"})
+            self.assertNotEqual(outcome.status, "strict_required")
             self.assertFalse(outcome.report["allow_unprocessed_images"])
-            self.assertTrue(
-                any(
-                    "dewatermarking" in reason
-                    for reason in outcome.report["strict_reasons"]
-                )
-            )
+            ledger = outcome.report["image_ledger"]
+            self.assertEqual(len(ledger), 1)
+            entry = ledger[0]
+            self.assertEqual(entry["decision"], "keep")
+            self.assertEqual(entry["emitted_count"], 1)
+            # Fake PNG cannot be decoded, so it fails closed to the original.
+            self.assertTrue(entry["fallback_to_original"])
 
     def test_virtualized_page_routes_to_strict_without_markdown(self) -> None:
         html = """
