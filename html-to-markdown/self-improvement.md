@@ -80,4 +80,27 @@ DOM 稳定顺序，标题取 DOM 原文。
 
 ---
 
+## 代码块行换行（缺陷 17，结构规则，非正则）
+
+判定项：Slate/hljs 代码块——每行一个块级 `<div>`（子全 `<span>`，无块子）——提取后各行须以 `\n` 分隔，不得糊成一行。`fast_converter.py::_code_text` 判定，回归 `test_slate_code_block_preserves_line_breaks`。
+
+| 输入结构 | 期望输出 | 理由 |
+|------|------|------|
+| `<pre data-slate-type="pre">` 内 3 个 `.se-line` div，各含 span 一行 | 三行以 `\n` 分隔（`a\nb\nc`） | 块边界即换行，`get_text()` 会漏 |
+| 单个 `<code>` 内含真实 `\n` 文本 | 原样 `get_text()`，不改写 | 反例：非 Slate 布局，无多行 div，不触发 join |
+| `<pre>` 内仅 1 个 line div | 退回整体 `get_text()` | 反例：`len(lines) > 1` 才 join，单行不特殊处理 |
+
+## 无语义 wrapper 穿透 inline 上下文（缺陷 13，结构规则，非正则）
+
+判定项：inline 上下文遇 `div/section/article/main`——无 `data-slate` 语义且无块子→穿透；否则 fail-close 路由 strict。`fast_converter.py::inline` 判定。
+
+| 输入结构 | 期望 | 理由 |
+|------|------|------|
+| Slate 段落内嵌 `<div>wrapped <strong>x</strong> <katex></div>`（无块子） | converted，穿透为 `wrapped **x** $...$` | 正例：等价 span，不该 fail-close |
+| 段落内 `<div>` 含 `<p>` 块子 | strict_required | 反例：wrapper 藏真块内容，不能扁平化 |
+| 段落内未知 inline 元素 `<custom-widget>` | strict_required | 反例：未知语义仍保守 fail-close，穿透只放行无语义 wrapper |
+| 带 `data-slate-type` 的 div | 走对应 slate 分支，不进 wrapper 穿透 | 反例：`not slate` 守卫，有语义的 div 不当透明 wrapper |
+
+---
+
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

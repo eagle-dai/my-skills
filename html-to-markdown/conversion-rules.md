@@ -103,6 +103,18 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 **仓库已有实现**：`html-to-markdown/fast_converter.py` 的 `_join_inline()` 在 `inline_children` 拼接时执行此分隔（前片段 `$` 结尾 + 后片段 `$` 开头 → 插空格）；回归见 `tests/test_pipeline.py::test_adjacent_inline_formulas_are_separated`。strict 路径的临时转换器同样须在相邻行内公式间保留分隔符。
 
+## 无语义 wrapper 穿透（inline 上下文）
+
+SingleFile/Slate 常在段落内嵌无语义 `<div>`（无 `data-slate-*`、纯排版包裹）。fast path 的 **block** 上下文对 `div/section/article/main` 已按 `has_block_child` 穿透（有块子→当块，无块子→当内联），但 **inline** 上下文旧实现遇 `<div>` 一律 `FastPathUnsupported` → 整页被迫 strict（~19min），两处不对称即 bug。
+
+规则：inline 上下文遇 `BLOCK_TRANSPARENT_TAGS`（`div/section/article/main`）且**无 `data-slate` 语义**时——
+
+- 无块级子节点（`has_block_child` 为假）→ 递归 `_join_inline` 穿透，等价于 `<span>`；
+- 有块级子节点 → 仍 fail-close 抛错，路由 strict（wrapper 藏了真正块内容，不能扁平化）；
+- 未知 inline 元素（如自定义 `<custom-widget>`）→ 仍 fail-close，路由 strict。
+
+实现见 `fast_converter.py::inline`；回归 `test_inline_div_wrapper_is_transparent_on_fast_path`（穿透正例）+ `test_inline_div_with_block_child_still_routes_to_strict` / `test_unknown_inline_element_still_routes_to_strict`（两反例）。
+
 ## 块级居中与题注
 
 有明确居中证据的公式块、图片、图表、短题注和署名可保留居中语义；解释性长段落保持正文左对齐。不得仅凭“图/表/公式”开头就居中整段。
@@ -158,6 +170,8 @@ fast pipeline 已把这套合同下沉为确定性像素层 `@image_processing.p
 ## 代码块语言与 fence
 
 无 `language-*` 时至少两个独立信号才标具体语言；不确定时标 `text`。代码内部 NBSP 替换为普通空格。
+
+**代码行换行**：Slate/hljs 代码块把每行渲染成独立的块级 `<div>`（子节点全是 `<span>`），换行由块边界表示、**不存在** `\n` 文本节点。裸 `get_text()` 会把各行糊成一行（`a.jsonb.py`）。提取时检测这种「每行一个块级 div」布局：多于一行时按行 `\n` join，否则退回整体 `get_text()`。实现见 `fast_converter.py::_code_text`；回归 `tests/test_pipeline.py::test_slate_code_block_preserves_line_breaks`。
 
 结构计数前必须调用：
 
