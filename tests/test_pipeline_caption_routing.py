@@ -36,10 +36,19 @@ class PipelineCaptionRoutingTests(unittest.TestCase):
             source = root / "captioned-table.html"
             source.write_text(html, encoding="utf-8")
 
-            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+            outcome = pipeline.run_pipeline(
+                source,
+                root / "out",
+                mode="auto",
+                output_name="01 | Captioned table",
+            )
 
             self.assertEqual(outcome.status, "strict_required")
             self.assertEqual(outcome.report["recommended_mode"], "strict")
+            self.assertEqual(
+                outcome.report["output_name"],
+                "01-Captioned-table",
+            )
             self.assertIsNone(outcome.markdown_path)
             self.assertIsNone(outcome.zip_path)
             self.assertTrue(

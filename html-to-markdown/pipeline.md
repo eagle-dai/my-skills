@@ -10,6 +10,18 @@
 python html-to-markdown/pipeline.py input.html --mode auto --output dist
 ```
 
+默认输出逻辑名来自输入文件 stem。需要固定为业务名时显式传入：
+
+```bash
+python html-to-markdown/pipeline.py input.html \
+  --mode auto \
+  --output dist \
+  --output-name "01 | AI 量化研究"
+```
+
+两种入口都会调用同一个机械规范化函数。上例固定得到
+`01-AI-量化研究`；模型不得翻译、概括或另造 slug。
+
 data-URI 图片默认走 fast path：`@image_processing.py` 在写盘前确定性执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同（fail-closed），结果写入 `report.json.image_ledger`。外部/lazy/missing 图、iframe/video、题注仍走 strict。只有用户明确接受图片保持原样、跳过全部图片后处理时，才可使用：
 
 ```bash
@@ -164,6 +176,9 @@ python html-to-markdown/benchmark.py \
 
 ## 输出
 
+`<name>` 是 `report.json.output_name`。同一名字必须复用于目录、Markdown stem、
+资源目录和 ZIP：
+
 ```text
 dist/
 ├── preflight/
@@ -176,8 +191,14 @@ dist/
 ├── formula-validation.html   # 有待验证公式时
 ├── formula-results.json
 ├── report.json
-├── <input-stem>/
-│   ├── <title>.md
-│   └── files/<input-stem>/...
-└── <input-stem>.zip          # 仅 status=converted
+├── <name>/
+│   ├── <name>.md
+│   └── files/<name>/...
+└── <name>.zip                # 仅 status=converted
 ```
+
+ZIP 根目录内同样是 `<name>.md` 和 `files/<name>/...`。标题仅保留在
+Markdown 内容中，不参与第二套文件命名。默认 `<name>` 取输入文件 stem；
+`--output-name` 可显式覆盖。两者都经过 NFKC 和统一 `-` 分隔符规范化；
+空白、下划线、点号和其他标点/路径分隔符都会转成 `-`，例如
+`report v1.2` 固定为 `report-v1-2`。

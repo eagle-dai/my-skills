@@ -239,6 +239,8 @@ kept | removed_as_noise | failed | manual_review
 ## §0.8 图片和 ZIP 阻断
 
 - 图片路径必须是相对路径，指向 `files/<zip 同名>/`
+- 单文档的目录、Markdown stem、资源目录和 ZIP stem 必须都等于 `report.json.output_name`
+- strict 多文档的 Markdown stem 与资源子目录必须逐项等于 naming manifest；裸编号、自由英文 slug、中文标题混用或随机后缀均阻断
 - 资源文件必须真实存在
 - ZIP 解压后必须能离线阅读
 - 不得把 base64 直接写进 Markdown

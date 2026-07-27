@@ -2,6 +2,15 @@
 
 本 checklist 供主 agent 在 sub agent 返回后独立验收。selector、复杂度分级、DOM identity、候选去重和评论 ledger 以 @contracts.py 为准；Markdown fence 以 @markdown_fences.py 为准；图片判定以 @image_disposition.py 为准。
 
+## 0. 确定性命名
+
+- 读取 `report.json.output_name`，不得从内容重新猜一个名字；
+- 单文档目录、Markdown stem、资源目录和 ZIP stem 四者完全相同；
+- 多文档 naming manifest 按渲染 DOM 顺序编号，标题取 DOM 原文；
+- 每个 Markdown stem 与 `files/<stem>/` 一一对应；
+- 不存在 naming manifest 外的目录、翻译标题、自由 slug、时间戳、hash 或随机后缀；
+- 对同一输入和同一 `--output-name` 重跑，路径清单逐字节相同。
+
 ## 1. 基线建立
 
 在提取前通过 Playwright 对整个正文容器执行 `querySelectorAll()`，不能只遍历直接子节点。候选发现后分配 `semantic_id` 并调用 `canonicalize_candidates()`；selector 原始命中数不能直接作为基线。
@@ -185,6 +194,8 @@ assert_valid_image_ledger(entries, source_ids=source_ids)
 复杂度级别：
 正文容器：
 编辑器类型：
+output_name：
+naming manifest / 实际路径：
 
 DOM 基线 / Markdown 实际：
 - 块级公式：

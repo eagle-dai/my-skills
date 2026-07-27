@@ -68,7 +68,7 @@
 - `preflight.py`：选择唯一正文、生成 compact HTML、结构 manifest、公式索引和资源索引，并识别 strict 信号。
 - `fast_converter.py`：将支持的静态结构转换为 Markdown，遇到无法无损表达的语义时 fail closed。
 - `formula_batch.py`：按 normalized DOM hash 去重公式，使用版本化 cache，并生成单批浏览器验证文档。
-- `pipeline_utils.py`：共享的文件名规范化、DOM 合同加载、JSON 写入和确定性 ZIP 工具。
+- `pipeline_utils.py`：共享的确定性命名合同（目录、Markdown、资源目录和 ZIP 复用同一名字）、DOM 合同加载、JSON 写入和确定性 ZIP 工具。
 - `contracts.py`：selector、复杂度、DOM semantic identity/canonicalization 和 comment ledger 合同。
 - `image_disposition.py`：图片保留、删除或人工复核判定，以及 image ledger 守恒。
 - `markdown_fences.py`：按行扫描 fenced code block 做结构校验。
@@ -122,4 +122,5 @@ GitHub Actions 在 pull request、推送到 `main` 和手动触发时，使用 P
 - 可确定、可复用的规则优先落到 Python 合同和测试，而不是让 LLM 重复判断；
 - 报告中的状态、strict reasons、blockers 和 ledgers 不得被手工伪造或绕过；
 - 修改行为时同步更新实现、测试、`SKILL.md`、参考文档和 README，避免跨文件漂移；
+- 输出命名只允许机械规范化：默认使用输入文件 stem，也可显式传 `--output-name`；禁止 agent 翻译、摘要或自由生成 slug；
 - 不提交付费文章、私有网页或客户数据，性能回归使用 synthetic fixture/benchmark。

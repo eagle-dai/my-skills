@@ -79,22 +79,65 @@ def title_from_root(root: Tag, fallback: str) -> str:
     return re.sub(r"\s+", " ", title).strip() or fallback
 
 
-def safe_package_name(value: str) -> str:
-    """Return a portable package name without discarding non-ASCII text.
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_LEADING_ORDINAL_RE = re.compile(
+    r"^\s*(?P<ordinal>\d{1,4})\s*(?:[|｜:：._-]\s*|\s+)(?P<title>.+)$"
+)
 
-    Python's ``\\w`` is Unicode-aware, so Chinese and other letter/digit scripts
-    remain distinct while punctuation and path separators collapse to ``-``.
-    NFKC normalization also makes visually equivalent full-width forms stable.
+
+def canonical_output_name(value: str) -> str:
+    """Return the one portable basename used by every deliverable path.
+
+    The function is intentionally mechanical: it never translates, summarizes,
+    or invents a slug. NFKC normalization makes full-width forms stable;
+    whitespace, punctuation, and path separators collapse to one ASCII hyphen.
     """
 
     value = unicodedata.normalize("NFKC", value)
-    value = re.sub(r"[^\w.-]+", "-", value, flags=re.UNICODE).strip("-._")
-    return value or "article"
+    value = re.sub(r"[^\w]+", "-", value, flags=re.UNICODE)
+    value = re.sub(r"_+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    if not value:
+        return "article"
+    if value.upper() in _WINDOWS_RESERVED_NAMES:
+        return f"article-{value}"
+    return value
+
+
+def numbered_document_name(title: str, ordinal: int) -> str:
+    """Return a stable multi-document basename in rendered DOM order.
+
+    An existing numeric prefix is removed only when it denotes this exact
+    ordinal, preventing ``01-01-title`` while preserving titles such as
+    ``2026 research`` for document 1.
+    """
+
+    if ordinal < 1:
+        raise ValueError("ordinal must be >= 1")
+    normalized_title = unicodedata.normalize("NFKC", title)
+    match = _LEADING_ORDINAL_RE.fullmatch(normalized_title)
+    if match is not None and int(match.group("ordinal")) == ordinal:
+        normalized_title = match.group("title")
+    return f"{ordinal:02d}-{canonical_output_name(normalized_title)}"
+
+
+def safe_package_name(value: str) -> str:
+    """Backward-compatible alias for the canonical output basename."""
+
+    return canonical_output_name(value)
 
 
 def safe_file_name(value: str) -> str:
-    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value).strip(" .")
-    return value or "article"
+    """Backward-compatible alias for the canonical output basename."""
+
+    return canonical_output_name(value)
 
 
 def write_json(path: Path, payload: Any) -> None:
