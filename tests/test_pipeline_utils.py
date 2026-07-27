@@ -68,6 +68,62 @@ class PipelineUtilsTests(unittest.TestCase):
             "导读-量化知识背景与研究能力地图",
         )
 
+    def test_canonical_output_name_is_mechanical_and_portable(self) -> None:
+        cases = (
+            (
+                "01 | AI 量化研究的证据边界与责任分工",
+                "01-AI-量化研究的证据边界与责任分工",
+            ),
+            (
+                "04-price-return-signal-position",
+                "04-price-return-signal-position",
+            ),
+            (
+                "05_安全边界_研究不等于实盘执行",
+                "05-安全边界-研究不等于实盘执行",
+            ),
+            ("ＡＩ／量化：证据", "AI-量化-证据"),
+        )
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    pipeline_utils.canonical_output_name(source),
+                    expected,
+                )
+                self.assertEqual(pipeline_utils.safe_package_name(source), expected)
+                self.assertEqual(pipeline_utils.safe_file_name(source), expected)
+
+    def test_numbered_document_name_uses_dom_order_without_double_prefix(self) -> None:
+        self.assertEqual(
+            pipeline_utils.numbered_document_name(
+                "01 | AI 量化研究的证据边界与责任分工",
+                1,
+            ),
+            "01-AI-量化研究的证据边界与责任分工",
+        )
+        self.assertEqual(
+            pipeline_utils.numbered_document_name(
+                "LLM 量化：搭建可复现的量化研究工作区",
+                3,
+            ),
+            "03-LLM-量化-搭建可复现的量化研究工作区",
+        )
+        self.assertEqual(
+            pipeline_utils.numbered_document_name("2026 research", 1),
+            "01-2026-research",
+        )
+
+    def test_numbered_document_name_rejects_invalid_ordinal(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ordinal must be >= 1"):
+            pipeline_utils.numbered_document_name("article", 0)
+
+    def test_windows_reserved_name_gets_stable_prefix(self) -> None:
+        self.assertEqual(
+            pipeline_utils.canonical_output_name("CON"),
+            "article-CON",
+        )
+
     def test_distinct_chinese_names_do_not_collapse_to_article(self) -> None:
         first = pipeline_utils.safe_package_name("量化知识背景")
         second = pipeline_utils.safe_package_name("研究能力地图")

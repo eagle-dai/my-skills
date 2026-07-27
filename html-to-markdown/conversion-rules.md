@@ -185,11 +185,24 @@ no_code = strip_fenced_blocks(markdown)
 ## 输出结构
 
 ```text
-<zip-name>.zip
-└── 文章标题/
-    ├── 文章标题.md
-    └── files/<zip-name>/
+dist/
+├── <name>/
+│   ├── <name>.md
+│   └── files/<name>/
+└── <name>.zip
+
+<name>.zip
+├── <name>.md
+└── files/<name>/
 ```
+
+### 确定性命名
+
+- `<name>` 只能来自 pipeline 的 `report.json.output_name`，默认由输入文件 stem 机械规范化；用户可用 `--output-name` 明确指定。
+- 目录名、Markdown stem、资源目录和 ZIP stem 必须完全相同，禁止各自起名。
+- 标题文字保留在 Markdown 正文中，不得翻译、摘要或改写成另一套文件 slug。
+- strict 多文档输出按渲染 DOM 稳定顺序调用 `numbered_document_name(exact_title, ordinal)`；例如 `01 | AI 量化研究` 固定为 `01-AI-量化研究`，对应 `01-AI-量化研究.md` 和 `files/01-AI-量化研究/`。
+- dispatch 前由主 agent 固化 naming manifest。重名只能通过稳定序号消解；禁止时间戳、随机数、hash 短码或临时后缀。
 
 ## 删除与保留速查
 

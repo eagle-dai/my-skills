@@ -47,12 +47,12 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("```python", markdown)
             self.assertIn("| Name | Value |", markdown)
             self.assertIn("$x^2$", markdown)
-            self.assertIn("![pixel](files/pipeline_article/asset-0001.png)", markdown)
+            self.assertIn("![pixel](files/pipeline-article/asset-0001.png)", markdown)
             self.assertTrue(
                 (
                     outcome.markdown_path.parent
                     / "files"
-                    / "pipeline_article"
+                    / "pipeline-article"
                     / "asset-0001.png"
                 ).exists()
             )
@@ -61,9 +61,44 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue(outcome.report["allow_unprocessed_images"])
 
             with zipfile.ZipFile(outcome.zip_path) as archive:
-                self.assertIn("Fast path article.md", archive.namelist())
+                self.assertIn("pipeline-article.md", archive.namelist())
                 self.assertIn(
-                    "files/pipeline_article/asset-0001.png", archive.namelist()
+                    "files/pipeline-article/asset-0001.png", archive.namelist()
+                )
+
+    def test_output_name_is_reused_for_all_delivery_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            outcome = pipeline.run_pipeline(
+                FIXTURE_PATH,
+                output,
+                mode="auto",
+                allow_unprocessed_images=True,
+                output_name="01 | AI 量化研究",
+            )
+
+            self.assertEqual(outcome.status, "converted")
+            self.assertEqual(outcome.report["output_name"], "01-AI-量化研究")
+            self.assertEqual(
+                outcome.markdown_path,
+                output / "01-AI-量化研究" / "01-AI-量化研究.md",
+            )
+            self.assertEqual(outcome.zip_path, output / "01-AI-量化研究.zip")
+            assert outcome.markdown_path is not None
+            self.assertTrue(
+                (
+                    outcome.markdown_path.parent
+                    / "files"
+                    / "01-AI-量化研究"
+                    / "asset-0001.png"
+                ).exists()
+            )
+            assert outcome.zip_path is not None
+            with zipfile.ZipFile(outcome.zip_path) as archive:
+                self.assertIn("01-AI-量化研究.md", archive.namelist())
+                self.assertIn(
+                    "files/01-AI-量化研究/asset-0001.png",
+                    archive.namelist(),
                 )
 
     def test_reused_root_matches_serialize_and_reparse_path_byte_for_byte(self) -> None:
@@ -96,8 +131,8 @@ class PipelineTests(unittest.TestCase):
                 "preflight/assets.json",
                 "formula-results.json",
                 "formula-validation.html",
-                "pipeline_article/Fast path article.md",
-                "pipeline_article.zip",
+                "pipeline-article/pipeline-article.md",
+                "pipeline-article.zip",
             )
             for relative in relative_files:
                 self.assertEqual(
@@ -369,7 +404,7 @@ class PipelineTests(unittest.TestCase):
             second = pipeline.run_pipeline(replacement, output, mode="fast")
 
             self.assertEqual(second.status, "blocked")
-            self.assertFalse((output / "pipeline_article.zip").exists())
+            self.assertFalse((output / "pipeline-article.zip").exists())
 
     def test_zip_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:

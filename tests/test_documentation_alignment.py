@@ -96,6 +96,22 @@ class DocumentationAlignmentTests(unittest.TestCase):
             re.search(r"(?:显著|明显|大幅|大量)\s*(?:减少|降低)", checklist)
         )
 
+    def test_output_naming_contract_is_consistent_across_execution_docs(self) -> None:
+        skill = self.read("html-to-markdown/SKILL.md")
+        pipeline = self.read("html-to-markdown/pipeline.md")
+        conversion = self.read("html-to-markdown/conversion-rules.md")
+        blocking = self.read("html-to-markdown/blocking-rules.md")
+        checklist = self.read("html-to-markdown/checklist.md")
+
+        for text in (skill, pipeline, conversion, blocking, checklist):
+            self.assertIn("output_name", text)
+            self.assertIn("Markdown stem", text)
+            self.assertIn("资源目录", text)
+        self.assertIn("numbered_document_name", skill)
+        self.assertIn("numbered_document_name", conversion)
+        self.assertIn("--output-name", pipeline)
+        self.assertIn("随机后缀", blocking)
+
     def test_meta_guidance_matches_current_ci(self) -> None:
         meta = self.read("_meta/skill-self-improvement.md")
 

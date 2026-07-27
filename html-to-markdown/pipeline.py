@@ -25,15 +25,13 @@ from pipeline_utils import (
     deterministic_zip,
     preflight,
     root_from_html,
-    safe_file_name,
     safe_package_name,
-    title_from_root,
     write_json,
 )
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 RESUME_SCHEMA_VERSION = "1.0"
-CONVERTER_VERSION = "markdown-converter-v1"
+CONVERTER_VERSION = "markdown-converter-v2"
 CONTRACT_VERSION = "html-contracts-v1"
 TARGET_PLATFORM = "github"
 RESUME_LEDGER_NAME = ".validation-resume.json"
@@ -357,6 +355,7 @@ def clear_previous_delivery(output: Path, package: str) -> None:
 def strict_outcome(
     output: Path,
     mode: str,
+    output_name: str,
     manifest: dict[str, Any],
     reasons: list[str],
     *,
@@ -371,6 +370,7 @@ def strict_outcome(
         "status": "strict_required",
         "requested_mode": mode,
         "recommended_mode": "strict",
+        "output_name": output_name,
         "allow_unprocessed_images": allow_unprocessed_images,
         "strict_reasons": reasons,
         "preflight": manifest,
@@ -406,6 +406,7 @@ def run_pipeline(
     mode: str = "auto",
     formula_validation_report: Path | None = None,
     allow_unprocessed_images: bool = False,
+    output_name: str | None = None,
     _reuse_compact_root: bool = True,
 ) -> PipelineOutcome:
     if mode not in {"auto", "fast", "strict"}:
@@ -413,7 +414,7 @@ def run_pipeline(
 
     total_started = time.perf_counter()
     timings = _new_timings()
-    package = safe_package_name(input_path.stem)
+    package = safe_package_name(output_name if output_name is not None else input_path.stem)
     output.mkdir(parents=True, exist_ok=True)
     source_bytes = input_path.read_bytes()
     source_sha256 = _sha256_bytes(source_bytes)
@@ -490,6 +491,7 @@ def run_pipeline(
         return strict_outcome(
             output,
             mode,
+            package,
             result.manifest,
             reasons,
             allow_unprocessed_images=allow_unprocessed_images,
@@ -499,7 +501,6 @@ def run_pipeline(
         )
 
     article_dir = output / package
-    title = title_from_root(root, input_path.stem)
     formula_started = time.perf_counter()
     batch = resolve_formulas(
         result.compact_html,
@@ -536,6 +537,7 @@ def run_pipeline(
         return strict_outcome(
             output,
             mode,
+            package,
             result.manifest,
             [str(error)],
             allow_unprocessed_images=allow_unprocessed_images,
@@ -562,7 +564,7 @@ def run_pipeline(
 
     package_started = time.perf_counter()
     article_dir.mkdir(parents=True, exist_ok=True)
-    markdown_path = article_dir / f"{safe_file_name(title)}.md"
+    markdown_path = article_dir / f"{package}.md"
     markdown_path.write_text(conversion.markdown, encoding="utf-8")
     zip_path = None
     if status == "converted":
@@ -600,6 +602,7 @@ def run_pipeline(
         "schema_version": SCHEMA_VERSION,
         "status": status,
         "requested_mode": mode,
+        "output_name": package,
         "allow_unprocessed_images": allow_unprocessed_images,
         "preflight": result.manifest,
         "emitted_counts": conversion.counts.as_dict(),
@@ -629,6 +632,14 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--output", type=Path, required=True)
     value.add_argument("--mode", choices=("auto", "fast", "strict"), default="auto")
     value.add_argument(
+        "--output-name",
+        help=(
+            "Exact logical basename for the package, Markdown file, resource "
+            "directory, and ZIP. It is normalized mechanically; when omitted, "
+            "the input filename stem is used."
+        ),
+    )
+    value.add_argument(
         "--formula-validation-report",
         type=Path,
         help="JSON emitted after running formula-validation.html with a pinned KaTeX runtime",
@@ -655,6 +666,7 @@ def main() -> int:
             mode=args.mode,
             formula_validation_report=args.formula_validation_report,
             allow_unprocessed_images=args.allow_unprocessed_images,
+            output_name=args.output_name,
         )
     except (OSError, UnicodeError, ValueError, preflight.BodySelectionError) as error:
         print(f"pipeline failed: {error}")

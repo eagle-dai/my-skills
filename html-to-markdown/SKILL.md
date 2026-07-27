@@ -62,6 +62,17 @@ python html-to-markdown/pipeline.py input.html \
 - 只有用户明确接受图片保持原样、跳过所有图片后处理时，才可传 `--allow-unprocessed-images`：它只跳过图片后处理、按原样打包 data-URI 图，不改变 fast/strict 路由，也不会绕过外部资源、本地化失败、题注、虚拟化或其他 strict 条件。
 - 已确认的 `<caption>` / `<figcaption>` 默认进入 strict，因为 deterministic converter 尚未实现 caption ledger 守恒。
 
+### 0.4 输出命名合同
+
+命名是数据合同，不是文案创作。禁止让 agent 翻译、概括标题或自由生成 slug。
+
+- pipeline 默认把输入文件 stem 传给 `canonical_output_name()` 一次；也可由用户通过 `--output-name` 明确指定逻辑名。
+- 规范化只做机械转换：NFKC、空白/标点/路径分隔符统一为 `-`、连续 `-` 合并、Windows 保留名加 `article-` 前缀；中文不会被翻译或丢弃。
+- 结果写入 `report.json.output_name`，并原样复用于 `<name>/<name>.md`、`<name>/files/<name>/` 和 `<name>.zip`。目录、Markdown、资源目录和 ZIP 不得再分别命名。
+- strict handoff 必须携带 `output_name`。单文档 strict 输出原样复用它，禁止根据正文标题另起名字。
+- 一个 strict 输入拆成多个 Markdown 时，先按渲染 DOM 中的稳定文档顺序从 1 编号，再调用 `numbered_document_name(exact_title, ordinal)`；标题必须是 DOM 原文，禁止翻译、摘要或自由 slug。Markdown stem 与其资源子目录必须完全相同。
+- dispatch 前写出完整 naming manifest；sub-agent 只能照表创建路径，不得自行更改。
+
 ## Phase 1：strict 主 agent 分析
 
 ### 1.1 使用渲染后的 DOM
@@ -120,6 +131,7 @@ comments
 - 公式来源；
 - canonical DOM 基线；
 - Notebook cell/output 参数；
+- pipeline 的 `output_name`；多文档时的有序 `document_name -> markdown -> asset_dir` naming manifest；
 - 每条 `strict_reason` 的处理方案。
 
 ## Phase 2：strict sub-agent 执行
@@ -156,6 +168,13 @@ fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性�
 
 图片保留/删除/人工复核与 ledger 规则见 @image-disposition.md、@image_disposition.py、@image_processing.py 和 @conversion-rules.md。
 
+### 输出路径
+
+- 单文档：只允许 naming manifest 中的 `<output_name>/<output_name>.md` 与 `<output_name>/files/<output_name>/`。
+- 多文档：每个 `<document_name>.md` 只引用 `files/<document_name>/`；编号来自渲染 DOM 顺序。
+- 不得混用裸编号、英文 slug、中文自由标题、空格加竖线等多套命名形式。
+- 遇到重名或路径碰撞必须回到主 agent 修正 naming manifest，禁止 sub-agent 临时追加随机后缀。
+
 ### 代码与 fence
 
 - 无充分语言证据时使用 `text`；
@@ -182,6 +201,7 @@ fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性�
 - 题注：每个 confirmed caption `emitted_count == 1`；
 - 评论：`validate_comment_ledger()` 无错误；
 - 公式：数量、来源、结构和验证状态对齐。
+- 命名：实际 Markdown stem、资源目录、ZIP 与 naming manifest 完全一致；不得存在未登记目录或随机后缀。
 
 所有 Markdown 结构扫描必须先排除 fenced code block。
 
@@ -213,6 +233,7 @@ fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性�
 
 ```text
 pipeline status / requested mode / recommended mode
+output_name / naming manifest / 实际路径对比
 strict reasons 或 blockers
 DOM 基线 / Markdown 实际
 公式来源、失败、pending validation、error/warning
