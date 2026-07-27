@@ -44,6 +44,19 @@ class ImageProcessingTests(unittest.TestCase):
         # bbox sits in the bottom-right region.
         self.assertGreater(bbox[0], 200)
         self.assertGreater(bbox[1], 150)
+        # The erased region must actually become the background colour (white),
+        # not stay the watermark grey. Decode the emitted (lossy) webp and
+        # sample the bbox centre; it must be near white, far from grey 128.
+        import numpy as np
+
+        emitted = np.asarray(Image.open(BytesIO(result.data)).convert("RGB"))
+        cy = (bbox[1] + bbox[3]) // 2
+        cx = (bbox[0] + bbox[2]) // 2
+        centre = emitted[cy, cx]
+        self.assertTrue(
+            (centre > 220).all(),
+            f"erased region not background-coloured: {centre.tolist()}",
+        )
 
     def test_watermark_overlapping_content_falls_back(self) -> None:
         # A large grey block in the corner with dark content strokes running
@@ -61,8 +74,11 @@ class ImageProcessingTests(unittest.TestCase):
         self.assertFalse(result.meta.dewatermarked)
         self.assertEqual(result.meta.validation_reason, "watermark_overlaps_content")
         self.assertIsNone(result.meta.watermark_bbox)
-        # The original bytes are always preserved for offline audit.
-        self.assertEqual(result.original_data, _encode(image))
+        # A rejected destructive edit must not mutate the image in any way,
+        # including compression: the emitted bytes are exactly the original.
+        original = _encode(image)
+        self.assertEqual(result.original_data, original)
+        self.assertEqual(result.data, original)
 
     def test_no_watermark_is_not_dewatermarked(self) -> None:
         image = Image.new("RGB", (400, 300), (255, 255, 255))
@@ -131,6 +147,46 @@ class ImageProcessingTests(unittest.TestCase):
         self.assertEqual(result.data, payload)
         self.assertEqual(result.mime, "image/gif")
         self.assertFalse(result.meta.dewatermarked)
+
+    def test_transparent_image_keeps_alpha(self) -> None:
+        # A transparent RGBA PNG must not acquire an opaque (black) background
+        # when no watermark is present. Alpha must survive processing.
+        import numpy as np
+
+        image = Image.new("RGBA", (300, 300), (0, 0, 0, 0))  # fully transparent
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([50, 50, 200, 200], fill=(200, 40, 40, 255))  # opaque box
+
+        result = ip.process_image(_encode(image), "image/png", "alpha")
+
+        self.assertFalse(result.meta.fallback_to_original)
+        emitted = Image.open(BytesIO(result.data))
+        self.assertIn("A", emitted.getbands())
+        arr = np.asarray(emitted.convert("RGBA"))
+        # A corner that was fully transparent must stay transparent.
+        self.assertLess(int(arr[10, 250, 3]), 16)
+        # The opaque content box must stay opaque.
+        self.assertGreater(int(arr[120, 120, 3]), 240)
+
+    def test_transparent_watermark_dewatermarked_preserves_alpha(self) -> None:
+        # Alpha must also survive a successful dewatermark: erase the corner
+        # watermark but keep the transparency map intact.
+        import numpy as np
+
+        image = Image.new("RGBA", (400, 300), (255, 255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([20, 20, 180, 120], fill=(30, 90, 200, 255))
+        draw.rectangle([320, 250, 380, 285], fill=(128, 128, 128, 255))
+        # Punch a transparent hole far from the watermark.
+        draw.rectangle([10, 250, 60, 290], fill=(0, 0, 0, 0))
+
+        result = ip.process_image(_encode(image), "image/png", "alpha-wm")
+
+        self.assertTrue(result.meta.dewatermarked)
+        emitted = Image.open(BytesIO(result.data)).convert("RGBA")
+        arr = np.asarray(emitted)
+        self.assertLess(int(arr[270, 35, 3]), 16)   # hole still transparent
+        self.assertGreater(int(arr[60, 100, 3]), 240)  # content still opaque
 
 
 if __name__ == "__main__":

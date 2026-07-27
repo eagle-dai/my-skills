@@ -105,7 +105,13 @@ def process_image(
     mime_norm = (mime or "").lower()
     orig_bytes = len(data)
 
-    def _fallback(reason: str, *, width: int = 0, height: int = 0) -> ProcessedImage:
+    def _fallback(
+        reason: str,
+        *,
+        width: int = 0,
+        height: int = 0,
+        validation_reason: str = "",
+    ) -> ProcessedImage:
         return ProcessedImage(
             data=data,
             mime=mime,
@@ -114,8 +120,8 @@ def process_image(
             meta=ImageProcessMeta(
                 width=width,
                 height=height,
-                validation_passed=True,
-                validation_reason="",
+                validation_passed=not validation_reason,
+                validation_reason=validation_reason,
                 orig_bytes=orig_bytes,
                 final_bytes=orig_bytes,
                 format_kept_reason=reason,
@@ -147,6 +153,11 @@ def process_image(
         return _fallback("decode_failed")
 
     try:
+        # Detection and validation run on an RGB composite, but any alpha
+        # channel must survive the whole path: dropping it turns transparent
+        # pixels opaque (often black). Keep the original alpha aside and merge
+        # it back before compression.
+        alpha = _extract_alpha(image)
         rgb = image.convert("RGB")
         original_rgb = rgb.copy()
         width, height = rgb.size
@@ -164,7 +175,19 @@ def process_image(
             if ok:
                 working = watermarked
                 dewatermarked = True
-            # else: keep original_rgb, fall through with fallback flag set below.
+            else:
+                # A rejected destructive edit must not silently mutate the image
+                # in any other way either. Return the untouched original bytes.
+                return _fallback(
+                    "dewatermark_validation_failed",
+                    width=width,
+                    height=height,
+                    validation_reason=reason,
+                )
+
+        if alpha is not None:
+            working = working.copy()
+            working.putalpha(alpha)
 
         final_data, final_mime, compressed, format_note = compress_to_webp(
             working, mime, max_width=max_width, quality=webp_quality
@@ -316,9 +339,15 @@ def compress_to_webp(
     webp_data = webp_buf.getvalue()
 
     # Re-encode the (possibly resized) image in its original raster format to
-    # compare sizes. If webp is not smaller, keep the original format.
+    # compare sizes. If webp is not smaller, keep the original format. JPEG has
+    # no alpha channel, so an image carrying alpha can only stay as webp.
+    has_alpha = working.mode in ("RGBA", "LA") or (
+        working.mode == "P" and "transparency" in working.info
+    )
     orig_format = _pil_format_for_mime(mime_norm)
-    if orig_format is not None and orig_format != "WEBP":
+    if orig_format is not None and orig_format != "WEBP" and not (
+        orig_format == "JPEG" and has_alpha
+    ):
         try:
             orig_buf = BytesIO()
             save_kwargs = {}
@@ -339,6 +368,16 @@ def compress_to_webp(
 
 
 # --- internal helpers -------------------------------------------------------
+
+
+def _extract_alpha(image: "Image.Image") -> "Image.Image | None":
+    """Return the image's alpha channel as an 'L' image, or None if opaque."""
+
+    if image.mode in ("RGBA", "LA"):
+        return image.getchannel("A")
+    if image.mode == "P" and "transparency" in image.info:
+        return image.convert("RGBA").getchannel("A")
+    return None
 
 
 def _feature_color_mask(arr: np.ndarray) -> np.ndarray:
@@ -442,17 +481,33 @@ def _bbox_hugs_outer_corner(
 
 
 def _background_color(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
-    """Dominant colour of a thin ring just outside the bbox (fallback: white)."""
+    """Median colour of a ring strictly OUTSIDE the bbox (fallback: white).
+
+    The sample is the padded rectangle around the bbox minus the bbox itself
+    (four border strips), so the watermark pixels never contaminate the fill.
+    """
 
     h, w = arr.shape[0], arr.shape[1]
     left, top, right, bottom = bbox
     pad = 3
     y0, y1 = max(0, top - pad), min(h, bottom + pad)
     x0, x1 = max(0, left - pad), min(w, right + pad)
-    ring = arr[y0:y1, x0:x1, :].reshape(-1, 3)
+
+    strips = []
+    # Top and bottom strips span the full padded width.
+    if y0 < top:
+        strips.append(arr[y0:top, x0:x1, :].reshape(-1, 3))
+    if bottom < y1:
+        strips.append(arr[bottom:y1, x0:x1, :].reshape(-1, 3))
+    # Left and right strips span only the bbox's vertical extent.
+    if x0 < left:
+        strips.append(arr[top:bottom, x0:left, :].reshape(-1, 3))
+    if right < x1:
+        strips.append(arr[top:bottom, right:x1, :].reshape(-1, 3))
+
+    ring = np.concatenate(strips, axis=0) if strips else np.empty((0, 3), np.uint8)
     if ring.size == 0:
         return np.array([255, 255, 255], dtype=np.uint8)
-    # Median is robust to the watermark pixels bleeding into the padded window.
     return np.median(ring, axis=0).astype(np.uint8)
 
 
