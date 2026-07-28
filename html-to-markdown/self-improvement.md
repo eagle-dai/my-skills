@@ -111,6 +111,8 @@ DOM 稳定顺序，标题取 DOM 原文。
 | 重建输出 `\text{observed_at}`（裸下划线） | 禁止 | 反例：GitHub 报 `'_' allowed only in math mode` |
 | math-mode 下标 `t_{obs}`（`msupsub`/`vlist` 结构） | 保留 `t_{obs}`，`_` 不转义 | 反例：math mode 的 `_` 是合法结构字符，转成 `\_` 会破坏下标 |
 | text mode 内的 `≤` 等 Unicode 符号 | 不映射为 `\leq`（原样或按需处理） | 反例：`\leq` 在 text mode 非法，text_mode 分支关闭 SYMBOLS/OPERATORS 映射 |
+| `\text{$t_n$}`（msupsub 嵌在 `.mord.text` 后代） | fail-close 交 strict，不产 `\text{t_{n}}` | 反例：text 内数学子式须 `$...$` 包裹；重建器不自动包裹，检测 `_{`/`^{`/`\frac` 即 `_MATH_ONLY_IN_TEXT_RE` fail-close（回归 `test_text_mode_with_nested_math_structure_fails_closed`） |
+| `\mathbb{R}` 内下标 `R_n` | 保留 `_{n}`，`_` 不转义 | 反例：`\mathbb`/`\mathcal` 是 math-mode 命令，内部下标合法，不置 text_mode（回归 `test_mathbb_subscript_stays_math_mode`） |
 
 ---
 

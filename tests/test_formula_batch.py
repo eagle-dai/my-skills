@@ -102,6 +102,49 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIn("_{", result.latex)          # 下标结构保留
         self.assertNotIn(r"\_", result.latex)       # 未被误转义
 
+    def test_text_mode_with_nested_math_structure_fails_closed(self) -> None:
+        # \text{$t_n$} 的真实结构:msupsub 是 .mord.text 的后代。裸拼会得非法
+        # \text{t_{n}}(text mode 报 '_' allowed only in math mode)→ 须 fail-close 交 strict。
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord text"><span class="mord">'
+            '<span class="mord mathnormal">t</span>'
+            '<span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r">'
+            '<span class="vlist" style="height:0.15em;"><span style="top:-2.55em;">'
+            '<span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mathnormal mtight">n</span></span></span></span></span></span></span>'
+            '</span></span></span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertFalse(result.success)
+        # 绝不能静默产出裸下标的非法 \text{}
+        self.assertNotIn("t_{", result.latex or "")
+
+    def test_mathbb_subscript_stays_math_mode(self) -> None:
+        # \mathbb 内的下标是合法 math,_ 不应被转义成 \_
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord mathbb">'
+            '<span class="mord mathbb">R</span>'
+            '<span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r">'
+            '<span class="vlist" style="height:0.15em;"><span style="top:-2.55em;">'
+            '<span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mathnormal mtight">n</span></span></span></span></span></span></span>'
+            '</span></span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertIn("_{", result.latex)
+        self.assertNotIn(r"\_", result.latex)
+
     def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
         html = """
         <article>

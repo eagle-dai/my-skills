@@ -50,7 +50,9 @@ KaTeX 的 HTML 渲染层 CSS 类由 KaTeX 定义，与宿主网站无关，但�
    | `#` | `\#` | | `}` | `\}` |
    | `&` | `\&` | | `\` | `\textbackslash{}` |
 
-   实测：`_ % $ # & ^ { } \` 在 text mode 下裸写会让 KaTeX 抛错（如 `'_' allowed only in math mode`）；`~` 不抛错但被当排版命令，一并转义。用单趟替换（`\` 优先），避免二次转义已插入的反斜杠。
+   实测：`_ % $ # & ^ { } \` 在 text mode 下裸写会让 KaTeX 抛错（如 `'_' allowed only in math mode`）；`~` 不抛错但被当排版命令，一并转义。**用单趟 `re.sub` 扫描原始串**（一次匹配、替换结果不再回扫）避免二次转义——不要改成多趟 `str.replace` 链，那会把先插入的 `\textbackslash{}` 里的 `\` 再转一次。
+
+   **另:`\text{}` 内嵌数学子式**（源 `\text{$t_n$}`，KaTeX 把 msupsub/mfrac 渲成 `.mord.text` 的后代）必须 `$...$` 包裹才在 text mode 合法；重建器不自动包裹，检测到 text 上下文产出 `_{`/`^{`/`\frac` 等 math-only 记号即 **fail-close 交 strict**，绝不静默产出非法的 `\text{t_{n}}`。参考 `_MATH_ONLY_IN_TEXT_RE`。
 
 2. **关闭 Unicode → LaTeX 符号映射和 OPERATORS 映射**：`≤→\leq`、`max→\max` 等命令在 text mode 非法。text mode 内一般是标识符名（`observed_at`），原样保留字符即可。
 
