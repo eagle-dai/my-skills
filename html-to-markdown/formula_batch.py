@@ -129,6 +129,38 @@ class FormulaCache:
         return True
 
 
+# --- 变量↔标识符映射公式拆分（缺陷 #16） ---------------------------------
+# 原网页把「数学变量 ↔ 工程标识符」写成一个公式 ``var \leftarrow \text{ident}``。
+# GitHub GFM 会剥掉 ``$…$`` 内 ``\_`` 的反斜杠，``\text{observed_at}`` 里裸 ``_``
+# 在 text mode 非法 → KaTeX 报 ``Expected 'EOF', got '_'``（真 KaTeX 验证证实）。
+# 这类「映射」本就不是纯数学式：数学变量该留公式、标识符该是行内代码。拆成
+# ``$var$ ← `ident``` 后两部分都 GitHub-safe。判定必须在验证前做（见 formula-batch.md），
+# 拆出的 ``$var$`` 仍进验证。右侧 ``\text{}`` 内若含数学结构（``_{`` / ``\frac`` 等）
+# 则不拆，保守避免破坏真公式（纯标识符经叶子转义只会有 ``\_``，不含 ``_{``）。
+# 回归 tests/test_markdown_postprocess.py::formula split。
+_TEXT_MAPPING_RE = re.compile(r"^(.+?)\s*\\leftarrow\s*\\text\{(.+?)\}$")
+
+
+def split_text_mapping_formula(latex: str) -> tuple[str, str] | None:
+    """``var \\leftarrow \\text{ident}`` → (var, ident) 或 None（不拆）。
+
+    ident 里的 text-mode 转义 ``\\_`` 还原成 ``_``（行内代码不需转义）。
+    右侧含数学结构记号（``_{`` / ``^{`` / ``\\frac`` 等）时返回 None。
+    """
+    match = _TEXT_MAPPING_RE.match(latex.strip())
+    if not match:
+        return None
+    var, ident_raw = match.group(1).strip(), match.group(2).strip()
+    if not var or not ident_raw:
+        return None
+    if _MATH_ONLY_IN_TEXT_RE.search(ident_raw):
+        return None  # 右侧不是纯标识符，别拆
+    ident = ident_raw.replace(r"\_", "_")
+    if _MATH_ONLY_IN_TEXT_RE.search(var) is None and "\\text" in var:
+        return None  # 左侧还有 \text，结构复杂，别拆
+    return var, ident
+
+
 def _write_text_if_changed(path: Path, content: str) -> bool:
     """Write UTF-8 text only when the destination bytes would change."""
 
@@ -532,6 +564,21 @@ def resolve_formulas(
         resolved_by_hash[record.dom_hash] = parsed
     cache_written = cache.save()
 
+    # 变量↔标识符映射公式拆分（缺陷 #16）：在验证 job 生成前把 ``var \leftarrow
+    # \text{ident}`` 的 latex 改成 ``var``（进验证会过），拆出的标识符记进
+    # split_by_hash 供 emit 补行内代码。缓存已在上面按原始 parsed 落盘，拆分不污染
+    # 解析缓存。拆分后 latex 为空的极端情况不会发生（var 非空经 split 保证）。
+    split_by_hash: dict[str, str] = {}
+    for dom_hash, parsed in list(resolved_by_hash.items()):
+        if not (parsed.success and parsed.latex):
+            continue
+        split = split_text_mapping_formula(parsed.latex)
+        if split is None:
+            continue
+        var, ident = split
+        split_by_hash[dom_hash] = ident
+        resolved_by_hash[dom_hash] = replace(parsed, latex=var)
+
     validation_jobs = _validation_jobs(records, resolved_by_hash)
     html = validation_document(validation_jobs)
     validation_html_written = _write_text_if_changed(validation_path, html)
@@ -570,7 +617,13 @@ def resolve_formulas(
             )
             continue
 
-        updated.append(replace(record, original_latex=parsed.latex))
+        trailing = split_by_hash.get(record.dom_hash, "")
+        if trailing:
+            updated.append(
+                replace(record, original_latex=parsed.latex, trailing_code=trailing)
+            )
+        else:
+            updated.append(replace(record, original_latex=parsed.latex))
 
     stats = {
         "formula_total": len(records),

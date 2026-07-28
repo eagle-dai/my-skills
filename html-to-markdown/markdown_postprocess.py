@@ -60,8 +60,12 @@ def _space_cjk_inline_math_line(line: str) -> str:
 # 的机制信号，不是靠猜文本内容。命中后包 ``<div align="center">`` 让 GitHub 居中。
 # 编号 ``X-Y`` 的 X/Y 可为数字或字母（``图 D-1``、``表 A-2``、``图 6-1``），与
 # conversion-rules.md「编号识别」一致——只用数字会漏掉附录常见的字母编号题注。
+# 可选的 ``**`` 前缀：SingleFile 的图题是独立 ``<div>``（无加粗）转出裸 ``图 N…``，
+# 表题却是 ``data-slate-type=bold`` span 转出 ``**表 N…**``。此前正则只认行首
+# ``图/表``，加粗表题被前缀 ``**`` 挡住不居中（bug）。这里容忍可选 ``**`` 前缀，
+# 命中后连 ``**…**`` 整体包进 ``<div>``，保留加粗只补居中。
 # 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
-_CAPTION_LINE = re.compile(r"^(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
+_CAPTION_LINE = re.compile(r"^(?:\*\*)?(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
 
 
 def _center_caption_line(line: str) -> str:
@@ -80,6 +84,26 @@ _QUAD_STAR = re.compile(r"\*\*\*\*")
 
 def _fix_quad_star_line(line: str) -> str:
     return _QUAD_STAR.sub("", line)
+
+
+# --- 独立成段公式 → $$ 块级居中 -------------------------------------------
+# 源 HTML 把所有公式标为 inline-katex（无 katex-display/block-katex），展示公式
+# 也转成行内 ``$…$``，GitHub 左对齐。判定「整段只有一个公式」：strip 后以单个
+# ``$`` 开头且以单个 ``$`` 结尾，去掉首尾定界符后内部无裸 ``$``（无第二个公式、
+# 无正文混排）。命中改写为 ``$$…$$``，GitHub 块级默认居中。
+# 行内混排（``… $t_{obs}$ 为观测时间``、``$s_i$ 、 $e_i$ 分别代表…``）不以 ``$``
+# 结尾或内部含 ``$``，自动排除。已是 ``$$…$$`` 的不重复包裹。
+# 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+def _promote_standalone_formula_line(line: str) -> str:
+    stripped = line.strip()
+    if len(stripped) < 3 or not stripped.startswith("$") or not stripped.endswith("$"):
+        return line
+    if stripped.startswith("$$") or stripped.endswith("$$"):
+        return line  # 已是块级
+    inner = stripped[1:-1]
+    if "$" in inner or not inner.strip():
+        return line  # 内部还有公式定界符 / 空公式
+    return f"$${inner}$$"
 
 
 def _fenced_line_numbers(markdown: str) -> set[int]:
@@ -105,6 +129,7 @@ def postprocess_markdown(markdown: str) -> str:
         line = _space_cjk_inline_math_line(line)
         line = _center_caption_line(line)
         line = _fix_quad_star_line(line)
+        line = _promote_standalone_formula_line(line)
         lines[index] = line
     return "\n".join(lines)
 

@@ -264,6 +264,10 @@ class MarkdownConverter:
             self.counts.formula_inline += 1
         latex = record.original_latex.strip()
         if latex:
+            # 缺陷 #16：映射公式拆分后，标识符移出公式变行内代码。
+            # ``$var$ ← `ident``` 两部分都 GitHub-safe（原整式 \text{a\_b} 在 GitHub 挂）。
+            if record.trailing_code:
+                return f"${latex}$ ← `{record.trailing_code}`"
             return f"$$\n{latex}\n$$" if record.display == "block" else f"${latex}$"
         self.unresolved.append(
             {"source_id": record.source_id, "source_kind": record.source_kind, "dom_hash": record.dom_hash}
