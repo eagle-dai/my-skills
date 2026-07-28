@@ -39,6 +39,9 @@ image_disposition = load_sibling(
 image_processing = load_sibling(
     "html_to_markdown_image_processing", "image_processing.py"
 )
+markdown_postprocess = load_sibling(
+    "html_to_markdown_postprocess", "markdown_postprocess.py"
+)
 
 
 def root_from_html(html: str) -> Tag:
