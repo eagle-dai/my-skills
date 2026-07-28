@@ -114,6 +114,25 @@ DOM 稳定顺序，标题取 DOM 原文。
 | `\text{$t_n$}`（msupsub 嵌在 `.mord.text` 后代） | fail-close 交 strict，不产 `\text{t_{n}}` | 反例：text 内数学子式须 `$...$` 包裹；重建器不自动包裹，检测 `_{`/`^{`/`\frac` 即 `_MATH_ONLY_IN_TEXT_RE` fail-close（回归 `test_text_mode_with_nested_math_structure_fails_closed`） |
 | `\mathbb{R}` 内下标 `R_n` | 保留 `_{n}`，`_` 不转义 | 反例：`\mathbb`/`\mathcal` 是 math-mode 命令，内部下标合法，不置 text_mode（回归 `test_mathbb_subscript_stays_math_mode`） |
 
+## 去水印检测：渐变尖 + 复杂背景 logo（缺陷 19，图像规则，真图 fixture 回归）
+
+判定项：右下角实心站点 logo（橙水滴 icon + 灰字）在两种形态下须完整检测并去净。PR #41 换成"饱和锚点 + fill/aspect 形状过滤"后对这两种变脆（commit 已自登记为待修回归）：
+
+- **渐变/反锯齿尖**：水滴尖端分裂成 sub-threshold 小连通块，anchor bbox 底部止步，弧尖残留。修 `watermark.py::_grow_anchor_down`——anchor 定选后沿其列范围向下吸附饱和像素，capped 半个 icon 高。
+- **复杂背景粘连**：logo 压在有色边框/填充上，icon 与边框 8-连通成细长块（fill 低、aspect 极端）被拒 → 漏检回退原图。修 `_find_anchor` 两遍：小 kernel 常规找；失败则 ROI 自适应大 kernel（`_ANCHOR_LINE_BREAK_FRAC`）断细线后重找。
+
+回归 `test_real_solid_logo_on_white_leaves_no_orange_residue`、`test_real_logo_on_colored_frame_is_detected_at_bottom_right`（真图 fixture `tests/fixtures/watermark_*.webp`，**必须整图**——裁片改 ROI 比例会掩盖故障）。
+
+| 场景 | 期望 | 理由 |
+|------|------|------|
+| 白底实心 logo（渐变尖） | 去净，右下 orange(hue 6-22) 残留=0 | 正例：bbox 向下扩覆盖弧尖 |
+| logo 压红框粉底 | 检测到右下 logo（bbox 在 w/h 0.55 外）并去净 | 正例：fallback 断线找回 icon |
+| 白底孤立橙 icon（合成 size24） | 去净，small kernel 命中，不触发 fallback | 反例：小 icon 不被大 kernel 腐蚀 |
+| 细高橙 bar（aspect<0.5 图表） | 不检测 | 反例：形状过滤仍拒图表内容，fallback 不放宽 fill/aspect 判据 |
+| 干净图无 logo | 不检测 | 反例：两遍都找不到合格 anchor |
+
+橙 vs 红判据：OpenCV hue，橙 icon hue~8-15，纯红框/字 hue~0；测试用 hue∈[6,22] 排除红，不能用裸 R/G/B box（会把红误判成橙）。
+
 ---
 
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

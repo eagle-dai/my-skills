@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 MODULE_PATH = ROOT / "html-to-markdown" / "watermark.py"
 SPEC = importlib.util.spec_from_file_location(
     "html_to_markdown_watermark_tests", MODULE_PATH
@@ -135,6 +136,54 @@ class WatermarkDetectionTests(unittest.TestCase):
         self.assertTrue(
             np.array_equal(arr[outside], result.image[outside]),
             "pixels changed outside the inpaint mask",
+        )
+
+    def _bottom_right_orange_count(self, image, arr) -> int:
+        # Count strongly-orange (site brand hue) pixels in the bottom-right
+        # quadrant after inpaint. Uses HSV hue to separate the orange teardrop
+        # (OpenCV hue ~8-15) from nearby pure-red frame/text (hue ~0), which a
+        # naive R/G/B box would misclassify as orange.
+        import cv2 as _cv2
+        h, w = arr.shape[:2]
+        roi = image[int(h * 0.5):, int(w * 0.6):, :].astype("uint8")
+        hsv = _cv2.cvtColor(roi, _cv2.COLOR_RGB2HSV)
+        hue, sat, val = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+        orange = (hue >= 6) & (hue <= 22) & (sat > 120) & (val > 120)
+        return int(orange.sum())
+
+    def test_real_solid_logo_on_white_leaves_no_orange_residue(self) -> None:
+        # Real site logo (orange teardrop icon + grey glyphs) on a white page
+        # (full-size image; a crop changes ROI proportions and hides the bug).
+        # The teardrop's anti-aliased tip is lower-saturation than its body, so
+        # the anchor bbox stops short and an orange arc survives below the erased
+        # region unless the bbox extends downward (缺陷: 框不全).
+        arr = _arr(Image.open(FIXTURES / "watermark_solid_white_bg.webp"))
+        pre = self._bottom_right_orange_count(arr, arr)
+        self.assertGreater(pre, 0, "fixture should contain the orange logo")
+        result = wm.remove_corner_watermark(arr)
+        self.assertTrue(result.removed, "solid logo on white must be detected")
+        post = self._bottom_right_orange_count(result.image, arr)
+        self.assertEqual(
+            post, 0,
+            f"{post} orange watermark pixels survived inpaint (was {pre})",
+        )
+
+    def test_real_logo_on_colored_frame_is_detected_at_bottom_right(self) -> None:
+        # Same logo on a pink fill crossed by a red border. The icon touches the
+        # frame, so a naive saturated-blob anchor merges icon+frame into one long
+        # thin component and rejects it, falling back to the original with the
+        # logo intact (缺陷: 漏检). Detection must land on the real logo in the
+        # bottom-right, not a stray chart blob elsewhere.
+        arr = _arr(Image.open(FIXTURES / "watermark_on_colored_frame.webp"))
+        result = wm.remove_corner_watermark(arr)
+        self.assertTrue(result.removed, "logo on a colored frame must be detected")
+        h, w = arr.shape[:2]
+        left, top, right, bottom = result.bbox
+        self.assertGreater(right, w * 0.55, f"bbox not in bottom-right: {result.bbox}")
+        self.assertGreater(bottom, h * 0.55, f"bbox not in bottom-right: {result.bbox}")
+        self.assertEqual(
+            self._bottom_right_orange_count(result.image, arr), 0,
+            "orange logo pixels survived in the bottom-right",
         )
 
     def test_missing_cv2_degrades_to_skip(self) -> None:

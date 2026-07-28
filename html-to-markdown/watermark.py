@@ -61,6 +61,10 @@ _ANCHOR_AREA_MAX_FRAC = 0.06      # larger = a fill/frame, not an icon
 _ANCHOR_FILL_MIN = 0.5            # area / bbox-area; rejects hollow frames & lines
 _ANCHOR_ASPECT_LO = 0.55          # rejects tall chart bars
 _ANCHOR_ASPECT_HI = 1.7
+# Fallback open-kernel size as a fraction of ROI height, used to sever a thin
+# coloured frame/border the icon is fused to. Scales with ROI so small icons
+# survive; ~13px on a full-size page ROI, ~5px floor on small crops.
+_ANCHOR_LINE_BREAK_FRAC = 0.025
 
 # Logo lettering: dark, low-saturation glyphs sitting on the icon's row.
 _TEXT_VAL_MAX = 175
@@ -188,6 +192,11 @@ def _detect_in_roi(
     if anchor is None:
         return None
     ax0, ay0, ax1, ay1 = anchor
+    # Grow the anchor downward over saturated pixels directly beneath it. The
+    # icon's anti-aliased tip (e.g. a teardrop point) can split into a tiny
+    # sub-threshold component the anchor blob misses; without this the bbox
+    # stops short and an orange arc survives inpaint just below the erased area.
+    ay1 = _grow_anchor_down(sat, val, ax0, ay0, ax1, ay1)
     icon_h = ay1 - ay0
 
     # Grow rightward over adjacent logo lettering, stopping at the first wide gap
@@ -240,14 +249,68 @@ def _find_anchor(
     This is the brand icon. Shape filters (fill, aspect) reject tall chart bars
     and thin/hollow frame borders without naming a colour. Returns the anchor
     bbox (roi-relative) or None.
+
+    A first pass uses a small open kernel (preserves small icons). If that finds
+    nothing -- e.g. the icon is fused to a thin coloured frame/border into one
+    long thin component -- a second pass opens with a larger, ROI-scaled kernel
+    that severs the thin line while leaving the compact icon body, then retries.
     """
 
     mask = ((sat > _ANCHOR_SAT_MIN) & (val > _ANCHOR_VAL_MIN)).astype(np.uint8)
-    mask = cv2.morphologyEx(
+    small = cv2.morphologyEx(
         mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), 1
     )
-    n, _labels, stats, _cent = cv2.connectedComponentsWithStats(mask, 8)
+    found = _pick_anchor_blob(small, roi_area)
+    if found is not None:
+        return found
 
+    # Fallback: sever thin lines (coloured frames/borders) the icon may be fused
+    # to. Kernel scales with ROI height so small synthetic icons stay intact.
+    roi_h = mask.shape[0]
+    ksize = max(5, int(round(roi_h * _ANCHOR_LINE_BREAK_FRAC)) | 1)  # odd
+    opened = cv2.morphologyEx(
+        mask, cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize)), 1,
+    )
+    return _pick_anchor_blob(opened, roi_area)
+
+
+def _grow_anchor_down(
+    sat: "np.ndarray", val: "np.ndarray", ax0: int, ay0: int, ax1: int, ay1: int
+) -> int:
+    """Extend the anchor's bottom edge down over saturated icon pixels.
+
+    Scans row by row beneath the anchor, within its horizontal span, while each
+    row still holds saturated ("coloured icon") pixels. Stops at the first empty
+    row or after at most half an icon-height of growth, so it captures an
+    anti-aliased tip without running away into unrelated content below.
+    """
+
+    roi_h = sat.shape[0]
+    icon_h = max(1, ay1 - ay0)
+    col = slice(max(0, ax0), max(ax0 + 1, ax1))
+    coloured = (sat[:, col] > _ANCHOR_SAT_MIN) & (val[:, col] > _ANCHOR_VAL_MIN)
+    width = max(1, ax1 - ax0)
+    limit = min(roi_h, ay1 + max(4, icon_h // 2))  # cap runaway at ~half icon height
+    y = ay1
+    empty_streak = 0
+    while y < limit:
+        if int(coloured[y].sum()) >= max(2, width // 20):
+            empty_streak = 0
+        else:
+            empty_streak += 1
+            if empty_streak >= 2:
+                break
+        y += 1
+    return max(ay1, y - empty_streak)
+
+
+def _pick_anchor_blob(
+    mask: "np.ndarray", roi_area: int
+) -> Optional[tuple[int, int, int, int]]:
+    """Pick the bottom-right-most compact/filled/roundish blob from a mask."""
+
+    n, _labels, stats, _cent = cv2.connectedComponentsWithStats(mask, 8)
     area_min = roi_area * _ANCHOR_AREA_MIN_FRAC
     area_max = roi_area * _ANCHOR_AREA_MAX_FRAC
     best = None
