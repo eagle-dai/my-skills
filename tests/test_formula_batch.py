@@ -49,6 +49,101 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIsNone(result.latex)
         self.assertEqual(result.diagnostic_text, "x")
 
+    def test_escape_text_mode_covers_all_special_chars(self) -> None:
+        f = formula_batch._escape_text_mode
+        self.assertEqual(f("observed_at"), r"observed\_at")
+        self.assertEqual(f("a%b"), r"a\%b")
+        self.assertEqual(f("c#d"), r"c\#d")
+        self.assertEqual(f("e&f"), r"e\&f")
+        self.assertEqual(f("p$q"), r"p\$q")
+        self.assertEqual(f("g^h"), r"g\textasciicircum{}h")
+        self.assertEqual(f("i~j"), r"i\textasciitilde{}j")
+        self.assertEqual(f("m{n}o"), r"m\{n\}o")
+
+    def test_escape_text_mode_backslash_not_double_escaped(self) -> None:
+        # 单趟替换:插入的 \textbackslash{} 里的反斜杠不得被再次转义
+        self.assertEqual(formula_batch._escape_text_mode("k\\l"), r"k\textbackslash{}l")
+
+    def test_escape_text_mode_leaves_safe_chars(self) -> None:
+        self.assertEqual(formula_batch._escape_text_mode("abc AB 12 <>|[]"), "abc AB 12 <>|[]")
+
+    def test_text_node_escapes_underscore(self) -> None:
+        # KaTeX 对 \text{observed_at} 渲染出的最小结构:mord text 包裹文本
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord text"><span class="mord">observed_at</span></span>'
+            '</span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertEqual(result.latex, r"\text{observed\_at}")
+
+    def test_math_mode_subscript_underscore_unchanged(self) -> None:
+        # 下标结构(msupsub)生成的 _ 是合法 math-mode 结构字符,不得转义
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord"><span class="mord mathnormal">t</span>'
+            '<span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r">'
+            '<span class="vlist" style="height:0.3361em;">'
+            '<span style="top:-2.55em;"><span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mtight"><span class="mord mathnormal mtight">n</span></span>'
+            '</span></span></span></span></span></span></span>'
+            '</span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertIn("_{", result.latex)          # 下标结构保留
+        self.assertNotIn(r"\_", result.latex)       # 未被误转义
+
+    def test_text_mode_with_nested_math_structure_fails_closed(self) -> None:
+        # \text{$t_n$} 的真实结构:msupsub 是 .mord.text 的后代。裸拼会得非法
+        # \text{t_{n}}(text mode 报 '_' allowed only in math mode)→ 须 fail-close 交 strict。
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord text"><span class="mord">'
+            '<span class="mord mathnormal">t</span>'
+            '<span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r">'
+            '<span class="vlist" style="height:0.15em;"><span style="top:-2.55em;">'
+            '<span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mathnormal mtight">n</span></span></span></span></span></span></span>'
+            '</span></span></span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertFalse(result.success)
+        # 绝不能静默产出裸下标的非法 \text{}
+        self.assertNotIn("t_{", result.latex or "")
+
+    def test_mathbb_subscript_stays_math_mode(self) -> None:
+        # \mathbb 内的下标是合法 math,_ 不应被转义成 \_
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            '<span class="mord mathbb">'
+            '<span class="mord mathbb">R</span>'
+            '<span class="msupsub"><span class="vlist-t vlist-t2"><span class="vlist-r">'
+            '<span class="vlist" style="height:0.15em;"><span style="top:-2.55em;">'
+            '<span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mathnormal mtight">n</span></span></span></span></span></span></span>'
+            '</span></span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertIn("_{", result.latex)
+        self.assertNotIn(r"\_", result.latex)
 
     def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
         html = """
