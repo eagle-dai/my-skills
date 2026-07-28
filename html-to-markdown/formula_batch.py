@@ -19,7 +19,7 @@ from pipeline_utils import preflight, root_from_html, write_json
 
 SCHEMA_VERSION = "1.1"
 VALIDATION_SCHEMA_VERSION = "1.1"
-PARSER_VERSION = "katex-html-v2"
+PARSER_VERSION = "katex-html-v3"
 VALIDATOR_VERSION = "formula-batch-v2"
 
 SYMBOLS = {
@@ -158,8 +158,29 @@ def _content_spans(node: Tag) -> list[Tag]:
     ]
 
 
-def _map_text(text: str) -> str:
+_TEXT_MODE_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "{": r"\{",
+    "}": r"\}",
+    "_": r"\_",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "&": r"\&",
+    "^": r"\textasciicircum{}",
+    "~": r"\textasciitilde{}",
+}
+_TEXT_MODE_RE = re.compile("|".join(re.escape(c) for c in _TEXT_MODE_ESCAPES))
+
+
+def _escape_text_mode(text: str) -> str:
+    return _TEXT_MODE_RE.sub(lambda m: _TEXT_MODE_ESCAPES[m.group(0)], text)
+
+
+def _map_text(text: str, text_mode: bool = False) -> str:
     text = " ".join(text.split())
+    if text_mode:
+        return _escape_text_mode(text)
     if text in OPERATORS:
         return OPERATORS[text]
     return "".join(SYMBOLS.get(char, char) for char in text)
@@ -194,12 +215,12 @@ def _merge(results: Sequence[ParseResult]) -> ParseResult:
     return ParseResult(_join(result.latex or "" for result in results), True, unknown, warnings)
 
 
-def _parse_children(node: Tag, *, skip: set[int] | None = None) -> ParseResult:
+def _parse_children(node: Tag, *, skip: set[int] | None = None, text_mode: bool = False) -> ParseResult:
     skip = skip or set()
-    return _merge([_parse(child) for child in node.children if id(child) not in skip])
+    return _merge([_parse(child, text_mode=text_mode) for child in node.children if id(child) not in skip])
 
 
-def _parse_vlist(node: Tag, kind: str) -> ParseResult:
+def _parse_vlist(node: Tag, kind: str, *, text_mode: bool = False) -> ParseResult:
     vlist = node.select_one(".vlist")
     if not isinstance(vlist, Tag):
         return _unknown(node, f"{kind}-missing-vlist")
@@ -207,15 +228,15 @@ def _parse_vlist(node: Tag, kind: str) -> ParseResult:
     if kind == "fraction":
         if len(spans) < 2:
             return _unknown(node, "fraction-arity")
-        numerator = _parse_children(spans[0])
-        denominator = _parse_children(spans[-1])
+        numerator = _parse_children(spans[0], text_mode=text_mode)
+        denominator = _parse_children(spans[-1], text_mode=text_mode)
         merged = _merge((numerator, denominator))
         if not merged.success:
             return merged
         return ParseResult(f"\\frac{{{numerator.latex}}}{{{denominator.latex}}}", True)
     if len(spans) not in {1, 2}:
         return _unknown(node, "supsub-arity")
-    parsed = [_parse_children(span) for span in spans]
+    parsed = [_parse_children(span, text_mode=text_mode) for span in spans]
     merged = _merge(parsed)
     if not merged.success:
         return merged
@@ -228,9 +249,9 @@ def _parse_vlist(node: Tag, kind: str) -> ParseResult:
     return ParseResult(f"^{{{parsed[0].latex}}}_{{{parsed[1].latex}}}", True)
 
 
-def _parse(node: Any) -> ParseResult:
+def _parse(node: Any, *, text_mode: bool = False) -> ParseResult:
     if isinstance(node, NavigableString):
-        return ParseResult(_map_text(str(node)), True)
+        return ParseResult(_map_text(str(node), text_mode), True)
     if not isinstance(node, Tag):
         return ParseResult("", True)
     classes = _classes(node)
@@ -241,9 +262,9 @@ def _parse(node: Any) -> ParseResult:
     if classes & UNSUPPORTED_SEMANTIC:
         return _unknown(node, "unsupported-semantic")
     if "mfrac" in classes:
-        return _parse_vlist(node, "fraction")
+        return _parse_vlist(node, "fraction", text_mode=text_mode)
     if "msupsub" in classes:
-        return _parse_vlist(node, "supsub")
+        return _parse_vlist(node, "supsub", text_mode=text_mode)
     if "msqrt" in classes:
         content = [
             child for child in node.children
@@ -252,27 +273,27 @@ def _parse(node: Any) -> ParseResult:
                 and ("sqrt" in _classes(child) or child.name == "svg")
             )
         ]
-        parsed = _merge([_parse(child) for child in content])
+        parsed = _merge([_parse(child, text_mode=text_mode) for child in content])
         return ParseResult(f"\\sqrt{{{parsed.latex}}}", True) if parsed.success else parsed
     if "overline" in classes:
-        parsed = _parse_children(node)
+        parsed = _parse_children(node, text_mode=text_mode)
         return ParseResult(f"\\overline{{{parsed.latex}}}", True) if parsed.success else parsed
     if "mathbb" in classes or "mathcal" in classes or "text" in classes:
         command = "mathbb" if "mathbb" in classes else "mathcal" if "mathcal" in classes else "text"
-        parsed = _parse_children(node)
+        parsed = _parse_children(node, text_mode=True)
         return ParseResult(f"\\{command}{{{parsed.latex}}}", True) if parsed.success else parsed
     if "mspace" in classes:
         return ParseResult(" ", True)
     if classes & TOKEN_CLASSES:
-        return _parse_children(node)
+        return _parse_children(node, text_mode=text_mode)
     if classes & WRAPPER_CLASSES or not classes or all(
         name.startswith(("size", "reset-size")) for name in classes
     ):
-        return _parse_children(node)
+        return _parse_children(node, text_mode=text_mode)
     semantic = [name for name in classes if name.startswith("m") or name.startswith("vlist")]
     if semantic:
         return _unknown(node, "+".join(sorted(semantic)))
-    return _parse_children(node)
+    return _parse_children(node, text_mode=text_mode)
 
 
 def parse_katex(node: Tag) -> ParseResult:
