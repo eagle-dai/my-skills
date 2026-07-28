@@ -39,7 +39,7 @@ source_id | decision | emitted_count | reason | decoded_url | decoded_link_emitt
 - ledger 的 `source_id` 集合必须与源图片集合完全一致，重复 ID 的错误必须指出具体 ID；
 - 不允许“无法判断”直接转成删除。
 
-fast pipeline 的像素层 `@image_processing.py` 会在 `keep` 图上追加确定性处理记录，`ImageLedgerEntry` 相应扩展了可选字段（全默认，向后兼容）：`bbox`（去水印框）、`dewatermarked`、`validation_passed`、`orig_bytes`、`final_bytes`、`format_note`、`fallback_to_original`。这些字段只描述像素处理结果，不改变 `decision`/`emitted_count` 判定语义，`assert_valid_image_ledger()` 不对它们额外约束。原图副本落盘打包树**外**的 `<output>/<package>__images_orig/`，不进最终交付 ZIP。
+fast pipeline 的像素层 `@image_processing.py`（检测与填充见 `@watermark.py`）会在 `keep` 图上追加确定性处理记录，`ImageLedgerEntry` 相应扩展了可选字段（全默认，向后兼容）：`bbox`（去水印框）、`dewatermarked`、`validation_passed`、`orig_bytes`、`final_bytes`、`format_note`、`fallback_to_original`。去水印方法为 cv2.inpaint（`dewatermark_method=inpaint_telea`）；检测不写死颜色，按与局部背景的半透明偏离带识别。这些字段只描述像素处理结果，不改变 `decision`/`emitted_count` 判定语义，`assert_valid_image_ledger()` 不对它们额外约束。原图副本落盘打包树**外**的 `<output>/<package>__images_orig/`，不进最终交付 ZIP。
 
 ## 示例
 

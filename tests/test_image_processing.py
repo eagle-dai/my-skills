@@ -30,9 +30,11 @@ class ImageProcessingTests(unittest.TestCase):
     def test_corner_watermark_removed_and_validated(self) -> None:
         image = Image.new("RGB", (400, 300), (255, 255, 255))
         draw = ImageDraw.Draw(image)
-        # Content in the upper-left, a grey watermark blob in the bottom-right.
+        # Content in the upper-left; a brand watermark (saturated icon + grey
+        # lettering) in the bottom-right corner.
         draw.rectangle([20, 20, 180, 120], fill=(30, 90, 200))
-        draw.rectangle([320, 250, 380, 285], fill=(128, 128, 128))
+        draw.ellipse([322, 258, 344, 280], fill=(240, 130, 30))       # icon anchor
+        draw.rectangle([350, 262, 388, 278], fill=(140, 140, 140))    # lettering
 
         result = ip.process_image(_encode(image), "image/png", "wm")
 
@@ -59,14 +61,17 @@ class ImageProcessingTests(unittest.TestCase):
         )
 
     def test_watermark_overlapping_content_falls_back(self) -> None:
-        # A large grey block in the corner with dark content strokes running
-        # through it: the detected bbox spans real content, so erasing it would
-        # destroy the body. Validation must refuse and fall back to the original.
+        # A brand icon in the corner whose bbox also spans strong dark content
+        # strokes (a chart drawn behind the mark): erasing it would destroy the
+        # body. Detection fires on the icon, but validation must refuse the
+        # erase (strong-contrast content inside the bbox) and fall back.
         image = Image.new("RGB", (400, 300), (255, 255, 255))
         draw = ImageDraw.Draw(image)
-        draw.rectangle([300, 230, 390, 290], fill=(128, 128, 128))  # grey block
-        for y in range(238, 285, 8):
-            draw.line([305, y, 385, y], fill=(20, 20, 20), width=2)  # dark strokes
+        draw.ellipse([305, 255, 327, 277], fill=(240, 130, 30))      # icon anchor
+        # Strong dark content strokes filling the lettering side of the mark's
+        # row (kept clear of the icon so detection still anchors on it).
+        for y in range(250, 292, 5):
+            draw.line([333, y, 392, y], fill=(15, 15, 15), width=3)
 
         result = ip.process_image(_encode(image), "image/png", "overlap")
 
@@ -168,6 +173,82 @@ class ImageProcessingTests(unittest.TestCase):
         # The opaque content box must stay opaque.
         self.assertGreater(int(arr[120, 120, 3]), 240)
 
+    def test_validate_sees_content_outside_the_tight_bbox(self) -> None:
+        # validate_dewatermark measures content overlap in a ring padded OUTSIDE
+        # the bbox, not just the bbox interior. A watermark's bbox hugs the mark,
+        # so colliding content (a chart stroke) sits just beyond it. Prove the
+        # padded ring catches it: identical inputs, the only difference being a
+        # dark stroke just outside the bbox, must flip pass -> refuse.
+        import numpy as np
+
+        h, w = 300, 400
+        bbox = (300, 250, 324, 274)          # a small corner mark, 24x24
+        l, t, r, b = bbox
+        mask = np.zeros((h, w), dtype=bool)
+        mask[t:b, l:r] = True                # the whole tiny bbox is "the mark"
+
+        # Original: white page + coloured mark in the bbox. Processed: mark
+        # painted out to white. No content anywhere else -> validation passes.
+        base = np.full((h, w, 3), 255, dtype=np.uint8)
+        orig_clean = base.copy()
+        orig_clean[t:b, l:r] = (240, 130, 30)
+        proc = base.copy()                   # mark erased to white
+        ok, reason = ip.validate_dewatermark(
+            Image.fromarray(orig_clean), Image.fromarray(proc), bbox, mask
+        )
+        self.assertTrue(ok, reason)
+
+        # Same, but a dark content stroke sits just OUTSIDE the bbox (within the
+        # ring). It is outside the mask, strongly contrasts the white bg, and
+        # must trip the overlap guard -> refuse.
+        orig_overlap = orig_clean.copy()
+        orig_overlap[t:b, r + 4 : r + 28] = (15, 15, 15)   # stroke past the bbox
+        # The stroke is outside the mask, so a correct erase leaves it intact:
+        # it must be present in the processed image too (else check 1 fires).
+        proc_overlap = proc.copy()
+        proc_overlap[t:b, r + 4 : r + 28] = (15, 15, 15)
+        ok2, reason2 = ip.validate_dewatermark(
+            Image.fromarray(orig_overlap), Image.fromarray(proc_overlap), bbox, mask
+        )
+        self.assertFalse(ok2)
+        self.assertEqual(reason2, "watermark_overlaps_content")
+
+    def test_validate_residual_refuses_half_erased_mark(self) -> None:
+        # Check 3 (dewatermark_residual): if the "painted" image still carries
+        # the mark's high-frequency structure inside the mask, the fill did not
+        # cover it. A clean flat fill passes; leaving the strokes in place must
+        # refuse rather than ship a half-erased watermark.
+        import numpy as np
+
+        h, w = 300, 400
+        bbox = (180, 130, 240, 170)          # away from every image edge
+        l, t, r, b = bbox
+        mask = np.zeros((h, w), dtype=bool)
+
+        # Original: white page with sharp black strokes inside the bbox.
+        orig = np.full((h, w, 3), 255, dtype=np.uint8)
+        for x in range(l + 4, r - 4, 8):     # vertical strokes -> strong edges
+            orig[t + 4 : b - 4, x : x + 3] = 15
+            mask[t + 4 : b - 4, x : x + 3] = True
+
+        # A clean fill (mask region painted to flat white) must pass check 3.
+        proc_clean = orig.copy()
+        proc_clean[mask] = 255
+        ok, reason = ip.validate_dewatermark(
+            Image.fromarray(orig), Image.fromarray(proc_clean), bbox, mask
+        )
+        self.assertTrue(ok, reason)
+
+        # A no-op "fill" leaves the strokes intact: after-energy == before-energy,
+        # so the residual guard must fire. Only the mask pixels differ between the
+        # two processed images, so check 1 (identity outside the mask) still holds.
+        proc_residual = orig.copy()
+        ok2, reason2 = ip.validate_dewatermark(
+            Image.fromarray(orig), Image.fromarray(proc_residual), bbox, mask
+        )
+        self.assertFalse(ok2)
+        self.assertEqual(reason2, "dewatermark_residual")
+
     def test_transparent_watermark_dewatermarked_preserves_alpha(self) -> None:
         # Alpha must also survive a successful dewatermark: erase the corner
         # watermark but keep the transparency map intact.
@@ -176,7 +257,8 @@ class ImageProcessingTests(unittest.TestCase):
         image = Image.new("RGBA", (400, 300), (255, 255, 255, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle([20, 20, 180, 120], fill=(30, 90, 200, 255))
-        draw.rectangle([320, 250, 380, 285], fill=(128, 128, 128, 255))
+        draw.ellipse([322, 258, 344, 280], fill=(240, 130, 30, 255))     # icon anchor
+        draw.rectangle([350, 262, 388, 278], fill=(140, 140, 140, 255))  # lettering
         # Punch a transparent hole far from the watermark.
         draw.rectangle([10, 250, 60, 290], fill=(0, 0, 0, 0))
 
