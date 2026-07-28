@@ -213,6 +213,42 @@ class ImageProcessingTests(unittest.TestCase):
         self.assertFalse(ok2)
         self.assertEqual(reason2, "watermark_overlaps_content")
 
+    def test_validate_residual_refuses_half_erased_mark(self) -> None:
+        # Check 3 (dewatermark_residual): if the "painted" image still carries
+        # the mark's high-frequency structure inside the mask, the fill did not
+        # cover it. A clean flat fill passes; leaving the strokes in place must
+        # refuse rather than ship a half-erased watermark.
+        import numpy as np
+
+        h, w = 300, 400
+        bbox = (180, 130, 240, 170)          # away from every image edge
+        l, t, r, b = bbox
+        mask = np.zeros((h, w), dtype=bool)
+
+        # Original: white page with sharp black strokes inside the bbox.
+        orig = np.full((h, w, 3), 255, dtype=np.uint8)
+        for x in range(l + 4, r - 4, 8):     # vertical strokes -> strong edges
+            orig[t + 4 : b - 4, x : x + 3] = 15
+            mask[t + 4 : b - 4, x : x + 3] = True
+
+        # A clean fill (mask region painted to flat white) must pass check 3.
+        proc_clean = orig.copy()
+        proc_clean[mask] = 255
+        ok, reason = ip.validate_dewatermark(
+            Image.fromarray(orig), Image.fromarray(proc_clean), bbox, mask
+        )
+        self.assertTrue(ok, reason)
+
+        # A no-op "fill" leaves the strokes intact: after-energy == before-energy,
+        # so the residual guard must fire. Only the mask pixels differ between the
+        # two processed images, so check 1 (identity outside the mask) still holds.
+        proc_residual = orig.copy()
+        ok2, reason2 = ip.validate_dewatermark(
+            Image.fromarray(orig), Image.fromarray(proc_residual), bbox, mask
+        )
+        self.assertFalse(ok2)
+        self.assertEqual(reason2, "dewatermark_residual")
+
     def test_transparent_watermark_dewatermarked_preserves_alpha(self) -> None:
         # Alpha must also survive a successful dewatermark: erase the corner
         # watermark but keep the transparency map intact.

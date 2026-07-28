@@ -30,7 +30,8 @@ from PIL import Image
 _WM_SPEC = importlib.util.spec_from_file_location(
     "html_to_markdown_watermark", Path(__file__).resolve().parent / "watermark.py"
 )
-assert _WM_SPEC is not None and _WM_SPEC.loader is not None
+if _WM_SPEC is None or _WM_SPEC.loader is None:
+    raise ImportError("cannot load sibling watermark.py")
 watermark = importlib.util.module_from_spec(_WM_SPEC)
 # Register before exec so dataclass field-type resolution (which looks the
 # module up in sys.modules via __module__) works under importlib loading.

@@ -151,5 +151,42 @@ class WatermarkDetectionTests(unittest.TestCase):
         self.assertIsNone(result.image)
 
 
+class BboxCornerGuardrailTests(unittest.TestCase):
+    """The corner-hug guardrail keeps a mark flush against the image corner.
+
+    A real brand watermark sits slightly inset with clear background around it;
+    a bbox that touches the ROI's outer image corner within the margin is more
+    likely a cropped element or a page edge than a removable logo, so it is kept.
+    """
+
+    def test_bbox_hugging_outer_corner_is_rejected(self) -> None:
+        # Bottom-right ROI (its outer corner is the image's bottom-right). A bbox
+        # flush against that corner within the margin must be flagged.
+        roi_w, roi_h = 200, 100
+        width, height = 480, 320
+        x0, y0 = width - roi_w, height - roi_h    # on_right and on_bottom
+        margin_x, margin_y = 4, 2
+        flush = (roi_w - 20, roi_h - 12, roi_w, roi_h)   # right/bottom at the edge
+        self.assertTrue(
+            wm._bbox_hugs_outer_corner(
+                flush, roi_w, roi_h, x0, y0, width, height, margin_x, margin_y
+            )
+        )
+
+    def test_inset_bbox_is_not_rejected(self) -> None:
+        # The same ROI, but the bbox sits inset from the outer corner: a normal
+        # removable watermark with background around it. Must not be flagged.
+        roi_w, roi_h = 200, 100
+        width, height = 480, 320
+        x0, y0 = width - roi_w, height - roi_h
+        margin_x, margin_y = 4, 2
+        inset = (60, 30, 140, 70)                 # well clear of the edges
+        self.assertFalse(
+            wm._bbox_hugs_outer_corner(
+                inset, roi_w, roi_h, x0, y0, width, height, margin_x, margin_y
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
