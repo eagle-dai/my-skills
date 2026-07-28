@@ -89,6 +89,41 @@ def clean_inline(value: str) -> str:
     return re.sub(r"([(]) +", r"\1", value).strip()
 
 
+# CJK / fullwidth punctuation directly touching a ``$`` inline-math delimiter
+# stops GitHub from rendering the math (e.g. ``收益率$r_t$``). Inserting an ASCII
+# space on the touching side (``收益率 $r_t$``) fixes rendering without changing
+# the formula. The negative lookarounds leave ``$$`` display delimiters alone.
+# Registered in self-improvement.md「行内公式 $ 边界」; regression backed by
+# tests/test_acceptance_cjk_inline_math.py.
+_CJK_CLASS = "一-鿿　-〿＀-￯"
+_CJK_BEFORE_DOLLAR = re.compile(rf"([{_CJK_CLASS}])\$(?!\$)")
+_DOLLAR_BEFORE_CJK = re.compile(rf"(?<!\$)\$([{_CJK_CLASS}])")
+
+
+def _space_cjk_inline_math(line: str) -> str:
+    line = _CJK_BEFORE_DOLLAR.sub(r"\1 $", line)
+    return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
+
+
+def space_cjk_inline_math_outside_fences(markdown: str) -> str:
+    """Insert a space between CJK text and ``$`` inline math, skipping code fences.
+
+    Fenced code blocks are located with ``scan_fenced_blocks`` and left byte-for-byte
+    untouched, so ``$`` inside code is never rewritten. Only lines outside any fence
+    are adjusted.
+    """
+
+    fenced = markdown_fences.scan_fenced_blocks(markdown)
+    inside = set()
+    for block in fenced:
+        inside.update(range(block.start_line, block.end_line + 1))
+    lines = markdown.split("\n")
+    for index in range(len(lines)):
+        if (index + 1) not in inside:
+            lines[index] = _space_cjk_inline_math(lines[index])
+    return "\n".join(lines)
+
+
 class MarkdownConverter:
     def __init__(
         self,
@@ -121,6 +156,7 @@ class MarkdownConverter:
 
     def convert(self) -> ConversionResult:
         markdown = "\n\n".join(x for x in self.blocks(self.root) if x.strip()).strip() + "\n"
+        markdown = space_cjk_inline_math_outside_fences(markdown)
         markdown_fences.scan_fenced_blocks(markdown)
         image_disposition.assert_valid_image_ledger(
             self.ledger,
@@ -186,7 +222,13 @@ class MarkdownConverter:
                 values.append(self.image(images[0]))
             caption = node.find("figcaption", recursive=False)
             if isinstance(caption, Tag):
-                values.append(clean_inline(caption.get_text(" ", strip=True)))
+                # A confirmed <figcaption> needs strict handling: caption centering
+                # and ledger conservation (emitted_count == 1) are not implemented on
+                # the fast path. Emitting it as plain text silently dropped both, which
+                # is exactly the caption-centering regression this routing prevents.
+                # Mirrors the existing <table><caption> routing. Backed by
+                # tests/test_acceptance_caption_centering.py.
+                raise FastPathUnsupported("figcaption requires strict caption handling")
             return values
         if node.name == "img":
             return self.image(node)
