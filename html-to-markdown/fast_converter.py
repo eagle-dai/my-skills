@@ -14,6 +14,7 @@ from pipeline_utils import (
     image_disposition,
     image_processing,
     markdown_fences,
+    markdown_postprocess,
     max_backticks,
     preflight,
 )
@@ -121,6 +122,7 @@ class MarkdownConverter:
 
     def convert(self) -> ConversionResult:
         markdown = "\n\n".join(x for x in self.blocks(self.root) if x.strip()).strip() + "\n"
+        markdown = markdown_postprocess.postprocess_markdown(markdown)
         markdown_fences.scan_fenced_blocks(markdown)
         image_disposition.assert_valid_image_ledger(
             self.ledger,
@@ -186,7 +188,13 @@ class MarkdownConverter:
                 values.append(self.image(images[0]))
             caption = node.find("figcaption", recursive=False)
             if isinstance(caption, Tag):
-                values.append(clean_inline(caption.get_text(" ", strip=True)))
+                # A confirmed <figcaption> needs strict handling: caption centering
+                # and ledger conservation (emitted_count == 1) are not implemented on
+                # the fast path. Emitting it as plain text silently dropped both, which
+                # is exactly the caption-centering regression this routing prevents.
+                # Mirrors the existing <table><caption> routing. Backed by
+                # tests/test_acceptance_caption_centering.py.
+                raise FastPathUnsupported("figcaption requires strict caption handling")
             return values
         if node.name == "img":
             return self.image(node)
