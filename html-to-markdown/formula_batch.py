@@ -19,7 +19,7 @@ from pipeline_utils import preflight, root_from_html, write_json
 
 SCHEMA_VERSION = "1.1"
 VALIDATION_SCHEMA_VERSION = "1.1"
-PARSER_VERSION = "katex-html-v2"
+PARSER_VERSION = "katex-html-v3"
 VALIDATOR_VERSION = "formula-batch-v2"
 
 SYMBOLS = {
@@ -158,8 +158,35 @@ def _content_spans(node: Tag) -> list[Tag]:
     ]
 
 
-def _map_text(text: str) -> str:
+_TEXT_MODE_ESCAPES = {
+    "\\": r"\textbackslash{}",
+    "{": r"\{",
+    "}": r"\}",
+    "_": r"\_",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "&": r"\&",
+    "^": r"\textasciicircum{}",
+    "~": r"\textasciitilde{}",
+}
+_TEXT_MODE_RE = re.compile("|".join(re.escape(c) for c in _TEXT_MODE_ESCAPES))
+
+
+def _escape_text_mode(text: str) -> str:
+    return _TEXT_MODE_RE.sub(lambda m: _TEXT_MODE_ESCAPES[m.group(0)], text)
+
+
+# text mode 下非法的 math-only 结构记号:下标/上标结构 _{ ^{ 与 \frac \sqrt 等命令。
+# 命中 = \text{} 内含未包裹的数学子式(源 \text{$...$}),重建器不自动包 $ → fail-close。
+# 叶子转义后的 \_ / \textasciicircum{} 不含 _{ / ^{,不会误命中。
+_MATH_ONLY_IN_TEXT_RE = re.compile(r"[_^]\{|\\(?:frac|sqrt|overline|mathbb|mathcal)\b")
+
+
+def _map_text(text: str, text_mode: bool = False) -> str:
     text = " ".join(text.split())
+    if text_mode:
+        return _escape_text_mode(text)
     if text in OPERATORS:
         return OPERATORS[text]
     return "".join(SYMBOLS.get(char, char) for char in text)
@@ -194,12 +221,13 @@ def _merge(results: Sequence[ParseResult]) -> ParseResult:
     return ParseResult(_join(result.latex or "" for result in results), True, unknown, warnings)
 
 
-def _parse_children(node: Tag, *, skip: set[int] | None = None) -> ParseResult:
+def _parse_children(node: Tag, *, skip: set[int] | None = None, text_mode: bool = False) -> ParseResult:
     skip = skip or set()
-    return _merge([_parse(child) for child in node.children if id(child) not in skip])
+    return _merge([_parse(child, text_mode=text_mode) for child in node.children if id(child) not in skip])
 
 
 def _parse_vlist(node: Tag, kind: str) -> ParseResult:
+    # vlist(分式/上下标)内部恒为 math mode:下标 _ / 上标 ^ 是结构字符。
     vlist = node.select_one(".vlist")
     if not isinstance(vlist, Tag):
         return _unknown(node, f"{kind}-missing-vlist")
@@ -228,9 +256,9 @@ def _parse_vlist(node: Tag, kind: str) -> ParseResult:
     return ParseResult(f"^{{{parsed[0].latex}}}_{{{parsed[1].latex}}}", True)
 
 
-def _parse(node: Any) -> ParseResult:
+def _parse(node: Any, *, text_mode: bool = False) -> ParseResult:
     if isinstance(node, NavigableString):
-        return ParseResult(_map_text(str(node)), True)
+        return ParseResult(_map_text(str(node), text_mode), True)
     if not isinstance(node, Tag):
         return ParseResult("", True)
     classes = _classes(node)
@@ -240,6 +268,8 @@ def _parse(node: Any) -> ParseResult:
         return ParseResult("", True)
     if classes & UNSUPPORTED_SEMANTIC:
         return _unknown(node, "unsupported-semantic")
+    # 结构容器(分式/上下标/根号/上划线)内部一律是 math mode,即便嵌在 \text{} 内
+    # (对应 \text{$...$});其下标 _ / 上标 ^ 是结构字符,不得当字面字符转义。
     if "mfrac" in classes:
         return _parse_vlist(node, "fraction")
     if "msupsub" in classes:
@@ -257,22 +287,34 @@ def _parse(node: Any) -> ParseResult:
     if "overline" in classes:
         parsed = _parse_children(node)
         return ParseResult(f"\\overline{{{parsed.latex}}}", True) if parsed.success else parsed
-    if "mathbb" in classes or "mathcal" in classes or "text" in classes:
-        command = "mathbb" if "mathbb" in classes else "mathcal" if "mathcal" in classes else "text"
-        parsed = _parse_children(node)
+    if "mathbb" in classes or "mathcal" in classes:
+        # \mathbb / \mathcal 是 math-mode 命令,内部下标/上标合法,不进 text mode
+        command = "mathbb" if "mathbb" in classes else "mathcal"
+        parsed = _parse_children(node, text_mode=text_mode)
         return ParseResult(f"\\{command}{{{parsed.latex}}}", True) if parsed.success else parsed
+    if "text" in classes:
+        # \text{} 内为 text mode:叶子文本须转义特殊字符(_map_text 的 text_mode 分支)。
+        # 内嵌数学结构(msupsub/mfrac 等,源自 \text{$...$})的 _{ / ^{ / \frac 是
+        # math-only 记号,须 $...$ 包裹才在 text mode 合法;当前重建器不自动包裹,
+        # 故 fail-close 交 strict,绝不静默产出非法 \text{t_{n}}(缺陷 18 反向)。
+        parsed = _parse_children(node, text_mode=True)
+        if not parsed.success:
+            return parsed
+        if _MATH_ONLY_IN_TEXT_RE.search(parsed.latex or ""):
+            return _unknown(node, "math-structure-in-text-mode")
+        return ParseResult(f"\\text{{{parsed.latex}}}", True)
     if "mspace" in classes:
         return ParseResult(" ", True)
     if classes & TOKEN_CLASSES:
-        return _parse_children(node)
+        return _parse_children(node, text_mode=text_mode)
     if classes & WRAPPER_CLASSES or not classes or all(
         name.startswith(("size", "reset-size")) for name in classes
     ):
-        return _parse_children(node)
+        return _parse_children(node, text_mode=text_mode)
     semantic = [name for name in classes if name.startswith("m") or name.startswith("vlist")]
     if semantic:
         return _unknown(node, "+".join(sorted(semantic)))
-    return _parse_children(node)
+    return _parse_children(node, text_mode=text_mode)
 
 
 def parse_katex(node: Tag) -> ParseResult:
