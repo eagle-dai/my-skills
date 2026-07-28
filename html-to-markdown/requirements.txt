@@ -1,0 +1,10 @@
+# html-to-markdown pipeline runtime dependencies.
+# Install into an isolated env, e.g.:
+#   uv venv .venv && uv pip install --python .venv/bin/python -r requirements.txt
+# Versions are tested floors, not hard pins.
+
+beautifulsoup4>=4.13   # HTML parsing (preflight, fast_converter)
+lxml>=5.0              # bs4 tree builder used by the pipeline ("lxml" feature)
+numpy>=1.26            # image pixel-level dewatermark / verification
+pillow>=10.0           # image decode/encode/compress (image_processing)
+opencv-python-headless>=4.9  # cv2.inpaint dewatermark; without it, dewatermark is skipped (not solid-filled)

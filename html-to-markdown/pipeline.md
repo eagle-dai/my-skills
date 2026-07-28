@@ -2,6 +2,18 @@
 
 `pipeline.py` 将常见静态文章的转换规则落到确定性代码中。它不替代 strict 流程；遇到动态、虚拟化、无法无损表达的结构，或 fast path 尚未实现的完整性合同，输出 `strict_required`，由主 agent 进入 Playwright 与人工验收流程。
 
+## 依赖
+
+pipeline 依赖 `beautifulsoup4`、`lxml`、`numpy`、`pillow`、`opencv-python-headless`，清单见 @requirements.txt。首次使用先装（推荐隔离 env）：
+
+```bash
+uv venv .venv
+uv pip install --python .venv/bin/python -r html-to-markdown/requirements.txt
+.venv/bin/python html-to-markdown/pipeline.py input.html --mode auto --output dist
+```
+
+缺 `cv2`（opencv）时去水印会被跳过而非用纯色覆盖（见 @watermark.py）；其余依赖缺失 pipeline 直接报错。
+
 ## 使用
 
 默认运行：
