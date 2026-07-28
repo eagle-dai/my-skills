@@ -168,6 +168,33 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIn("githubMathUnescape(item.latex)", html)
         self.assertIn("katex.render(target", html)
 
+    def test_emitted_js_regex_matches_ascii_punctuation_exactly(self) -> None:
+        # 把 validation HTML 里实际发货的 JS 正则抠出来,验证它的字符覆盖 == 全 32 个
+        # ASCII 标点、0 个字母数字。防止"测试只跑 Python 镜像、JS 悄悄跑偏"(review 提)。
+        import re as _re
+
+        html = formula_batch.validation_document(
+            [{"source_id": "f1", "dom_hash": "h1", "latex": "x"}]
+        )
+        m = _re.search(r"s\.replace\(/(.+)/g, '\$1'\)", html)
+        self.assertIsNotNone(m, "githubMathUnescape 正则未在发货 HTML 中找到")
+        js_body = m.group(1)  # 形如 \\([!-\/:-@\[-`{-~}]) (贪婪匹配到 /g 前)
+        # JS→Python 正则:唯一差异是 JS 里的 \/ (转义斜杠),Python 不需要转义 /。
+        # JS 的 \\ (转义反斜杠) 在 Python 正则里含义相同,原样保留。
+        py_src = js_body.replace(r"\/", "/")
+        rx = _re.compile(py_src)
+        matched, unmatched = [], []
+        for code in range(33, 127):
+            ch = chr(code)
+            (matched if rx.sub(r"\1", "\\" + ch) == ch else unmatched).append(ch)
+        import string as _string
+
+        self.assertEqual("".join(matched), r"""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~""")
+        self.assertFalse(
+            [c for c in _string.ascii_letters + _string.digits if c in matched],
+            "命令反斜杠会被误吃:字母/数字被字符类命中",
+        )
+
     def test_github_unescape_catches_text_mode_underscore(self) -> None:
         # gap #18 产出的 \text{observed\_at} 在 GitHub 会变成裸 _,这正是要 fail 的输入。
         got = self._github_math_unescape(r"t_{obs} \leftarrow \text{observed\_at}")
