@@ -199,6 +199,19 @@ fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性�
 
 ## Phase 3：主 agent 独立验收
 
+### 机械后处理门（先跑，路径无关）
+
+strict 产出的 Markdown 和 fast path 一样，必须满足同一套 GitHub 渲染规则（CJK 紧贴 `$` 的行内公式加空格、命名性题注 `图/表 N-N　标题` 居中、相邻加粗拼出的 `****` 接缝清除）。这些规则由 `markdown_postprocess.py` 机械执行，不靠人工逐条记忆：
+
+```bash
+# 验收：不合规则退出 1（先看差在哪）
+python3 markdown_postprocess.py <交付>.md --check
+# 就地修：把规则应用到文件
+python3 markdown_postprocess.py <交付>.md
+```
+
+修改 Markdown 后必须重新打包 ZIP（见下「ZIP 验证」）。这道门只覆盖能可靠机械化的部分；表格与题注同包一个 `<div align="center">`、长说明段落不居中等需要结构判断的，仍由下面的结构守恒和人工复核负责。
+
 ### 结构守恒
 
 - 表格和代码块：canonical HTML 基线等于 Markdown 实际；少一个即阻断；

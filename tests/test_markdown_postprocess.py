@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -70,6 +71,69 @@ class QuadStarFix(unittest.TestCase):
     def test_quad_star_inside_fence_untouched(self) -> None:
         text = "说明\n\n```\na****b\n```\n"
         self.assertEqual(pp.postprocess_markdown(text), text)
+
+
+class CaptionCentering(unittest.TestCase):
+    def test_table_caption_centered(self) -> None:
+        # 全角空格锚点：表 N-N　标题 → 居中包裹。
+        self.assertEqual(
+            pp.postprocess_markdown("表 6-1　行情数据的证据边界\n"),
+            '<div align="center">表 6-1　行情数据的证据边界</div>\n',
+        )
+
+    def test_figure_caption_centered(self) -> None:
+        self.assertEqual(
+            pp.postprocess_markdown("图 6-2　市场数据地图实战路径\n"),
+            '<div align="center">图 6-2　市场数据地图实战路径</div>\n',
+        )
+
+    def test_prose_mention_not_centered(self) -> None:
+        # 反例：正文提及是半角空格 + 动词，无全角空格锚点，不该居中。
+        line = "图 6-1 把四类数据进入结论前的检查门画出来。\n"
+        self.assertEqual(pp.postprocess_markdown(line), line)
+
+    def test_already_centered_untouched(self) -> None:
+        # 反例：已经是 <div> 包裹的不重复包。
+        line = '<div align="center">表 6-1　标题</div>\n'
+        self.assertEqual(pp.postprocess_markdown(line), line)
+
+    def test_caption_like_line_inside_fence_untouched(self) -> None:
+        # 反例：代码块内长得像题注的行不动。
+        text = "说明\n\n```\n表 6-1　伪装成题注的代码行\n```\n"
+        self.assertEqual(pp.postprocess_markdown(text), text)
+
+
+class CommandLineInterface(unittest.TestCase):
+    """strict Phase 3 用 CLI 跑机械后处理门；三态锚定 exit code 契约。"""
+
+    def _write(self, text: str) -> Path:
+        directory = tempfile.mkdtemp()
+        path = Path(directory) / "delivery.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_check_compliant_exits_zero_and_leaves_file(self) -> None:
+        path = self._write('<div align="center">表 6-1　标题</div>\n')
+        original = path.read_text(encoding="utf-8")
+        self.assertEqual(pp.main([str(path), "--check"]), 0)
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_check_noncompliant_exits_one_and_leaves_file(self) -> None:
+        # 退化产物：CJK 紧贴 $ + 未居中题注。--check 不改文件，只报退出 1。
+        path = self._write("表 6-1　标题\n收益率$r_t$表示\n")
+        original = path.read_text(encoding="utf-8")
+        self.assertEqual(pp.main([str(path), "--check"]), 1)
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_fix_rewrites_file_in_place(self) -> None:
+        path = self._write("表 6-1　标题\n收益率$r_t$表示\n")
+        self.assertEqual(pp.main([str(path)]), 0)
+        fixed = path.read_text(encoding="utf-8")
+        self.assertIn('<div align="center">表 6-1　标题</div>', fixed)
+        self.assertIn("收益率 $r_t$ 表示", fixed)
+
+    def test_missing_file_exits_two(self) -> None:
+        self.assertEqual(pp.main(["/no/such/file.md", "--check"]), 2)
 
 
 if __name__ == "__main__":

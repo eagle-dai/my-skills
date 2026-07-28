@@ -7,13 +7,16 @@ silently dropped on one path while the other keeps working (the caption-centerin
 and CJK-formula regressions were exactly this: rules that lived on one path only).
 
 Everything here is deterministic and line-oriented, and every rule skips fenced
-code blocks so code content is never rewritten. Rules that need real structural
-understanding (table + caption sharing one ``<div align="center">``) stay in the
-prose rules (conversion-rules.md「块级居中与题注」) and human verification; this
-module only does the parts that can be applied reliably and mechanically.
+code blocks so code content is never rewritten. A caption line is recognised by
+its structural anchor (``图/表 N`` + a fullwidth space U+3000), not by guessing
+prose, so ordinary in-text mentions are never centered by mistake. Rules that
+still need genuine DOM structure (a table and its caption sharing one wrapper)
+remain in the prose rules (conversion-rules.md「块级居中与题注」) plus human
+verification; this module does the parts that apply reliably and mechanically.
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 from pathlib import Path
 import re
@@ -50,6 +53,21 @@ def _space_cjk_inline_math_line(line: str) -> str:
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 
 
+# --- 题注居中 -------------------------------------------------------------
+# SingleFile 题注行的稳定形态：``图/表 N`` 后紧跟一个全角空格 U+3000，再接标题，
+# 整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），不含
+# ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
+# 的机制信号，不是靠猜文本内容。命中后包 ``<div align="center">`` 让 GitHub 居中。
+# 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+_CAPTION_LINE = re.compile(r"^(图|表)\s*\d+(?:[-–]\d+)?　\S")
+
+
+def _center_caption_line(line: str) -> str:
+    if _CAPTION_LINE.match(line) and not line.lstrip().startswith("<div"):
+        return f'<div align="center">{line}</div>'
+    return line
+
+
 # --- **** concatenation fix -----------------------------------------------
 # Adjacent bold spans concatenate into four stars (**表 1-4****置信度**), which
 # GitHub renders wrong. Collapse runs of 3+ stars that sit between word chars
@@ -83,6 +101,61 @@ def postprocess_markdown(markdown: str) -> str:
             continue
         line = lines[index]
         line = _space_cjk_inline_math_line(line)
+        line = _center_caption_line(line)
         line = _fix_quad_star_line(line)
         lines[index] = line
     return "\n".join(lines)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Apply the path-independent Markdown rules (CJK↔inline-math spacing, "
+            "caption centering, **** seam fix) to a Markdown file. Strict-path "
+            "sub-agents run this so their output obeys the same GitHub-rendering "
+            "rules the fast path already enforces."
+        )
+    )
+    parser.add_argument("file", type=Path, help="Markdown file to process")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Do not modify the file. Exit 0 if it already satisfies the rules, "
+            "exit 1 if postprocessing would change it (Phase 3 acceptance gate)."
+        ),
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        original = args.file.read_text(encoding="utf-8")
+    except OSError as error:
+        print(f"cannot read {args.file}: {error}", file=sys.stderr)
+        return 2
+
+    processed = postprocess_markdown(original)
+
+    if args.check:
+        if processed == original:
+            return 0
+        print(
+            f"{args.file}: not compliant — postprocessing would change it "
+            "(uncentered captions or CJK-adjacent inline math). "
+            "Run without --check to fix.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if processed != original:
+        args.file.write_text(processed, encoding="utf-8")
+        print(f"{args.file}: postprocessed")
+    else:
+        print(f"{args.file}: already compliant")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
