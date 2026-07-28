@@ -81,6 +81,8 @@ window.runFormulaValidation()
 window.__FORMULA_VALIDATION__
 ```
 
+`runFormulaValidation()` 在 `katex.render` 前对每条 `item.latex` 施加 `githubMathUnescape`：GitHub GFM 会剥掉 `$…$` 内可转义标点前的反斜杠再喂 KaTeX，验证必须模拟这一步，否则 `\text{a\_b}` 本地过、GitHub 报错（缺陷 20；命令反斜杠 `\leftarrow` 等不受影响）。目标平台 = GitHub，本地 KaTeX 只是代理，必须先反转义对齐。
+
 调用 `runFormulaValidation()` 前必须注入固定版本 KaTeX。若 runtime 缺失，函数抛出错误。完成后报告必须包含：
 
 - 与代码一致的 `schema_version`、`parser_version` 和 `validator_version`；

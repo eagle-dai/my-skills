@@ -103,7 +103,9 @@ DOM 稳定顺序，标题取 DOM 原文。
 
 ## text-mode 特殊字符转义（缺陷 18，结构规则，非正则）
 
-判定项：KaTeX HTML → LaTeX 重建时，`\text{}` / `\mathbb{}` / `\mathcal{}` 内的 LaTeX 特殊字符（`_ % $ # & ^ { } \ ~`）必须转义，否则 KaTeX（=GitHub 渲染器）报 `'_' allowed only in math mode` 等，公式在 GitHub 渲染失败。`formula_batch.py::_escape_text_mode` + text-mode 下的 `_map_text` 分支判定；`_parse` 用 `text_mode` 标志区分 math/text 上下文。回归 `test_escape_text_mode_covers_all_special_chars`、`test_text_node_escapes_underscore`、`test_math_mode_subscript_underscore_unchanged`。
+判定项：KaTeX HTML → LaTeX 重建时，`\text{}` / `\mathbb{}` / `\mathcal{}` 内的 LaTeX 特殊字符（`_ % $ # & ^ { } \ ~`）必须转义，否则独立 KaTeX 报 `'_' allowed only in math mode` 等。`formula_batch.py::_escape_text_mode` + text-mode 下的 `_map_text` 分支判定；`_parse` 用 `text_mode` 标志区分 math/text 上下文。回归 `test_escape_text_mode_covers_all_special_chars`、`test_text_node_escapes_underscore`、`test_math_mode_subscript_underscore_unchanged`。
+
+> ⚠️ 更正（gap #20）：转义成 `\_` 只对**独立 KaTeX / VS Code** 有效，**对 GitHub 无效**——GitHub GFM 会把 `$…$` 内可转义标点前的反斜杠剥掉再喂 KaTeX，`\text{observed\_at}` 在 GitHub 上还原成裸 `\text{observed_at}` 仍报错。即：含标点标识符（`observed_at` 等）放进 `\text{}` 在 GitHub 上本质不安全。正确产出应改行内代码 `` `observed_at` ``（源语义本就是代码标识符，见 gap #16 backlog），或由验证 fail-close 交 strict/人工。见下方 gap #20。
 
 | 输入结构 | 期望输出 | 理由 |
 |------|------|------|
@@ -132,6 +134,20 @@ DOM 稳定顺序，标题取 DOM 原文。
 | 干净图无 logo | 不检测 | 反例：两遍都找不到合格 anchor |
 
 橙 vs 红判据：OpenCV hue，橙 icon hue~8-15，纯红框/字 hue~0；测试用 hue∈[6,22] 排除红，不能用裸 R/G/B box（会把红误判成橙）。
+
+## 公式验证模拟 GitHub `$…$` 反转义（缺陷 20，验证器缺陷）
+
+判定项：GitHub GFM 在 `$…$` 内会剥掉 CommonMark 可转义标点（`` !"#$%&'()*+,-./:;<=>?@[\]^_`{|}~ ``）前的反斜杠，再把结果交给 KaTeX。所以 gap #18 转义出的 `\text{observed\_at}` 在 GitHub 上被还原成裸 `\text{observed_at}` → `'_' allowed only in math mode`。旧验证器把**源 md 里的转义形式**（带 `\_`）直接喂本地 KaTeX（通过），与 GitHub 实际渲染不一致 → 漏检。修法：`formula_batch.py::validation_document()` 注入 `githubMathUnescape`（JS 正则 `/\\([!-\/:-@\[-`{-~}])/g` → `$1`），`runFormulaValidation` 在 `katex.render` 前对 `item.latex` 施加，用反转义后的 `target` 验证。命令反斜杠（`\` 后接字母，如 `\leftarrow` `\frac`）不匹配、不受影响。`VALIDATOR_VERSION` bump v2→v3（验证语义变更，旧报告失效）。回归 `test_validation_document_simulates_github_unescape`、`test_github_unescape_catches_text_mode_underscore`、`test_github_unescape_preserves_command_backslash`。这是 fail-close 检测护栏，不自动改写产出（改写需判断"代码标识符 vs 数学文本"意图，属 gap #16 backlog）。
+
+实证（本次用 `gh api /markdown` + Playwright/KaTeX 0.16.11）：`$a \_ b$` → GitHub 喂 `a _ b`；`\, \# \% \& \{ \}` 同样被吃；`\leftarrow` 保留。
+
+| 输入（源 md 里的 latex） | 期望（验证器判定） | 理由 |
+|------|------|------|
+| `\text{observed\_at}` | fail（反转义成 `\text{observed_at}` → KaTeX 报错） | 正例：模拟 GitHub 后裸 `_` 暴露，护栏抓到，交 strict/人工 |
+| `t_{obs}`（math mode 下标） | pass | 正例：`_{` 是合法结构，无标点转义，反转义不动它 |
+| `\leftarrow` `\frac{a}{b}` `A \leq B` | 命令反斜杠原样保留 | 反例：`\` 后是字母，不在标点类，不该被吃（否则毁合法公式） |
+| `a\_b\%c\#d\&e\,f` | 反转义为 `a_b%c#d&e,f` | 反例：不能只处理 `_`，GitHub 吃全 ASCII 标点集 |
+| 只喂原始 `\_` 给本地 KaTeX 判"通过" | 禁止（旧行为） | 反例：本地 KaTeX 与 GitHub 不一致 → 假阴性漏检，正是本缺陷根因 |
 
 ---
 
