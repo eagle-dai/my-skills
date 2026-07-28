@@ -101,6 +101,17 @@ DOM 稳定顺序，标题取 DOM 原文。
 | 段落内未知 inline 元素 `<custom-widget>` | strict_required | 反例：未知语义仍保守 fail-close，穿透只放行无语义 wrapper |
 | 带 `data-slate-type` 的 div | 走对应 slate 分支，不进 wrapper 穿透 | 反例：`not slate` 守卫，有语义的 div 不当透明 wrapper |
 
+## text-mode 特殊字符转义（缺陷 18，结构规则，非正则）
+
+判定项：KaTeX HTML → LaTeX 重建时，`\text{}` / `\mathbb{}` / `\mathcal{}` 内的 LaTeX 特殊字符（`_ % $ # & ^ { } \ ~`）必须转义，否则 KaTeX（=GitHub 渲染器）报 `'_' allowed only in math mode` 等，公式在 GitHub 渲染失败。`formula_batch.py::_escape_text_mode` + text-mode 下的 `_map_text` 分支判定；`_parse` 用 `text_mode` 标志区分 math/text 上下文。回归 `test_escape_text_mode_covers_all_special_chars`、`test_text_node_escapes_underscore`、`test_math_mode_subscript_underscore_unchanged`。
+
+| 输入结构 | 期望输出 | 理由 |
+|------|------|------|
+| `<span class="mord text">` 内文本 `observed_at` | `\text{observed\_at}`（KaTeX 通过） | 正例：text mode 下 `_` 是字面字符，必须转义 |
+| 重建输出 `\text{observed_at}`（裸下划线） | 禁止 | 反例：GitHub 报 `'_' allowed only in math mode` |
+| math-mode 下标 `t_{obs}`（`msupsub`/`vlist` 结构） | 保留 `t_{obs}`，`_` 不转义 | 反例：math mode 的 `_` 是合法结构字符，转成 `\_` 会破坏下标 |
+| text mode 内的 `≤` 等 Unicode 符号 | 不映射为 `\leq`（原样或按需处理） | 反例：`\leq` 在 text mode 非法，text_mode 分支关闭 SYMBOLS/OPERATORS 映射 |
+
 ---
 
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

@@ -36,6 +36,28 @@ KaTeX 的 HTML 渲染层 CSS 类由 KaTeX 定义，与宿主网站无关，但�
 | 空格 | `.mspace` | 空格 |
 | 渲染辅助 | `.strut` / `.vlist-s` / `.frac-line` / `.rule` | 忽略 |
 
+## text-mode 转义（`\text` / `\mathbb` / `\mathcal` 内）
+
+进入 `.mord.text` / `.mord.mathbb` / `.mord.mathcal` 后，内部是 **text mode**，处理规则与 math mode 不同：
+
+1. **LaTeX 特殊字符必须转义**，否则 KaTeX（=GitHub 渲染器）报错，公式渲染失败：
+
+   | 字符 | 转义 | | 字符 | 转义 |
+   |---|---|---|---|---|
+   | `_` | `\_` | | `^` | `\textasciicircum{}` |
+   | `%` | `\%` | | `~` | `\textasciitilde{}` |
+   | `$` | `\$` | | `{` | `\{` |
+   | `#` | `\#` | | `}` | `\}` |
+   | `&` | `\&` | | `\` | `\textbackslash{}` |
+
+   实测：`_ % $ # & ^ { } \` 在 text mode 下裸写会让 KaTeX 抛错（如 `'_' allowed only in math mode`）；`~` 不抛错但被当排版命令，一并转义。用单趟替换（`\` 优先），避免二次转义已插入的反斜杠。
+
+2. **关闭 Unicode → LaTeX 符号映射和 OPERATORS 映射**：`≤→\leq`、`max→\max` 等命令在 text mode 非法。text mode 内一般是标识符名（`observed_at`），原样保留字符即可。
+
+3. **标志只向下传递，不回流**：解析器用 `text_mode` 参数从进入 text/mathbb/mathcal 节点起置真，向子节点递归传递；math-mode 的下标 `_`、上标 `^`（由 `.msupsub`/`.vlist` 结构生成）绝不能被当字面字符转义。
+
+参考实现：`formula_batch.py::_escape_text_mode` + `_parse(..., text_mode=...)`。回归见 html-to-markdown `self-improvement.md` 缺陷 18。
+
 ## vlist 方向规则（核心）
 
 **方向错误导致上下标反转，是最严重的语义错误。**
