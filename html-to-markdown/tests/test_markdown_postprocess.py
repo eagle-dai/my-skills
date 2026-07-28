@@ -134,6 +134,65 @@ def test_no_split_missing_text():
     assert split(r"a \leftarrow b") is None
 
 
+# --- 规则4：作者开头/结尾寒暄去除（保守，只删纯寒暄整段） -----------------
+
+def test_opener_greeting_removed():
+    md = "你好，我是袁从德。\n\n第 5 讲我们划清了安全边界。"
+    assert pp(md) == "第 5 讲我们划清了安全边界。"
+
+
+def test_closer_greeting_removed():
+    md = "- 实践题：写一张来源卡。\n\n期待你的分享，我们下节课再见！"
+    assert pp(md) == "- 实践题：写一张来源卡。"
+
+
+def test_opener_and_closer_both_removed():
+    md = (
+        "你好，我是袁从德，欢迎来到《数据课》。\n\n"
+        "正文第一段。\n\n"
+        "正文最后一段。\n\n"
+        "如果今天的课程让你有所收获，欢迎转发给有需要的朋友，我们下节课再见！"
+    )
+    assert pp(md) == "正文第一段。\n\n正文最后一段。"
+
+
+def test_daijia_hao_opener():
+    md = "大家好！\n\n今天讲第一课。"
+    assert pp(md) == "今天讲第一课。"
+
+
+# 反例：不该误删
+
+def test_body_first_paragraph_not_removed():
+    # 正文首段不是自我介绍，保留
+    md = "第 5 讲我们划清了边界。\n\n第二段。"
+    assert pp(md) == md
+
+
+def test_thinking_questions_not_removed():
+    # 结尾是思考题（列表），不是寒暄，必须保留
+    md = "正文。\n\n- 概念题：为什么不能拼成同一时点事实？"
+    assert pp(md) == md
+
+
+def test_ni_hao_midbody_not_removed():
+    # 正文里偶然出现「你好」不在段首自我介绍句式，保留
+    md = "第一段。\n\n用户输入「你好」时系统应回显。"
+    assert pp(md) == md
+
+
+def test_closer_with_substance_kept_heading():
+    # 末段是 heading 结构（有信息量），即使含「再见」字样也不删
+    md = "正文。\n\n## 我们下次再见时要掌握的技能"
+    assert pp(md) == md
+
+
+def test_body_mention_of_share_not_removed():
+    # 正文讨论「转发」机制，非求转发寒暄段首，保留（段首非道别）
+    md = "正文。\n\n转发功能的实现见第 3 节。"
+    assert pp(md) == md
+
+
 if __name__ == "__main__":
     import sys
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

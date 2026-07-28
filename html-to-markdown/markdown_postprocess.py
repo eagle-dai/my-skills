@@ -106,6 +106,68 @@ def _promote_standalone_formula_line(line: str) -> str:
     return f"$${inner}$$"
 
 
+# --- 作者开头/结尾寒暄去除（课程/专栏类文章） -----------------------------
+# 课程、专栏、公众号类文章常有作者的开场白和结束语，属社交套话非正文（规则见
+# conversion-rules.md「作者寒暄去除」，最初由 commit 1e6ab40 引入，后在文档
+# 精简中丢失且从未落代码——这就是它一直没生效的原因）。
+#
+# 判定是**文档级**（只看首个/末个内容段），不是逐行；且**保守 fail-safe**：只删
+# 「整段就是纯寒暄」的首段与末段。原规则提到的「寒暄与实质内容混在同一句、只删引子」
+# 属语义判断，机械化误删正文风险高，交给 conversion-rules.md + 人工，这里不做。
+# 锚点锚定段首/整段（非子串），普通正文里偶然出现的「你好」不会被误删。
+_GREETING_OPENERS = (
+    re.compile(r"^你好[，,、]?\s*我是"),          # 你好，我是XXX。
+    re.compile(r"^(?:大家好|同学们好|各位好)[，,。！!]?"),
+    re.compile(r"^欢迎(?:来到|回到|收听|阅读|学习)"),  # 欢迎来到《…》
+    re.compile(r"^你好[！!。]?$"),                # 单独一句「你好！」
+)
+# 结尾寒暄：预告 / 求转发点赞 / 道别。命中任一即判该段为纯结束语。
+_GREETING_CLOSERS = (
+    re.compile(r"下节?课(?:再)?见"),
+    re.compile(r"我们(?:下次|下节课|下一讲)(?:再)?见"),
+    re.compile(r"期待你的(?:分享|留言|反馈)"),
+    re.compile(r"欢迎(?:你)?(?:转发|分享)给"),
+    re.compile(r"(?:点赞|在看|收藏|转发)(?:[，,、]|在看|收藏|转发|一下)"),
+    re.compile(r"敬请期待"),
+)
+
+
+def _is_pure_opener(segment: str) -> bool:
+    """整段就是开场白（去掉可选 ** 加粗后按锚点匹配段首）。"""
+    text = segment.strip().strip("*").strip()
+    return any(p.match(text) for p in _GREETING_OPENERS)
+
+
+def _is_pure_closer(segment: str) -> bool:
+    """整段就是结束语：命中结尾锚点，且不含正文结构标记（#/列表/表格/代码/公式）。"""
+    text = segment.strip()
+    if not text or text.startswith(("#", "-", "*", ">", "|", "```", "$$")):
+        return False
+    return any(p.search(text) for p in _GREETING_CLOSERS)
+
+
+def _strip_author_greetings(markdown: str) -> str:
+    """删除课程/专栏文章的首段开场白与末段结束语（保守，只删纯寒暄整段）。"""
+    blocks = markdown.split("\n\n")
+
+    # 首段：跳过空块，命中开场白锚点则删整段
+    i = 0
+    while i < len(blocks) and not blocks[i].strip():
+        i += 1
+    if i < len(blocks) and _is_pure_opener(blocks[i]):
+        blocks[i] = None  # type: ignore[assignment]
+
+    # 末段：跳过空块，命中结束语锚点则删整段
+    j = len(blocks) - 1
+    while j >= 0 and not (blocks[j] or "").strip():
+        j -= 1
+    if j >= 0 and blocks[j] is not None and _is_pure_closer(blocks[j]):
+        blocks[j] = None  # type: ignore[assignment]
+
+    kept = [b for b in blocks if b is not None]
+    return "\n\n".join(kept).strip("\n") + ("\n" if markdown.endswith("\n") else "")
+
+
 def _fenced_line_numbers(markdown: str) -> set[int]:
     inside: set[int] = set()
     for block in markdown_fences.scan_fenced_blocks(markdown):
@@ -120,6 +182,7 @@ def postprocess_markdown(markdown: str) -> str:
     but they are applied per non-fenced line in one pass.
     """
 
+    markdown = _strip_author_greetings(markdown)
     inside = _fenced_line_numbers(markdown)
     lines = markdown.split("\n")
     for index in range(len(lines)):

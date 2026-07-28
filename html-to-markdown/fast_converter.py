@@ -63,6 +63,24 @@ class ConversionResult:
     warnings: tuple[str, ...]
 
 
+def _strip_blank_edges(text: str) -> str:
+    """Drop leading and trailing blank lines from a code block.
+
+    Slate lays out each source line as its own ``<div>``; an empty leading or
+    trailing row (rendered as a blank or whitespace-only ``<div>``) is layout
+    padding, not code, and would otherwise surface as blank lines just inside
+    the fence (```` ```text ```` followed by empty lines). Interior blank lines
+    are code and are preserved.
+    """
+
+    lines = text.split("\n")
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
 def _join_inline(parts: Iterable[str]) -> str:
     """Concatenate inline fragments, separating adjacent inline formulas.
 
@@ -307,7 +325,7 @@ class MarkdownConverter:
         self.counts.codeblocks += 1
         code_node = node.find("code") if node.name == "pre" else None
         target = code_node if isinstance(code_node, Tag) else node
-        code = self._code_text(target).replace("\xa0", " ").rstrip("\n")
+        code = _strip_blank_edges(self._code_text(target).replace("\xa0", " "))
         language = "text"
         for name in list(target.get("class", ())) + list(node.get("class", ())):
             match = re.search(r"(?:language|lang)-([A-Za-z0-9_+-]+)", name)
