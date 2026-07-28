@@ -58,8 +58,10 @@ def _space_cjk_inline_math_line(line: str) -> str:
 # 整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），不含
 # ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
 # 的机制信号，不是靠猜文本内容。命中后包 ``<div align="center">`` 让 GitHub 居中。
+# 编号 ``X-Y`` 的 X/Y 可为数字或字母（``图 D-1``、``表 A-2``、``图 6-1``），与
+# conversion-rules.md「编号识别」一致——只用数字会漏掉附录常见的字母编号题注。
 # 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
-_CAPTION_LINE = re.compile(r"^(图|表)\s*\d+(?:[-–]\d+)?　\S")
+_CAPTION_LINE = re.compile(r"^(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
 
 
 def _center_caption_line(line: str) -> str:

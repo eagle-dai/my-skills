@@ -102,6 +102,23 @@ class CaptionCentering(unittest.TestCase):
         text = "说明\n\n```\n表 6-1　伪装成题注的代码行\n```\n"
         self.assertEqual(pp.postprocess_markdown(text), text)
 
+    def test_letter_numbered_caption_centered(self) -> None:
+        # 附录常见字母编号题注（图 D-1、表 A-2），conversion-rules.md「编号识别」
+        # 明确 X-Y 的 X 可为字母。纯 \d+ 会漏掉，这里钉住字母编号也居中。
+        self.assertEqual(
+            pp.postprocess_markdown("图 D-1　附录数据地图\n"),
+            '<div align="center">图 D-1　附录数据地图</div>\n',
+        )
+        self.assertEqual(
+            pp.postprocess_markdown("表 A-2　字母编号来源卡\n"),
+            '<div align="center">表 A-2　字母编号来源卡</div>\n',
+        )
+
+    def test_letter_numbered_prose_mention_not_centered(self) -> None:
+        # 反例：字母编号的正文提及仍是半角空格 + 讲解长句，无全角空格锚点，不居中。
+        line = "图 D-1 给出本讲核心知识地图。它不是要求每次都画图，而是提醒复核者。\n"
+        self.assertEqual(pp.postprocess_markdown(line), line)
+
 
 class CommandLineInterface(unittest.TestCase):
     """strict Phase 3 用 CLI 跑机械后处理门；三态锚定 exit code 契约。"""
