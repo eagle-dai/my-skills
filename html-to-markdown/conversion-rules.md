@@ -165,7 +165,7 @@ fast pipeline 已把这套合同下沉为确定性像素层 `@image_processing.p
 
 ### 图片压缩
 
-压缩时同步扩展名和 Markdown 引用，宽图等比缩放，图表/代码截图保守处理，并抽检文字可读性。去水印和压缩均默认执行，固定顺序为“原图备份 → 去水印 → 压缩”。fast pipeline 的确定性参数：宽 > 1600px 等比缩放（不放大），webp 质量 82；webp 编码反而变大时保留原格式（`format_note=webp_larger_kept_original`）；svg/gif 不转码、按原样透传。原图副本存于 `files/<package>/images_orig/`。
+压缩时同步扩展名和 Markdown 引用，宽图等比缩放，图表/代码截图保守处理，并抽检文字可读性。去水印和压缩均默认执行，固定顺序为“原图备份 → 去水印 → 压缩”。fast pipeline 的确定性参数：宽 > 1600px 等比缩放（不放大），webp 质量 82；webp 编码反而变大时保留原格式（`format_note=webp_larger_kept_original`）；svg/gif 不转码、按原样透传。原图副本存于打包树**外**的 `<output>/<package>__images_orig/`（离线审计用，**不进最终交付 ZIP**）。
 
 ## 代码块语言与 fence
 

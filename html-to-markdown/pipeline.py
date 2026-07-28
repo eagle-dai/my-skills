@@ -524,7 +524,7 @@ def run_pipeline(
         result.assets,
         article_dir / "files" / package,
         f"files/{package}",
-        orig_dir=article_dir / "files" / package / "images_orig",
+        orig_dir=output / f"{package}__images_orig",
         enable_image_processing=not allow_unprocessed_images,
     )
     conversion_started = time.perf_counter()

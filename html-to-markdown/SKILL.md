@@ -162,7 +162,7 @@ Prompt 必须包含已确认参数，不得让 sub agent 重新猜 selector 或�
 
 fast pipeline 的 `@image_processing.py` 对每张 data-URI 图默认确定性执行去站点水印和完整图片合同（fail-closed，永不抛、永不丢图）；只有用户明确要求保留原始水印（`--allow-unprocessed-images`）时才跳过：
 
-1. 保存原图副本（写入 `files/<package>/images_orig/`，进 ZIP 可离线核对）；
+1. 保存原图副本（写入打包树外的 `<output>/<package>__images_orig/`，仅供离线审计，**不进交付 ZIP**）；
 2. 尝试安全去站点水印（仅四角 ROI、右下优先；不写死颜色——按“与局部背景的半透明偏离带”识别，任意色的站点叠加都命中，见 @watermark.py）；
 3. 记录处理文件和 bbox（写入 `report.json.image_ledger`）；
 4. 使用原图而不是缩略图检测；

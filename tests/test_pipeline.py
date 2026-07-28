@@ -502,6 +502,36 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "strict_required")
             self.assertEqual(outcome.report["recommended_mode"], "strict")
 
+    def test_image_originals_backed_up_outside_delivery_zip(self) -> None:
+        """Original-image backups are auditable but must not ship in the ZIP.
+
+        The untouched originals are kept for offline audit of the dewatermark
+        step, but they double the package size and are not part of the
+        deliverable. They belong in a sibling ``<package>__images_orig``
+        directory outside the packaged tree, never inside ``files/`` or the ZIP.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            outcome = pipeline.run_pipeline(FIXTURE_PATH, output, mode="fast")
+
+            assert outcome.zip_path is not None
+            with zipfile.ZipFile(outcome.zip_path) as archive:
+                names = archive.namelist()
+            self.assertFalse(
+                any("images_orig" in name for name in names),
+                f"images_orig leaked into the ZIP: {names}",
+            )
+            # The backup still exists, outside the packaged article directory.
+            backups = list(output.glob("*__images_orig/*"))
+            self.assertTrue(backups, "original-image backup was not written")
+            # Nothing named images_orig may live inside the packaged tree.
+            self.assertEqual(
+                list((output / "pipeline-article").glob("**/images_orig")),
+                [],
+                "images_orig must not live inside the packaged tree",
+            )
+
     def test_zip_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             first_outcome = pipeline.run_pipeline(
