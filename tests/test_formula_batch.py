@@ -145,6 +145,72 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIn("_{", result.latex)
         self.assertNotIn(r"\_", result.latex)
 
+    # --- gap #20: 验证要模拟 GitHub 的 $…$ 内反转义 -----------------------------
+    # GitHub GFM 会把 $…$ 内 CommonMark 可转义标点前的反斜杠剥掉再喂 KaTeX,所以
+    # gap #18 的 \text{a\_b} 转义在 GitHub 上被还原成裸 _ → 渲染报错。validation
+    # 文档必须先做同样的反转义再验,才能 fail-close 抓到这类公式。
+    # 与 validation_document 内 JS 正则同义的 Python 复刻,供测试直接判定。
+    import re as _re
+
+    _GITHUB_MATH_UNESCAPE = _re.compile(r"\\([!-/:-@\[-`{-~])")
+
+    @classmethod
+    def _github_math_unescape(cls, s: str) -> str:
+        return cls._GITHUB_MATH_UNESCAPE.sub(r"\1", s)
+
+    def test_validation_document_simulates_github_unescape(self) -> None:
+        # validation HTML 必须注入 githubMathUnescape,并在 render 前用它变换 latex。
+        html = formula_batch.validation_document(
+            [{"source_id": "f1", "dom_hash": "h1", "latex": r"\text{a\_b}"}]
+        )
+        self.assertIn("githubMathUnescape", html)
+        # render 的是反转义后的 target,不是原始 item.latex
+        self.assertIn("githubMathUnescape(item.latex)", html)
+        self.assertIn("katex.render(target", html)
+
+    def test_emitted_js_regex_matches_ascii_punctuation_exactly(self) -> None:
+        # 把 validation HTML 里实际发货的 JS 正则抠出来,验证它的字符覆盖 == 全 32 个
+        # ASCII 标点、0 个字母数字。防止"测试只跑 Python 镜像、JS 悄悄跑偏"(review 提)。
+        import re as _re
+
+        html = formula_batch.validation_document(
+            [{"source_id": "f1", "dom_hash": "h1", "latex": "x"}]
+        )
+        m = _re.search(r"s\.replace\(/(.+)/g, '\$1'\)", html)
+        self.assertIsNotNone(m, "githubMathUnescape 正则未在发货 HTML 中找到")
+        js_body = m.group(1)  # 形如 \\([!-\/:-@\[-`{-~}]) (贪婪匹配到 /g 前)
+        # JS→Python 正则:唯一差异是 JS 里的 \/ (转义斜杠),Python 不需要转义 /。
+        # JS 的 \\ (转义反斜杠) 在 Python 正则里含义相同,原样保留。
+        py_src = js_body.replace(r"\/", "/")
+        rx = _re.compile(py_src)
+        matched, unmatched = [], []
+        for code in range(33, 127):
+            ch = chr(code)
+            (matched if rx.sub(r"\1", "\\" + ch) == ch else unmatched).append(ch)
+        import string as _string
+
+        self.assertEqual("".join(matched), r"""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~""")
+        self.assertFalse(
+            [c for c in _string.ascii_letters + _string.digits if c in matched],
+            "命令反斜杠会被误吃:字母/数字被字符类命中",
+        )
+
+    def test_github_unescape_catches_text_mode_underscore(self) -> None:
+        # gap #18 产出的 \text{observed\_at} 在 GitHub 会变成裸 _,这正是要 fail 的输入。
+        got = self._github_math_unescape(r"t_{obs} \leftarrow \text{observed\_at}")
+        self.assertEqual(got, r"t_{obs} \leftarrow \text{observed_at}")
+        # 反转义后含 text mode 裸下划线 → 交给 KaTeX 必失败(此处只断言字符串形态,
+        # 端到端 KaTeX 失败由浏览器验证阶段保证)。
+        self.assertIn(r"\text{observed_at}", got)
+        self.assertNotIn(r"\_", got)
+
+    def test_github_unescape_preserves_command_backslash(self) -> None:
+        # 命令反斜杠(\ 后接字母)不得被吃,否则会破坏合法公式。
+        for latex in (r"\leftarrow", r"\frac{a}{b}", r"\text{x}", r"A \leq B"):
+            self.assertEqual(self._github_math_unescape(latex), latex)
+        # 但转义标点仍被还原(全 ASCII 标点集,不止 _)。
+        self.assertEqual(self._github_math_unescape(r"a\_b\%c\#d\&e\,f"), r"a_b%c#d&e,f")
+
     def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
         html = """
         <article>

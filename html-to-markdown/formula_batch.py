@@ -20,7 +20,7 @@ from pipeline_utils import preflight, root_from_html, write_json
 SCHEMA_VERSION = "1.1"
 VALIDATION_SCHEMA_VERSION = "1.1"
 PARSER_VERSION = "katex-html-v3"
-VALIDATOR_VERSION = "formula-batch-v2"
+VALIDATOR_VERSION = "formula-batch-v3"
 
 SYMBOLS = {
     "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
@@ -358,6 +358,15 @@ window.__FORMULA_VALIDATION__ = {{
   failures: [],
   items: []
 }};
+// GitHub GFM strips a backslash before any CommonMark-escapable ASCII
+// punctuation inside $...$, then hands the result to KaTeX. Validation must
+// mimic this, else \\text{{a\\_b}} passes local KaTeX but errors on GitHub
+// ('_' allowed only in math mode). The class covers all ASCII punctuation
+// (33-47/58-64/91-96/123-126); a command backslash (backslash + letter, e.g.
+// leftarrow, frac) does not match and is preserved.
+window.githubMathUnescape = function (s) {{
+  return s.replace(/\\\\([!-\\/:-@\\[-`{{-~}}])/g, '$1');
+}};
 window.runFormulaValidation = function () {{
   if (!window.katex || typeof window.katex.render !== 'function') {{
     throw new Error('KaTeX runtime is missing');
@@ -375,8 +384,10 @@ window.runFormulaValidation = function () {{
       dom_hash: node.dataset.domHash,
       latex: node.dataset.latex
     }};
+    // 用 GitHub 实际会喂给 KaTeX 的形式(反转义后)验证,而非源 md 里的转义形式。
+    const target = window.githubMathUnescape(item.latex);
     try {{
-      window.katex.render(item.latex, node, {{throwOnError: true}});
+      window.katex.render(target, node, {{throwOnError: true}});
       result.items.push(item);
     }} catch (error) {{
       result.failures.push({{...item, error: String(error)}});
