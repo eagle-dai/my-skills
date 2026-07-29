@@ -9,9 +9,9 @@ import unittest
 from unittest import mock
 
 
-ROOT = Path(__file__).resolve().parents[1]
-PIPELINE_PATH = ROOT / "html-to-markdown" / "pipeline.py"
-FORMULA_PATH = ROOT / "html-to-markdown" / "formula_batch.py"
+SKILL = Path(__file__).resolve().parent.parent
+PIPELINE_PATH = SKILL / "pipeline.py"
+FORMULA_PATH = SKILL / "formula_batch.py"
 PIPELINE_SPEC = importlib.util.spec_from_file_location(
     "html_to_markdown_pipeline_resume_tests", PIPELINE_PATH
 )

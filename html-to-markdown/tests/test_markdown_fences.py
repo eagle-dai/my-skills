@@ -6,8 +6,8 @@ import sys
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "markdown_fences.py"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "markdown_fences.py"
 SPEC = importlib.util.spec_from_file_location("markdown_fences", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 markdown_fences = importlib.util.module_from_spec(SPEC)

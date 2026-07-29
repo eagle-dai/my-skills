@@ -8,9 +8,9 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "preflight.py"
-FIXTURE_PATH = ROOT / "tests" / "fixtures" / "preflight_article.html"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "preflight.py"
+FIXTURE_PATH = SKILL / "tests" / "fixtures" / "preflight_article.html"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_preflight", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 preflight = importlib.util.module_from_spec(SPEC)

@@ -6,8 +6,8 @@ import sys
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "contracts.py"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "contracts.py"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_contracts", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 contracts = importlib.util.module_from_spec(SPEC)
@@ -149,7 +149,7 @@ class CommentLedgerContractTests(unittest.TestCase):
 
 class DocumentationContractTests(unittest.TestCase):
     def test_skill_references_executable_contracts(self) -> None:
-        skill = (ROOT / "html-to-markdown" / "SKILL.md").read_text(encoding="utf-8")
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
 
         self.assertIn("@contracts.py", skill)
         self.assertIn("classify_complexity()", skill)
@@ -157,7 +157,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertNotIn("无公式、正文图片、代码块、表格和评论", skill)
 
     def test_blocking_rules_use_ledger_conservation(self) -> None:
-        rules = (ROOT / "html-to-markdown" / "blocking-rules.md").read_text(
+        rules = (SKILL / "blocking-rules.md").read_text(
             encoding="utf-8"
         )
 
@@ -167,10 +167,10 @@ class DocumentationContractTests(unittest.TestCase):
 
     def test_execution_docs_use_contract_selectors_and_identity_ledger(self) -> None:
         for relative in (
-            "html-to-markdown/conversion-rules.md",
-            "html-to-markdown/checklist.md",
+            "conversion-rules.md",
+            "checklist.md",
         ):
-            text = (ROOT / relative).read_text(encoding="utf-8")
+            text = (SKILL / relative).read_text(encoding="utf-8")
             with self.subTest(relative=relative):
                 self.assertIn("@contracts.py", text)
                 self.assertIn("canonicalize_candidates()", text)

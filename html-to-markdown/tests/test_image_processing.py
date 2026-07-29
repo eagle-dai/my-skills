@@ -9,8 +9,8 @@ import unittest
 from PIL import Image, ImageDraw
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "image_processing.py"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "image_processing.py"
 SPEC = importlib.util.spec_from_file_location(
     "html_to_markdown_image_processing_tests", MODULE_PATH
 )

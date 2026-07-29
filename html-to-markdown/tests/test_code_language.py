@@ -6,8 +6,8 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_DIR = ROOT / "html-to-markdown"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_DIR = SKILL
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
