@@ -26,19 +26,27 @@ def test_bare_figure_caption_centered_regression():
 
 
 def test_bold_table_caption_centered():
-    # bug: **表 …** 被 ** 前缀挡住不居中
+    # bug1: **表 …** 被 ** 前缀挡住不居中；bug2: div 内 ** 在 GitHub 不渲染加粗
+    # → 转 <strong> 后再包 div，星号不再泄漏成字面量
     out = pp("**表 6-5　market_tickers 来源卡示例**")
-    assert out == '<div align="center">**表 6-5　market_tickers 来源卡示例**</div>'
+    assert out == '<div align="center"><strong>表 6-5　market_tickers 来源卡示例</strong></div>'
 
 
 def test_bold_figure_caption_centered():
     out = pp("**图 6-2　市场数据地图**")
-    assert out == '<div align="center">**图 6-2　市场数据地图**</div>'
+    assert out == '<div align="center"><strong>图 6-2　市场数据地图</strong></div>'
 
 
 def test_letter_numbered_bold_caption_centered():
     out = pp("**表 A-2　附录来源卡**")
-    assert out == '<div align="center">**表 A-2　附录来源卡**</div>'
+    assert out == '<div align="center"><strong>表 A-2　附录来源卡</strong></div>'
+
+
+def test_bold_caption_no_literal_stars_in_div():
+    # 关键回归：GitHub same-line 裸 HTML 块内 ** 不解析，输出 div 内绝不能留 **
+    out = pp("**表 8-8　展示、指标与回测的放行矩阵**")
+    assert "**" not in out
+    assert "<strong>" in out and out.startswith('<div align="center">')
 
 
 def test_prose_mention_not_centered():
@@ -49,6 +57,19 @@ def test_prose_mention_not_centered():
 
 def test_already_centered_not_double_wrapped():
     line = '<div align="center">图 6-1　数据证据门</div>'
+    assert pp(line) == line
+
+
+def test_prewrapped_div_bold_repaired():
+    # 交付 md 的实际坏形态：已包 div 但内部还是 **，GitHub 不渲染加粗 → 修成 <strong>
+    line = '<div align="center">**表 8-8　展示、指标与回测的放行矩阵**</div>'
+    out = pp(line)
+    assert out == '<div align="center"><strong>表 8-8　展示、指标与回测的放行矩阵</strong></div>'
+    assert "**" not in out
+
+
+def test_already_strong_div_idempotent():
+    line = '<div align="center"><strong>表 8-8　放行矩阵</strong></div>'
     assert pp(line) == line
 
 
@@ -259,6 +280,41 @@ def test_all_greeting_document_not_emptied_to_none():
     # 极端：整篇就一行 opener，删后不崩（返回空串可接受，但不能抛异常）
     out = pp("大家好！")
     assert out == "" or out == "大家好！"
+
+
+# --- 规则5：残留公式占位符护栏（fail-closed） ---------------------------
+
+def test_find_residual_formula_placeholder():
+    hits = mpp.find_residual_formula_placeholders("正文\n{{FORMULA:formula-0001}}\n更多")
+    assert hits == [(2, "{{FORMULA:formula-0001}}")]
+
+
+def test_placeholder_inside_fence_ignored():
+    md = "```\n{{FORMULA:formula-0001}}\n```"
+    assert mpp.find_residual_formula_placeholders(md) == []
+
+
+def test_residual_formula_placeholder_blocks_check(tmp_path=None):
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".md")
+    try:
+        os.write(fd, "第一段\n\n{{FORMULA:formula-0001}}\n".encode("utf-8"))
+        os.close(fd)
+        assert mpp.main([path, "--check"]) == 1        # check 阻断
+        assert mpp.main([path]) == 1                   # apply 也阻断，不静默写盘
+    finally:
+        os.unlink(path)
+
+
+def test_clean_file_passes_check(tmp_path=None):
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".md")
+    try:
+        os.write(fd, "$$\nfield\\_coverage = \\frac{a}{b}\n$$\n".encode("utf-8"))
+        os.close(fd)
+        assert mpp.main([path, "--check"]) == 0
+    finally:
+        os.unlink(path)
 
 
 if __name__ == "__main__":
