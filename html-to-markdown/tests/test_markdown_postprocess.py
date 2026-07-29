@@ -134,6 +134,21 @@ def test_no_split_missing_text():
     assert split(r"a \leftarrow b") is None
 
 
+def test_no_split_chained_leftarrow():
+    # 链式映射：行尾 $ 锚导致 ident 吃进中间 `} \leftarrow \text{`，必须拒绝
+    assert split(r"y \leftarrow \text{count} \leftarrow \text{n}") is None
+
+
+def test_no_split_backtick_in_ident():
+    # 反引号会提前闭合 emit 的行内代码 span，拒绝
+    assert split(r"x \leftarrow \text{a`b}") is None
+
+
+def test_no_split_stray_brace_in_ident():
+    # ident 含杂散 } → 非单个纯标识符，拒绝
+    assert split(r"x \leftarrow \text{a}b}") is None
+
+
 # --- 规则4：作者开头/结尾寒暄去除（保守，只删纯寒暄整段） -----------------
 
 def test_opener_greeting_removed():
@@ -191,6 +206,59 @@ def test_body_mention_of_share_not_removed():
     # 正文讨论「转发」机制，非求转发寒暄段首，保留（段首非道别）
     md = "正文。\n\n转发功能的实现见第 3 节。"
     assert pp(md) == md
+
+
+# 误删反例（review 实证的坑：closer 子串命中 / opener 反问 / 单换行分段）
+
+def test_body_jingqing_qidai_not_removed():
+    # 正文以「敬请期待」收尾，但不是纯客套道别行 → 保留
+    md = "新版本正在开发中，敬请期待。"
+    assert pp(md) == md
+
+
+def test_body_xiajieke_mention_not_removed():
+    # 正文句中含「下节课见」但不以强道别收尾 → 保留
+    md = "我们会在下节课见到更多例子来说明这一点。"
+    assert pp(md) == md
+
+
+def test_body_dianzan_zhuanfa_not_removed():
+    # 末段讲「点赞/收藏/转发」是互动机制，非求转发寒暄 → 保留
+    md = "正文。\n\n点赞、收藏、转发是三个核心互动。"
+    assert pp(md) == md
+
+
+def test_rhetorical_opener_not_removed():
+    # 反问句「你好我是谁？」以问号收尾，不是自我介绍 → 保留
+    md = "你好我是谁？这是本讲要回答的问题。\n\n正文。"
+    assert pp(md) == md
+
+
+def test_single_newline_opener_keeps_body():
+    # opener 与正文用单 \n 同块：只删 opener 行，保留正文
+    md = "你好，我是张三。\n正文内容在这里。"
+    assert pp(md) == "正文内容在这里。"
+
+
+def test_single_newline_closer_keeps_body():
+    # closer 与正文用单 \n 同块：只删 closer 行，保留正文
+    md = "正文内容在这里。\n我们下节课再见！"
+    assert pp(md) == "正文内容在这里。"
+
+
+def test_crlf_normalized_and_greeting_removed():
+    # CRLF 文档：归一化后寒暄删除，正文不残留 \r
+    md = "你好，我是李四。\r\n\r\n第一段正文。\r\n\r\n第二段正文。"
+    out = pp(md)
+    assert "\r" not in out
+    assert "李四" not in out
+    assert out == "第一段正文。\n\n第二段正文。"
+
+
+def test_all_greeting_document_not_emptied_to_none():
+    # 极端：整篇就一行 opener，删后不崩（返回空串可接受，但不能抛异常）
+    out = pp("大家好！")
+    assert out == "" or out == "大家好！"
 
 
 if __name__ == "__main__":

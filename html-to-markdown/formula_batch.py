@@ -155,6 +155,14 @@ def split_text_mapping_formula(latex: str) -> tuple[str, str] | None:
         return None
     if _MATH_ONLY_IN_TEXT_RE.search(ident_raw):
         return None  # 右侧不是纯标识符，别拆
+    # 链式映射 `y \leftarrow \text{a} \leftarrow \text{b}`：因行尾 $ 锚，非贪婪的
+    # ident 仍会吃进中间的 `} \leftarrow \text{`。含这些定界/连接记号说明右侧不是
+    # 单个纯标识符，别拆（否则 emit 出 `` `a} \leftarrow \text{b` `` 这种坏行内代码）。
+    if any(tok in ident_raw for tok in ("{", "}", "\\text", "\\leftarrow", "\\left")):
+        return None
+    # 反引号会提前闭合 emit 出的行内代码 span（`` `a`b` ``），别拆。
+    if "`" in ident_raw:
+        return None
     ident = ident_raw.replace(r"\_", "_")
     if _MATH_ONLY_IN_TEXT_RE.search(var) is None and "\\text" in var:
         return None  # 左侧还有 \text，结构复杂，别拆
