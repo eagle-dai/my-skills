@@ -53,47 +53,149 @@ def _space_cjk_inline_math_line(line: str) -> str:
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 
 
-# --- 题注居中 -------------------------------------------------------------
-# SingleFile 题注行的稳定形态：``图/表 N`` 后紧跟一个全角空格 U+3000，再接标题，
-# 整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），不含
-# ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
+# --- 题注居中 + 统一加粗（多行块级形态）-----------------------------------
+# SingleFile 题注行的稳定形态：``图/表/代码/清单/公式 N`` 后紧跟一个全角空格 U+3000，
+# 再接标题，整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），
+# 不含 ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
 # 的机制信号，不是靠猜文本内容。命中后包 ``<div align="center">`` 让 GitHub 居中。
 # 编号 ``X-Y`` 的 X/Y 可为数字或字母（``图 D-1``、``表 A-2``、``图 6-1``），与
 # conversion-rules.md「编号识别」一致——只用数字会漏掉附录常见的字母编号题注。
-# 可选的 ``**`` 前缀：SingleFile 的图题是独立 ``<div>``（无加粗）转出裸 ``图 N…``，
-# 表题却是 ``data-slate-type=bold`` span 转出 ``**表 N…**``。此前正则只认行首
-# ``图/表``，加粗表题被前缀 ``**`` 挡住不居中（bug）。这里容忍可选 ``**`` 前缀。
-# 命中加粗表题时**不能**把 ``**…**`` 原样塞进单行 ``<div>``：GitHub 对 same-line 裸
-# HTML 块内的 ``**bold**`` 不做 Markdown 解析，星号会当字面量显示、加粗丢失（bug）。
-# 因此命中后把 ``**X**`` 转成 ``<strong>X</strong>`` 再包 ``<div>``——纯 HTML 加粗
-# 在裸 HTML 块内正常渲染，仍保持单行、与本模块 line-oriented 架构一致。裸图题无 ``**``
-# 时形态不变。规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
 #
-# 已被包进 ``<div align="center">…</div>`` 但内部仍是 ``**…**`` 的行（旧版本产出、
-# 或手工收尾遗留）同样要修：抽出 div 内文，把 ``**X**`` 转 ``<strong>X</strong>`` 后重包。
-# 幂等——内部已是 ``<strong>`` 或无加粗时原样返回。
-_CAPTION_LINE = re.compile(r"^(?:\*\*)?(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
-# 题注整行至多一处加粗（整段标题被一对 ``**`` 包住）；把它转成 <strong>。
-_CAPTION_BOLD = re.compile(r"^\*\*(.+)\*\*$")
-# 已居中的题注 div，抓内部内容做加粗修复。
-_CENTERED_DIV = re.compile(r'^<div align="center">(.*)</div>\s*$')
+# **关键词集**：``图 表 代码 清单 公式``。keyword 与 conversion-rules.md
+# 「块级居中与题注」的命名性短标题列表保持一致。
+#
+# **统一加粗（用户决策）**：所有题注一律加粗，不管源 HTML 有无加粗 mark。SingleFile 里
+# 表题/代码题是 ``data-slate-type=bold`` span（转出带 ``**``），图题却是纯 ``<div>``
+# （转出裸文本无 ``**``）。为视觉一致，命中后强制整题注加粗。
+#
+# **多行块级形态（间距修复）**：题注输出为**上下空行分隔的多行 ``<div>`` 块**：
+#
+#     <div align="center">
+#
+#     **图 8-1　标题**
+#
+#     </div>
+#
+# 而不是单行 ``<div align="center"><strong>…</strong></div>``。原因是 GitHub 渲染
+# 差异（``gh api /markdown`` 实测）：单行裸 div 内直接是 inline 内容，GitHub 输出的
+# ``<div>`` **不含内部 ``<p>``**、CSS 无段落 margin，紧跟的正文 ``<p>`` 贴上来——题注和
+# 后段视觉粘连（用户反馈的问题）。多行块内空行让 GitHub 当 Markdown 段落解析成
+# ``<div><p>…</p></div>``，``<p>`` 自带上下 margin，与前后正文自然分开。
+#
+# **内部用 Markdown 标记不用 HTML tag**：多行块内 GitHub **会**解析 Markdown，所以内部用
+# ``**…**``（加粗）和 `` `code` ``（行内代码），不再需要单行块被迫用的 ``<strong>``/
+# ``<code>``。整题注用**一对** ``**`` 包住（行内代码 `` ` `` 留在内），混排代码题注
+# （``代码 8-2　业务源码：`normalize_candle` …``）不再有 ``**`` 被 `` ` `` 断开的坏接缝。
+#
+# 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+#
+# 归一化吃三种输入形态，全部收敛到上面的多行块：
+#   1. 裸题注行 ``图 N　…`` / ``**表 N　…**`` / 混排 ``**代码 N　`c` …**``；
+#   2. 上一轮单行 div ``<div align="center"><strong>…</strong></div>``（含 ``<code>``）；
+#   3. 已是多行块（幂等，不动）。
+_CAPTION_KEYWORDS = r"图|表|代码|清单|公式"
+_CAPTION_NUM = r"[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?"
+# 裸题注单行：可选 ``**`` 前缀 + 关键词 + 编号 + U+3000 + 标题。
+_CAPTION_LINE = re.compile(rf"^(?:\*\*)?(?:{_CAPTION_KEYWORDS})\s*{_CAPTION_NUM}　\S")
+# 单行 div（上一轮产物）：``<div align="center">…</div>``。
+_ONE_LINE_DIV = re.compile(r'^<div align="center">(.*)</div>$')
+# div 内文里提取纯题注文本用：<strong>/<code>/**/` 都要还原。
+_STRONG_TAG = re.compile(r"</?strong>")
+_CODE_OPEN = re.compile(r"<code(?:\s[^>]*)?>")
+_CODE_CLOSE = re.compile(r"</code>")
+# 行内代码占位保护：先把 `` `x` `` 和 ``<code>x</code>`` 抽出，避免包 ``**`` 时误伤。
+_INLINE_CODE = re.compile(r"`([^`]+)`")
 
 
-def _bold_to_strong(text: str) -> str:
-    """题注整行至多一处成对 ``**``；命中转 <strong>，否则原样（幂等）。"""
-    return _CAPTION_BOLD.sub(r"<strong>\1</strong>", text)
+def _caption_to_bold_markdown(raw: str) -> str:
+    """把任意形态的题注内容归一成单行 ``**…**``（行内代码用 `` `…` `` 留在内）。
+
+    去掉外层/内部的 ``**`` 与 ``<strong>``，把 ``<code>x</code>`` 还原成 `` `x` ``，
+    再整题注包**一对** ``**``。幂等——已是干净 ``**…**`` 时结果不变。
+    """
+    text = raw.strip()
+    # <strong> → 去标签（整题注会重新统一加粗）；<code>x</code> → `x`
+    text = _STRONG_TAG.sub("", text)
+    text = _CODE_OPEN.sub("`", text)
+    text = _CODE_CLOSE.sub("`", text)
+    # 去掉所有裸 ``**``（旧混排会有多对），最后统一包一层。
+    text = text.replace("**", "")
+    return f"**{text}**"
 
 
-def _center_caption_line(line: str) -> str:
-    centered = _CENTERED_DIV.match(line.strip())
-    if centered:
-        # 已包 div：只修内部残留的 ** 加粗（GitHub same-line 裸 HTML 内不解析）。
-        inner = centered.group(1)
-        fixed = _bold_to_strong(inner)
-        return line if fixed == inner else f'<div align="center">{fixed}</div>'
-    if _CAPTION_LINE.match(line):
-        return f'<div align="center">{_bold_to_strong(line)}</div>'
-    return line
+def _centered_block(caption_bold_md: str) -> str:
+    """把 ``**…**`` 题注包成多行居中块（含前后空行，GitHub 解析出 <p> 有 margin）。"""
+    return f'<div align="center">\n\n{caption_bold_md}\n\n</div>'
+
+
+def _normalize_captions(markdown: str, fenced: set[int]) -> str:
+    """块级扫描：把三种题注形态统一成多行居中块。fenced 行内的按行号跳过。
+
+    逐行游标：命中单行 div / 已有多行块 / 裸题注行时，消费对应行数并 emit 多行块。
+    """
+    lines = markdown.split("\n")
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        lineno = i + 1  # 1-based，与 fenced 对齐
+        line = lines[i]
+        if lineno in fenced:
+            out.append(line)
+            i += 1
+            continue
+        stripped = line.strip()
+
+        # 形态 3：多行 ``<div align="center">`` 块。向后找配对 ``</div>``，抓非空内容行。
+        if stripped == '<div align="center">':
+            j = i + 1
+            content_lines = []
+            while j < n and lines[j].strip() != "</div>":
+                if lines[j].strip():
+                    content_lines.append(lines[j].strip())
+                j += 1
+            if j < n:
+                # 找到配对 </div>：这是一个完整居中块。
+                if len(content_lines) == 1 and _is_caption_text(content_lines[0]):
+                    # 纯题注块 → 归一（幂等）。
+                    out.append(_centered_block(_caption_to_bold_markdown(content_lines[0])))
+                else:
+                    # 含表格/图片/多行内容的居中块（如 conversion-rules 的「标题+表格
+                    # 同包」）→ **整块原样保留**，绝不逐行走进去，否则内部的 ``**表 X**``
+                    # 会被下面「形态 1 裸题注行」二次包成嵌套 div，把标题从表格里拆出来
+                    # （回归 bug，PR #55 review 抓到）。
+                    out.extend(lines[i : j + 1])
+                i = j + 1
+                continue
+            # 没找到配对 </div>（不完整/误报）：只吐起始行，逐行继续。
+            out.append(line)
+            i += 1
+            continue
+
+        # 形态 2：单行 div
+        m = _ONE_LINE_DIV.match(stripped)
+        if m and _is_caption_text(m.group(1)):
+            out.append(_centered_block(_caption_to_bold_markdown(m.group(1))))
+            i += 1
+            continue
+
+        # 形态 1：裸题注行
+        if _CAPTION_LINE.match(line):
+            out.append(_centered_block(_caption_to_bold_markdown(line)))
+            i += 1
+            continue
+
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
+def _is_caption_text(inner: str) -> bool:
+    """div 内文/内容行是否是命名性题注（去掉 **、<strong>、`code` 后看开头锚点）。"""
+    t = inner.strip()
+    t = _STRONG_TAG.sub("", t)
+    t = t.replace("**", "").lstrip()
+    return bool(_CAPTION_LINE.match(t))
 
 
 # --- **** concatenation fix -----------------------------------------------
@@ -247,11 +349,14 @@ def postprocess_markdown(markdown: str) -> str:
             continue
         line = lines[index]
         line = _space_cjk_inline_math_line(line)
-        line = _center_caption_line(line)
         line = _fix_quad_star_line(line)
         line = _promote_standalone_formula_line(line)
         lines[index] = line
-    return "\n".join(lines)
+    markdown = "\n".join(lines)
+    # 题注归一是**块级**（多行居中块，改变行数），放最后单独跑；重算 fenced 行号，
+    # 因为上面的逐行规则不加减行、行号不变，但题注块级前必须用当前文本的 fenced。
+    inside = _fenced_line_numbers(markdown)
+    return _normalize_captions(markdown, inside)
 
 
 def _parser() -> argparse.ArgumentParser:
