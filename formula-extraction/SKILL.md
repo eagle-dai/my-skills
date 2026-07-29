@@ -1,6 +1,6 @@
 ---
 name: formula-extraction
-description: Extract and validate LaTeX from KaTeX, MathJax, or MathML formula DOM. Use for either one formula node or a page-level formula batch. Single-node work returns structured success/failure; the html-to-markdown batch integration deduplicates, caches, and validates supported sources. Do not claim a source type is supported by the deterministic fast path unless formula_batch.py implements it.
+description: Extract and validate LaTeX from KaTeX, MathJax, or MathML formula DOM. Use for either one formula node or a page-level formula batch. Single-node work returns structured success/failure; batch work deduplicates by DOM hash, caches parses, and gates on browser validation. Fail closed on unknown or unsupported sources — never claim a source type is supported unless a deterministic parser actually implements it.
 ---
 
 # 公式提取（Formula Extraction）

@@ -26,7 +26,9 @@
 ├── formula-extraction/
 │   ├── SKILL.md
 │   ├── katex-html-parser.md
-│   └── self-improvement.md
+│   ├── self-improvement.md
+│   ├── acceptance/CASES.md   # 用户友好的公式效果清单
+│   └── tests/                # 规则表兜底测试（按路径引用 html-to-markdown 实现）
 ├── html-to-markdown/
 │   ├── SKILL.md
 │   ├── pipeline.py
@@ -56,7 +58,9 @@
 
 - `SKILL.md`：单节点与页面级 batch 的职责边界、提取优先级、语义退化检查和 fail-closed 行为。
 - `katex-html-parser.md`：没有原始 LaTeX/MathML 时，从 KaTeX HTML 结构重建公式的参考规则。
-- `self-improvement.md`：公式命令边界、Unicode 转换和平台差异等回归用例。
+- `self-improvement.md`：公式命令边界、Unicode 转换和平台差异等回归用例；未落地的行标 `[未实现-仅设计]`。
+- `acceptance/CASES.md`：用户看得懂的公式效果清单，每条指向钉住它的测试。
+- `tests/`：规则表里**有实现**的每条都在此配 import-and-call 测试。实现住在 `html-to-markdown`（skill 名带连字符不可直接 import），故按路径加载；由 `run_tests.py` 逐个子进程运行。
 
 ### `html-to-markdown/`
 
@@ -125,7 +129,7 @@ python run_tests.py
 - **测跨 skill 的一致性，或仓库整体** → 放根 `tests/`。判据：没有任何单个 skill 能"认领"这个测试。例如 `test_documentation_alignment`（同时读多个 skill 的 `.md`，校验规则彼此不矛盾）、`test_first_batch_rules`（跨 `formula-extraction` 与 `html-to-markdown` 的批处理规则）。
 - **A 依赖 B 时的测试跟着依赖方 A 放**，不放 B。B 的测试只对 B 自己的对外契约负责；A 自己写测试验证"我调用 B 的方式没问题"。只有"专门测 A↔B 协作、且不专属任一方"的测试才上升到根 `tests/`。
 
-纯文档 skill（如 `formula-extraction`，只有 `.md`、无可执行代码）没有可断言的模块，因此不带 `tests/` 目录；它对外承诺的规则由根 `tests/` 里的跨 skill 一致性测试覆盖。
+规则本体在别的 skill 里实现的 skill（如 `formula-extraction`，规则实现住在 `html-to-markdown`），仍在自己的 `<skill>/tests/` 里配测试：按路径加载兄弟 skill 的实现模块（`importlib.util.spec_from_file_location`），逐条钉住本 skill 规则表里**有实现**的规则。这样规则被改坏时，是**本 skill 名下**的测试变红，进化闭环闭合。跨 skill 的一致性另由根 `tests/` 覆盖，两者不重复。
 
 GitHub Actions 在 pull request、推送到 `main` 和手动触发时，使用 Python 3.13 安装依赖并运行 `python run_tests.py`。
 
