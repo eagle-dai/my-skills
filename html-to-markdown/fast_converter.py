@@ -81,6 +81,91 @@ def _strip_blank_edges(text: str) -> str:
     return "\n".join(lines)
 
 
+# gap #23: highlight.js pages carry no `language-xxx` class on <pre>/<code>
+# (only inner hljs-* spans), so class-based detection falls back to `text` and
+# loses the language. Infer from content, but only when confident — a wrong tag
+# is worse than none. Signals are weighted: a strong structural signal (weight 2,
+# e.g. `def name(`, a shebang) alone clears the bar; weak signals (weight 1) need
+# a second signal. Threshold 2; ties between languages → None (→ ```text).
+# STRONG signals must be unambiguous — `def\s+\w+\s*\(` needs `def name(`, so
+# prose like "the def of done" (def + non-word) never matches.
+_STRONG = 2
+_WEAK = 1
+_PY_SIGNALS = (
+    (re.compile(r"^\s*def\s+\w+\s*\(", re.M), _STRONG),
+    (re.compile(r"^\s*class\s+\w+\s*[:(]", re.M), _STRONG),
+    (re.compile(r"^\s*(?:import\s+\w|from\s+[\w.]+\s+import\b)", re.M), _STRONG),
+    (re.compile(r"->\s*(?:None|bool|int|str|float|list|dict|[A-Z]\w*)\s*:"), _STRONG),
+    (re.compile(r"^\s*return\b", re.M), _WEAK),
+    (re.compile(r"\bself\."), _WEAK),
+    (re.compile(r":\s*(?:list|dict|tuple|set|str|int|float|bool)\["), _WEAK),
+    (re.compile(r'\bf"[^"]*\{|\bf\'[^\']*\{'), _WEAK),
+    (re.compile(r"\bprint\("), _WEAK),
+    (re.compile(r"^\s*(?:if|for|while|with|try|elif|else|except)\b.*:\s*$", re.M), _WEAK),
+)
+_JS_SIGNALS = (
+    (re.compile(r"\b(?:const|let|var)\s+\w+\s*="), _STRONG),
+    (re.compile(r"\bfunction\s*\*?\s*\w*\s*\("), _STRONG),
+    (re.compile(r"=>"), _WEAK),
+    (re.compile(r"\brequire\(|\bexport\s+(?:default|const|function)\b"), _WEAK),
+    (re.compile(r"\bconsole\.\w+\("), _WEAK),
+)
+_BASH_SIGNALS = (
+    (re.compile(r"^\s*#!.*\b(?:bash|sh)\b", re.M), _STRONG),
+    (re.compile(r"^\s*\$\s+\S", re.M), _STRONG),
+    # A command-line invocation at line start is a weak signal on its own
+    # (one line could be prose); two command lines clear the bar.
+    (re.compile(r"^\s*(?:pip|python|pytest|npm|npx|git|cd|export|sudo|apt|curl)\b", re.M), _WEAK),
+    (re.compile(r"\bpython\s+-m\b|\bpip\s+install\b|\bpytest\b"), _WEAK),
+    (re.compile(r"\|\s*(?:grep|jq|awk|sed|xargs)\b"), _WEAK),
+    (re.compile(r"^\s*-{1,2}\w", re.M), _WEAK),
+)
+
+
+def _looks_like_json(code: str) -> bool:
+    """Strong structural signal: whole block is a JSON object/array with keys."""
+    stripped = code.strip()
+    if not (stripped.startswith(("{", "[")) and stripped.endswith(("}", "]"))):
+        return False
+    # A quoted-key colon pair, no statement keywords / comments that betray code.
+    if not re.search(r'"[^"]+"\s*:', stripped):
+        return False
+    if re.search(r"\b(?:def|function|return|import|const|let|var)\b|#|//|=>", stripped):
+        return False
+    return True
+
+
+def guess_code_language(code: str) -> str | None:
+    """Infer a fenced-code language from content, or None if not confident.
+
+    Used only when no ``language-xxx`` class is present (gap #23). Returns a
+    language name only on strong evidence; ties or weak signals return None so
+    the caller keeps ``text`` rather than mislabel prose/comments.
+    """
+
+    if not code.strip():
+        return None
+    if _looks_like_json(code):  # strong single structural signal
+        return "json"
+
+    def _score(signals: tuple[tuple[Any, int], ...]) -> int:
+        return sum(weight for rx, weight in signals if rx.search(code))
+
+    scores = {
+        "python": _score(_PY_SIGNALS),
+        "javascript": _score(_JS_SIGNALS),
+        "bash": _score(_BASH_SIGNALS),
+    }
+    best = max(scores, key=lambda k: scores[k])
+    top = scores[best]
+    if top < 2:
+        return None
+    # Tie between languages → ambiguous, stay text.
+    if sum(1 for v in scores.values() if v == top) > 1:
+        return None
+    return best
+
+
 def _join_inline(parts: Iterable[str]) -> str:
     """Concatenate inline fragments, separating adjacent inline formulas.
 
@@ -326,12 +411,16 @@ class MarkdownConverter:
         code_node = node.find("code") if node.name == "pre" else None
         target = code_node if isinstance(code_node, Tag) else node
         code = _strip_blank_edges(self._code_text(target).replace("\xa0", " "))
-        language = "text"
+        language = ""
         for name in list(target.get("class", ())) + list(node.get("class", ())):
             match = re.search(r"(?:language|lang)-([A-Za-z0-9_+-]+)", name)
             if match:
                 language = match.group(1)
                 break
+        # gap #23: highlight.js pages have no language-* class; infer from content
+        # when confident, else fall back to text.
+        if not language:
+            language = guess_code_language(code) or "text"
         fence = "`" * max(3, max_backticks(code) + 1)
         return f"{fence}{language}\n{code}\n{fence}"
 
