@@ -73,6 +73,31 @@ def test_bare_dir_without_files_subtree_ignored():
         assert detect(out, "doc-A") == []
 
 
+def test_dir_with_files_but_no_md_not_flagged():
+    # 反例:目录有 files/ 子树但无 <name>.md(如 preflight/ 恰好含 files/)
+    # → 不是交付包,不误报(收紧判据后靠 <name>.md 标志)
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d)
+        (out / "weird" / "files").mkdir(parents=True)
+        assert detect(out, "doc-A") == []
+
+
+def test_symlink_to_package_dir_not_flagged():
+    # 反例:指向别处包目录的 symlink → 不当作本 output 的交付冲突
+    import os
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d)
+        real = out / "real-pkg"
+        (real / "files").mkdir(parents=True)
+        (real / "real-pkg.md").write_text("x", encoding="utf-8")
+        # real-pkg 本身是合法异名包 → 会被报;但通过 symlink 别名不额外报
+        link = out / "aliased"
+        os.symlink(real, link)
+        # 只应报真目录 real-pkg,symlink aliased 被 is_symlink 排除
+        assert detect(out, "doc-A") == ["real-pkg"]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

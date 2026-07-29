@@ -30,6 +30,14 @@ def test_document_has_dom_content_loaded_autorun():
     assert "runFormulaValidation()" in html  # auto-run 真调了
 
 
+def test_autorun_handles_already_loaded_page():
+    # 竞态:页面在 DOMContentLoaded 已触发后才被打开(driver navigate 等 load)
+    # → 事件不再来,必须靠 readyState 分支立即跑,否则 auto-run 永不 fire
+    html = _fb.validation_document(ITEMS)
+    assert "readyState" in html
+    assert "'loading'" in html  # loading 才挂监听,否则立即执行
+
+
 def test_document_keeps_existing_validation_functions():
     html = _fb.validation_document(ITEMS)
     # 旧验证语义原样保留
@@ -68,6 +76,14 @@ def test_copy_katex_runtime_is_idempotent():
         first = (dest / "katex.min.js").read_bytes()
         _fb.copy_katex_runtime(dest)  # 二次不应损坏
         assert (dest / "katex.min.js").read_bytes() == first
+
+
+def test_copy_katex_runtime_fails_closed_when_dest_is_dir():
+    # 反例:dest 路径已是目录 → read_bytes 会抛,须 fail closed 返回 False
+    with tempfile.TemporaryDirectory() as d:
+        dest = Path(d)
+        (dest / "katex.min.js").mkdir()  # 占位成目录
+        assert _fb.copy_katex_runtime(dest) is False
 
 
 def test_copy_katex_runtime_fails_closed_when_source_missing(monkeypatch=None):

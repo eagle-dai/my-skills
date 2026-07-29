@@ -414,11 +414,18 @@ def detect_output_collision(output: Path, package: str) -> list[str]:
         return []
     others: set[str] = set()
     for zip_path in output.glob("*.zip"):
-        if zip_path.stem != package:
+        if zip_path.is_file() and zip_path.stem != package:
             others.add(zip_path.stem)
     for child in output.iterdir():
-        # A delivered package dir contains a ``files/`` resource subtree.
-        if child.is_dir() and child.name != package and (child / "files").is_dir():
+        # A delivered package dir is named <name>/ and contains <name>.md — a
+        # marker specific to this pipeline's output, so a stray dir that merely
+        # has a ``files/`` child (e.g. preflight/) is not mistaken for a package.
+        if (
+            child.is_dir()
+            and not child.is_symlink()
+            and child.name != package
+            and (child / f"{child.name}.md").is_file()
+        ):
             others.add(child.name)
     return sorted(others)
 

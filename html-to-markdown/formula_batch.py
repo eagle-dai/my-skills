@@ -452,14 +452,22 @@ window.runFormulaValidation = function () {{
 // runtime injection or copy-paste. If KaTeX failed to load, stay completed:false
 // (fail closed) so a stale/partial report is never mistaken for success; the
 // agent can then inject a runtime and call runFormulaValidation() by hand.
-window.addEventListener('DOMContentLoaded', function () {{
+window.__runFormulaValidationSafe__ = function () {{
   try {{
     window.runFormulaValidation();
   }} catch (error) {{
     window.__FORMULA_VALIDATION__.completed = false;
     window.__FORMULA_VALIDATION__.load_error = String(error);
   }}
-}});
+}};
+// If the page is opened after DOMContentLoaded already fired (common when a
+// driver navigates and waits for 'load'), the event never comes again — run
+// immediately in that case, else wait for the event.
+if (document.readyState === 'loading') {{
+  window.addEventListener('DOMContentLoaded', window.__runFormulaValidationSafe__);
+}} else {{
+  window.__runFormulaValidationSafe__();
+}}
 </script>
 """
 
@@ -476,9 +484,18 @@ def copy_katex_runtime(dest_dir: Path) -> bool:
     if not src.is_file():
         return False
     dest = dest_dir / KATEX_ASSET_NAME
+    # A non-file at dest (e.g. a stray directory) can't be a valid runtime and
+    # read_bytes() would raise; fail closed rather than crash.
+    if dest.exists() and not dest.is_file():
+        return False
     src_bytes = src.read_bytes()
     if not dest.exists() or dest.read_bytes() != src_bytes:
-        dest.write_bytes(src_bytes)
+        # Atomic replace: write to a temp sibling then rename, so an interrupted
+        # copy never leaves a truncated katex.min.js that a later validation
+        # would load and fail on with an opaque JS parse error.
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_bytes(src_bytes)
+        tmp.replace(dest)
     return True
 
 
