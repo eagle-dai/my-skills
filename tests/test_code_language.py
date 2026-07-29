@@ -35,16 +35,43 @@ class GuessCodeLanguageTests(unittest.TestCase):
         self.assertEqual(fast_converter.guess_code_language(code), "javascript")
 
     def test_bash_signals(self) -> None:
-        code = "python -m pytest tests/ -q\npip install -r requirements.txt"
+        # 跨信号组:命令调用组(pip install) + 裸 shell 工具组(export/cd) = 2 条 → bash。
+        code = "export PYTHONPATH=src\npip install -r requirements.txt\ncd tests"
         self.assertEqual(fast_converter.guess_code_language(code), "bash")
+        # shebang 单独即达标(STRONG)。
+        self.assertEqual(
+            fast_converter.guess_code_language("#!/bin/bash\necho hi"), "bash"
+        )
 
-    def test_explicit_command_invocation_is_bash(self) -> None:
-        # 明确的包/测试命令调用是 STRONG 信号,单条即判 bash(散文不会这样写)。
-        # 关键:这些信号与行首裸命令列表不相交,同一文本不会被两条弱信号重复计分。
-        for code in ("pip install numpy", "python -m pytest tests/", "pytest -q"):
-            self.assertEqual(fast_converter.guess_code_language(code), "bash", code)
-        # 但纯散文即便含 "pip" 词也不该命中(需命令形态)。
-        self.assertIsNone(fast_converter.guess_code_language("use pip to install it"))
+    def test_single_command_invocation_is_not_bash(self) -> None:
+        # 单条 pip install / python -m / pytest 是 WEAK,单独不达标 → None（回退
+        # text）。这些命令也出现在 Dockerfile(RUN pip install)、CI YAML(run: pip
+        # install)、散文里，单条判 bash 会误标。宁 text 不误判。
+        for code in ("pip install numpy", "python -m build", "pytest -q"):
+            self.assertIsNone(fast_converter.guess_code_language(code), code)
+        # 同一信号组内多条命令只算一次（pip install 与 pytest 同属命令组），仍不
+        # 达标 → None。宁 text 不误判。
+        self.assertIsNone(
+            fast_converter.guess_code_language("pip install -r req.txt\npytest -q")
+        )
+        # 跨信号组（命令调用 + 裸 shell 工具）才达标 = bash。
+        self.assertEqual(
+            fast_converter.guess_code_language("pip install -r req.txt\ncd /app && ls"),
+            "bash",
+        )
+
+    def test_dockerfile_and_yaml_pip_install_not_bash(self) -> None:
+        # 回归：含 pip install 的 Dockerfile / CI YAML 单行不该判 bash（否则破坏
+        # 各自高亮）。无强 bash 信号 → None。
+        self.assertIsNone(
+            fast_converter.guess_code_language("FROM python:3.11\nRUN pip install flask")
+        )
+        self.assertIsNone(
+            fast_converter.guess_code_language("steps:\n  - run: pip install -r req.txt")
+        )
+        self.assertIsNone(
+            fast_converter.guess_code_language("Run pip install flask to install it.")
+        )
 
     def test_powershell_signals(self) -> None:
         # $env: 是 PowerShell 强特征;哪怕含 `python -m`(也命中 bash)也应判 powershell。
@@ -53,6 +80,13 @@ class GuessCodeLanguageTests(unittest.TestCase):
         # heredoc @"..."@ 同为强特征。
         self.assertEqual(
             fast_converter.guess_code_language('$env:X="1"\npython -c @"\nprint(1)\n"@'),
+            "powershell",
+        )
+        # PS + 多条 bash 命令行:$env: 强特征应压过 bash 的累加分,仍判 powershell。
+        self.assertEqual(
+            fast_converter.guess_code_language(
+                '$env:PYTHONPATH="src"\npython -m pytest tests/\ngit status'
+            ),
             "powershell",
         )
 

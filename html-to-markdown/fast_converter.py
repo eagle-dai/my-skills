@@ -121,11 +121,12 @@ _PS_SIGNALS = (
 _BASH_SIGNALS = (
     (re.compile(r"^\s*#!.*\b(?:bash|sh)\b", re.M), _STRONG),
     (re.compile(r"^\s*\$\s+\S", re.M), _STRONG),
-    # Explicit package/test invocations (`python -m pytest ...`, `pip install`)
-    # read as commands, not prose — one is enough. STRONG. Each pattern set is
-    # disjoint from the line-start command list below so the same text can't
-    # score twice (a plain `pip install numpy` must not reach the bar alone).
-    (re.compile(r"\bpython\s+-m\b|\bpip\s+install\b|^\s*pytest\b", re.M), _STRONG),
+    # Package/test invocations are only WEAK: a single `pip install ...` or
+    # `python -m ...` line also appears in Dockerfiles (RUN pip install), CI YAML
+    # (run: pip install), and prose, so one alone must NOT reach the bar. Two
+    # command lines (or a pipe) clear it. Disjoint from the bare-utility list
+    # below so the same text is never scored twice.
+    (re.compile(r"\bpython\s+-m\b|\bpip\s+install\b|^\s*pytest\b", re.M), _WEAK),
     # Bare shell utilities at line start — weak; two lines (or a pipe) clear it.
     (re.compile(r"^\s*(?:npm|npx|git|cd|export|sudo|apt|curl|mkdir|rm|cp|mv|echo)\b", re.M), _WEAK),
     (re.compile(r"\|\s*(?:grep|jq|awk|sed|xargs)\b"), _WEAK),
@@ -168,8 +169,11 @@ def guess_code_language(code: str) -> str | None:
         "bash": _score(_BASH_SIGNALS),
     }
     # PowerShell command blocks (`$env:...`) also match bash command signals
-    # (`python -m`); a positive PowerShell-only signal disambiguates in its favor.
-    if scores["powershell"] >= _STRONG and scores["bash"] <= scores["powershell"]:
+    # (`python -m`, `git`); `$env:`/heredoc is unambiguous PowerShell, so once a
+    # STRONG PS signal fires, suppress bash regardless of how many extra bash
+    # command lines the block also has (else `$env:...; python -m ...; git ...`
+    # scores bash 3 > ps 2 and mislabels as bash).
+    if scores["powershell"] >= _STRONG:
         scores["bash"] = 0
     best = max(scores, key=lambda k: scores[k])
     top = scores[best]
