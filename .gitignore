@@ -5,4 +5,5 @@ __pycache__/
 .venv/
 
 # Local-only design docs (not shipped)
+docs/*.md
 docs/superpowers/
