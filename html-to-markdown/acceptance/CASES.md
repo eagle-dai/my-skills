@@ -99,3 +99,28 @@ python3 markdown_postprocess.py <交付>.md           # 就地修
 **判据**：`output.mkdir` 后扫已交付的**异名**包（`*.zip` stem / `<name>/files/` 子树），异于本次 `output_name` 即在 `report.json.output_collision` 列出。同名（resume）不算冲突。只警告不阻断不改路由。
 
 **守卫**：`tests/test_pipeline_output_collision.py`
+
+---
+
+## 公式里带下划线的变量名，GitHub 里要能正常显示（别缩成下标）
+
+**症状**：文章里 `field_coverage = valid_required_fields / required_fields` 这类块级公式（变量名里有下划线），在 GitHub 上下划线消失、下划线后面的部分缩成小小的下标（`field` 后面 `coverage` 变下标），看起来像乱码。更早的版本干脆卡在 `blocked` 交不出成品——公式一直等不到验证通过。
+
+**根因**：GitHub 显示块级公式 `$$…$$` 时，会把公式里下划线前的单个反斜杠 `\_` 悄悄吃掉，交给数学渲染器时只剩裸下划线，渲染器就把它当"下标"符号。提取器原来只加**一个**反斜杠 → 被吃光 → 渲染错，且验证器（正确地）拦下这种会渲染错的形态 → 死锁在 blocked。
+
+**判据**：提取器对公式里"变量名下划线"（不是真正的数学下标）产出**两个**反斜杠 `\\_`。GitHub 吃掉一个后还剩一个，数学渲染器就把它当**字面下划线**显示。真正的数学下标（`x` 底下带小 `i`）是另一套机制生成的，不受影响。
+
+**期望**：
+- `field_coverage`（公式里的变量名）→ 显示成 `field_coverage`，下划线在、不缩下标
+- `valid_required_fields`（多个下划线）→ 每个下划线都在
+- 真数学下标 `x_i`、`x_{ij}` → 原样正常显示成下标，不被误改
+- 07/08 文章的分式公式 → pipeline 跑到 `converted` 出成品，GitHub 上分式 + 变量名都对（已真机验证）
+
+**不该触发**：`\text{}` 里的下划线（另一套 text-mode 处理，gap #18/#20）；字面脱字符 `^`（保持既有 `\string^`）。
+
+**守卫**：
+- `tests/test_validation_document.py::test_map_text_escapes_literal_underscore_double_backslash` — 产出双反斜杠（规则本体）
+- `tests/test_validation_document.py::test_map_text_double_backslash_multiple_underscores` — 多下划线
+- `tests/test_validation_document.py::test_double_backslash_underscore_passes_github_guard` — 双反斜杠过验证门
+- `tests/test_validation_document.py::test_single_backslash_underscore_still_fails_github_guard` — 单反斜杠（旧错形态）仍被拦
+- `tests/test_validation_document.py::test_real_math_subscript_not_touched_by_map_text` — 真数学下标不被误伤

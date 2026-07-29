@@ -56,22 +56,49 @@ def test_autorun_fails_closed_on_missing_runtime():
 def test_validator_version_unchanged():
     # 版本锚:变更解析/验证语义时必须 bump(否则旧缓存/旧报告失效不被察觉)。
     # v4:validator 增 identifier-as-subscript 门;parser 增 math-mode 字面 `_`/特殊符转义。
+    # v5(gap #31):parser 字面 `_` 改产双反斜杠 \\_(过 GitHub GFM + 过 gap#21 门);
+    # validator 语义未变故保持 v4。
     assert _fb.VALIDATOR_VERSION == "formula-batch-v4"
-    assert _fb.PARSER_VERSION == "katex-html-v4"
+    assert _fb.PARSER_VERSION == "katex-html-v5"
 
 
-# --- math-mode 字面特殊符转义(gap #18/#21:field_coverage 被当下标) -----------
+# --- math-mode 字面特殊符转义(gap #18/#21/#31:field_coverage 被当下标) -------
 
-def test_map_text_escapes_literal_underscore_per_char():
-    # _map_text 逐字符转义(KaTeX HTML mord 是逐字符叶子):字面 _ → \_,
-    # 装配后 field\_coverage。这是 parser 的忠实输出。
-    assert _fb._map_text("field_coverage") == r"field\_coverage"
+def test_map_text_escapes_literal_underscore_double_backslash():
+    # gap #31:math mode 字面 _ 产出**双反斜杠** \\_(不是单 \_)。真机(GitHub
+    # markdown API)证实:$$...$$ 内单 \_ 的反斜杠被 GFM 剥掉 → MathJax 收到裸
+    # field_coverage,_coverage 被当下标(渲染错);双 \\_ 剥一层 → \_ → MathJax
+    # 当字面下划线(渲染对)。逐字符叶子转义,装配后 field\\_coverage。
+    assert _fb._map_text("field_coverage") == "field\\\\_coverage"
 
 
-def test_underscore_identifier_still_fails_github_guard():
-    # 硬事实回归:带下划线标识符即使 \_ 转义,GitHub 也会反转义成下标 → validator
-    # 的 identifier-as-subscript 门必须继续判失败(fail-closed 交 strict/manual)。
-    assert _fb.has_identifier_subscript(r"field\_coverage")
+def test_map_text_double_backslash_multiple_underscores():
+    # gap #31 反例(多下划线标识符):每个字面 _ 各自 \\_,装配后每处都双反斜杠。
+    assert _fb._map_text("valid_required_fields") == "valid\\\\_required\\\\_fields"
+
+
+def test_double_backslash_underscore_passes_github_guard():
+    # gap #31 正例:双反斜杠形态**过** gap#21 门。GitHub 反转义 \\_ → \_,门的
+    # (?<!\\) lookbehind 看到 _ 前有反斜杠 → 不判 identifier-as-subscript。
+    assert not _fb.has_identifier_subscript("field\\\\_coverage")
+    # 完整块级分式(07/08 真实用例)整体过门。
+    frac = "field\\\\_coverage = \\frac{valid\\\\_required\\\\_fields}{required\\\\_fields}"
+    assert not _fb.has_identifier_subscript(frac)
+
+
+def test_single_backslash_underscore_still_fails_github_guard():
+    # gap #31 反例(旧错形态必须仍被拦):单反斜杠 \_ 在 GitHub 被反转义成裸下标,
+    # gap#21 门必须继续判失败(fail-closed)。防止有人把产出改回单反斜杠而门失守。
+    assert _fb.has_identifier_subscript("field\\_coverage")
+
+
+def test_real_math_subscript_not_touched_by_map_text():
+    # gap #31 反例(不误伤真下标):真数学下标 x_i / x_{ij} 来自 msupsub/mfrac 的
+    # vlist(_parse_vlist),**不经过 _map_text**,所以 _map_text 改双反斜杠不碰它们。
+    # 裸结构下标不含反斜杠,GitHub 原样保留,MathJax 正常渲染为下标(真机验证)。
+    assert not _fb.has_identifier_subscript("x_i + y_{ij}")
+    # 结构下标与字面标识符共存:结构 x_i 裸留,字面 data 双反斜杠。
+    assert not _fb.has_identifier_subscript("x_i = data\\\\_count")
 
 
 def test_map_text_escapes_other_math_specials():

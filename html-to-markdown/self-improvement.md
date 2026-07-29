@@ -149,6 +149,34 @@ DOM 稳定顺序，标题取 DOM 原文。
 | `a\_b\%c\#d\&e\,f` | 反转义为 `a_b%c#d&e,f` | 反例：不能只处理 `_`，GitHub 吃全 ASCII 标点集 |
 | 只喂原始 `\_` 给本地 KaTeX 判"通过" | 禁止（旧行为） | 反例：本地 KaTeX 与 GitHub 不一致 → 假阴性漏检，正是本缺陷根因 |
 
+## math-mode 字面下划线用双反斜杠 `\\_`（缺陷 31，GitHub 平台，提取器产出规则）
+
+判定项：math mode 里作为**字面字符**出现的下划线（工程标识符 `field_coverage`、`valid_required_fields` 等，渲染文本里的真实 `_`，不是结构下标）——`formula_batch.py::_map_text` 走默认（非 text_mode）分支时，逐字符转义为**双反斜杠** `\\_`，不是单 `\_`。`_MATH_MODE_ESCAPES["_"] = "\\\\_"` 判定。
+
+**为什么双反斜杠**（真机 `gh api /markdown` 实证，块级 `$$…$$`）：
+
+- 单 `\_`：GitHub GFM 把 `$$…$$` 内可转义标点前的反斜杠剥掉 → MathJax 收到裸 `field_coverage` → `_coverage` 被当**下标**渲染（下划线消失、尾巴缩成下标，**错**）。
+- 双 `\\_`：GFM 剥一层 → `\_` → MathJax 当**字面下划线**渲染（**对**）。同时过 validator 的 gap #21 门：`githubMathUnescape` 反转义 `\\_` → `\_`，门 `(?<!\\)[_^][A-Za-z]{2,}` 的 lookbehind 看到 `_` 前有反斜杠 → 不误判 identifier-as-subscript。
+
+**边界（关键，防误伤）**：真数学结构下标/上标（`x_i`、`x_{ij}`、`\sum_{i}`）来自 KaTeX HTML 的 `msupsub`/`mfrac` vlist（走 `_parse_vlist`），**根本不经过 `_map_text`**，所以本规则不碰它们；它们以裸 `_{...}` 输出，GitHub 原样保留、MathJax 正常渲染下标。因此改 `_map_text` 只影响"渲染文本里的字面下划线"，不影响结构下标。
+
+**范围**：本规则只管 `_`。字面 `^` 保持 `\string^`（命令形式，反斜杠+字母不被 GFM 吃，已 GitHub-safe，不改）——但 gap #21 门对 `\string^bc` 会过度 fail-close（`^` 前是字母 `g`，lookbehind 不排除），方向安全（安全形态误判为危险 → 走 strict/人工，不产错公式），07/08 无此形态，未在本次收窄。text mode（`\text{}` 内，gap #18/#20）是另一场景，本次不动。
+
+`PARSER_VERSION` bump v4→v5（产出形态变更，旧缓存失效）；`VALIDATOR_VERSION` 保持 v4（门逻辑未变）。回归 `test_map_text_escapes_literal_underscore_double_backslash`、`test_map_text_double_backslash_multiple_underscores`、`test_double_backslash_underscore_passes_github_guard`、`test_single_backslash_underscore_still_fails_github_guard`、`test_real_math_subscript_not_touched_by_map_text`。真实用例：07/08 文章的 `field\\_coverage = \frac{valid\\_required\\_fields}{required\\_fields}`（端到端 pipeline `converted` + 真机 GitHub 渲染验证）。
+
+实证（`gh api /markdown`，`$$…$$`）：单 `\_` → GitHub 喂 `field_coverage`（裸）；双 `\\_` → GitHub 喂 `field\_coverage`（留 `\_`）；`\frac` 两形态都保留。
+
+| 输入（`_map_text` 参数 / 源 md latex） | 期望 | 类别 | 理由 |
+|------|------|------|------|
+| `_map_text("field_coverage")` | `field\\_coverage`（双反斜杠） | 正例 | 字面下划线标识符，GitHub 剥一层后 MathJax 当字面下划线 |
+| `_map_text("valid_required_fields")` | `valid\\_required\\_fields` | 正例（多下划线） | 每个字面 `_` 各自 `\\_` |
+| 门判 `field\\_coverage`（双） | pass（`has_identifier_subscript` False） | 正例 | 反转义成 `field\_coverage`，`_` 前有反斜杠，lookbehind 排除 |
+| 门判 `field\_coverage`（单） | fail（`has_identifier_subscript` True） | 反例（旧错形态必须仍被拦） | 反转义成裸 `field_coverage` → 门抓到，防产出改回单反斜杠而门失守 |
+| 门判 `x_i + y_{ij}`（裸结构下标） | pass | 反例（不误伤真下标） | 结构下标不经 `_map_text`，裸留，MathJax 正常渲染 |
+| 门判 `x_i = data\\_count`（结构+字面共存） | pass | 反例 | 结构 `x_i` 裸留 + 字面 `data\\_count` 双反斜杠，两者并行正确 |
+| `_map_text("α")` / `_map_text("max")` | `\alpha` / `\max` | 反例 | 希腊字母/运算符映射不受下划线改动影响 |
+| `_map_text("valid_at", text_mode=True)` | `valid\_at`（单，text mode 分支不变） | 反例 | text mode 是 gap #18 场景，本规则只改 math mode 默认分支 |
+
 ---
 
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

@@ -22,9 +22,13 @@ VALIDATION_SCHEMA_VERSION = "1.1"
 # v4: math-mode literal TeX specials (`_ % # & $ ^`) reaching a leaf text run are
 # now escaped (\_, \%, …). Structural sub/sup come from msupsub/mfrac vlists, not
 # leaf text, so any `_` here is a literal glyph (e.g. identifier field_coverage);
-# emitting it bare produced identifier-as-subscript. Bumps parser output → old
-# cached parses must invalidate. See gap #18/#21.
-PARSER_VERSION = "katex-html-v4"
+# emitting it bare produced identifier-as-subscript. See gap #18/#21.
+# v5: literal `_` now emits a DOUBLE backslash (\\_) instead of single (\_). On
+# GitHub GFM the single-backslash `\_` inside $$...$$ has its backslash stripped,
+# so MathJax saw a bare `field_coverage` and rendered `_coverage` as a subscript;
+# `\\_` survives GFM stripping as `\_` → MathJax literal underscore (gap #31).
+# Changes parser output → old cached parses (v4 and earlier) must invalidate.
+PARSER_VERSION = "katex-html-v5"
 # v4: validation now also fails closed on math-mode identifier-as-subscript
 # (bare `_`/`^` followed by 2+ ASCII letters), which local KaTeX renders as a
 # legal (but semantically wrong) subscript without throwing. See gap #21.
@@ -304,11 +308,22 @@ def has_identifier_subscript(latex: str) -> bool:
 # math mode 下作为**字面字符**出现的 TeX 特殊符号必须转义,否则被当结构记号解析。
 # 结构下标/上标来自 msupsub/mfrac 的 vlist(走 _parse_vlist),**不经过本函数**;所以任何
 # 到达 _map_text 的字面 ``_``/``^`` 都是渲染文本里的真实字符(如标识符 field_coverage 的
-# 下划线),不是结构记号。此处按**单字符**转义(KaTeX HTML 的 mord 是逐字符叶子);把同一
-# 标识符的多个 ``\_`` 片段合并成 ``\text{...}`` 是 parse_katex 末尾对**完整装配串**做的,
-# 见 _wrap_literal_underscore_runs。``% # & $`` 直接加反斜杠即可(不受 GitHub 反转义误读)。
+# 下划线),不是结构记号。此处按**单字符**转义(KaTeX HTML 的 mord 是逐字符叶子)。
+#
+# gap #31:字面 ``_`` 产出**双反斜杠** ``\\_``,不是单 ``\_``。目标平台是 GitHub(GFM),
+# 真机(``gh api /markdown``)实证:``$$…$$`` 内单 ``\_`` 的反斜杠被 GFM 剥掉 → MathJax
+# 收到裸 ``field_coverage``,``_coverage`` 被当**下标**渲染(下划线消失、尾巴缩小,错);
+# 双 ``\\_`` 被 GFM 剥一层成 ``\_`` → MathJax 当**字面下划线**渲染(对)。双反斜杠还同时
+# 过 validator 的 gap #21 门:``githubMathUnescape`` 把 ``\\_`` 反转义成 ``\_``,门的
+# ``(?<!\\)`` lookbehind 看到 ``_`` 前有反斜杠 → 不误判 identifier-as-subscript。
+# 逐字符转义,同一标识符的多个 ``_`` 各自成 ``\\_``,装配后 ``valid\\_required\\_fields``。
+# ``% # & $`` 直接加**单**反斜杠即可(GitHub 反转义 ``\%`` → ``%`` 后 MathJax 里 ``%`` 是
+# 注释符,但 KaTeX 对孤立 ``%`` 容忍;这些不是本次 gap 范围,保持既有行为)。``^`` 用
+# ``\string^``(命令形式,反斜杠+字母不被 GFM 吃)已 GitHub-safe,不改;注意 gap #21 门对
+# ``\string^bc`` 会过度 fail-close(``^`` 前是字母 g,lookbehind 不排除),方向安全(把
+# 安全形态误判为危险 → 走 strict/人工,不产错公式),不在本次范围内收窄(见 self-improvement)。
 _MATH_MODE_ESCAPES = {
-    "_": r"\_",
+    "_": "\\\\_",
     "%": r"\%",
     "#": r"\#",
     "&": r"\&",

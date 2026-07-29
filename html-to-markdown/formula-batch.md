@@ -83,6 +83,8 @@ window.__FORMULA_VALIDATION__
 
 `runFormulaValidation()` 在 `katex.render` 前对每条 `item.latex` 施加 `githubMathUnescape`：GitHub GFM 会剥掉 `$…$` 内可转义标点前的反斜杠再喂 KaTeX，验证必须模拟这一步，否则 `\text{a\_b}` 本地过、GitHub 报错（缺陷 20；命令反斜杠 `\leftarrow` 等不受影响）。目标平台 = GitHub，本地 KaTeX 只是代理，必须先反转义对齐。
 
+与此对称，提取器侧对 math-mode 里**字面下划线**（工程标识符 `field_coverage` 等，非结构下标）产出**双反斜杠** `\\_`（缺陷 31）：GFM 剥一层后剩 `\_`，KaTeX 当字面下划线（渲染对），且反转义后 `_` 前有反斜杠、不触发 identifier-as-subscript 门。单反斜杠会被剥光成裸下标（渲染错），门会正确拦下。真数学结构下标（`msupsub`/`mfrac` vlist）不经此路径、以裸 `_{…}` 输出，不受影响。见 `self-improvement.md` 缺陷 31。
+
 调用 `runFormulaValidation()` 前必须注入固定版本 KaTeX。若 runtime 缺失，函数抛出错误。完成后报告必须包含：
 
 - 与代码一致的 `schema_version`、`parser_version` 和 `validator_version`；
