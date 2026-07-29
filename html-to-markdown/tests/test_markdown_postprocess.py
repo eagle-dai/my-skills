@@ -117,6 +117,32 @@ def test_multiline_block_with_code_idempotent():
     assert pp(line) == line
 
 
+def test_centered_table_block_preserved_not_nested():
+    # PR #55 review 抓到的回归：标题+表格同包一个居中 div，题注行不得被二次包成
+    # 嵌套 div（否则标题从表格里拆出来）。整块必须原样保留。
+    src = (
+        '<div align="center">\n\n'
+        "**表 8-8　放行矩阵**\n\n"
+        "| 列 | 列 |\n| --- | --- |\n| a | b |\n\n"
+        "</div>\n\n后段。"
+    )
+    out = pp(src)
+    assert out == src  # 整块不动
+    assert out.count('<div align="center">') == 1  # 无嵌套 div
+
+
+def test_centered_image_block_preserved():
+    # 居中图片块（多行内容，非单行题注）→ 整块原样保留
+    src = '<div align="center">\n\n![](files/x/a.webp)\n\n</div>'
+    assert pp(src) == src
+
+
+def test_unterminated_center_div_not_mangled():
+    # 无配对 </div>（不完整）：不吞后续内容，起始行原样、后面照常处理
+    src = '<div align="center">\n\n普通段落没有闭合。'
+    assert pp(src) == src
+
+
 # --- 规则2：独立成段公式 → $$ 块级 ---------------------------------------
 
 def test_standalone_formula_becomes_block():

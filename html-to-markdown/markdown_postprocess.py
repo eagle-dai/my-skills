@@ -146,20 +146,28 @@ def _normalize_captions(markdown: str, fenced: set[int]) -> str:
             continue
         stripped = line.strip()
 
-        # 形态 3：已是多行块 ``<div align="center">`` \n \n **…** \n \n ``</div>``
+        # 形态 3：多行 ``<div align="center">`` 块。向后找配对 ``</div>``，抓非空内容行。
         if stripped == '<div align="center">':
-            # 向后找到配对的 </div>，中间抓唯一非空内容行
             j = i + 1
             content_lines = []
             while j < n and lines[j].strip() != "</div>":
                 if lines[j].strip():
                     content_lines.append(lines[j].strip())
                 j += 1
-            if j < n and len(content_lines) == 1 and _is_caption_text(content_lines[0]):
-                out.append(_centered_block(_caption_to_bold_markdown(content_lines[0])))
+            if j < n:
+                # 找到配对 </div>：这是一个完整居中块。
+                if len(content_lines) == 1 and _is_caption_text(content_lines[0]):
+                    # 纯题注块 → 归一（幂等）。
+                    out.append(_centered_block(_caption_to_bold_markdown(content_lines[0])))
+                else:
+                    # 含表格/图片/多行内容的居中块（如 conversion-rules 的「标题+表格
+                    # 同包」）→ **整块原样保留**，绝不逐行走进去，否则内部的 ``**表 X**``
+                    # 会被下面「形态 1 裸题注行」二次包成嵌套 div，把标题从表格里拆出来
+                    # （回归 bug，PR #55 review 抓到）。
+                    out.extend(lines[i : j + 1])
                 i = j + 1
                 continue
-            # 不是题注块（可能是居中表格/图片等），原样保留起始行，逐行走
+            # 没找到配对 </div>（不完整/误报）：只吐起始行，逐行继续。
             out.append(line)
             i += 1
             continue
