@@ -62,15 +62,37 @@ def _space_cjk_inline_math_line(line: str) -> str:
 # conversion-rules.md「编号识别」一致——只用数字会漏掉附录常见的字母编号题注。
 # 可选的 ``**`` 前缀：SingleFile 的图题是独立 ``<div>``（无加粗）转出裸 ``图 N…``，
 # 表题却是 ``data-slate-type=bold`` span 转出 ``**表 N…**``。此前正则只认行首
-# ``图/表``，加粗表题被前缀 ``**`` 挡住不居中（bug）。这里容忍可选 ``**`` 前缀，
-# 命中后连 ``**…**`` 整体包进 ``<div>``，保留加粗只补居中。
-# 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+# ``图/表``，加粗表题被前缀 ``**`` 挡住不居中（bug）。这里容忍可选 ``**`` 前缀。
+# 命中加粗表题时**不能**把 ``**…**`` 原样塞进单行 ``<div>``：GitHub 对 same-line 裸
+# HTML 块内的 ``**bold**`` 不做 Markdown 解析，星号会当字面量显示、加粗丢失（bug）。
+# 因此命中后把 ``**X**`` 转成 ``<strong>X</strong>`` 再包 ``<div>``——纯 HTML 加粗
+# 在裸 HTML 块内正常渲染，仍保持单行、与本模块 line-oriented 架构一致。裸图题无 ``**``
+# 时形态不变。规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+#
+# 已被包进 ``<div align="center">…</div>`` 但内部仍是 ``**…**`` 的行（旧版本产出、
+# 或手工收尾遗留）同样要修：抽出 div 内文，把 ``**X**`` 转 ``<strong>X</strong>`` 后重包。
+# 幂等——内部已是 ``<strong>`` 或无加粗时原样返回。
 _CAPTION_LINE = re.compile(r"^(?:\*\*)?(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
+# 题注整行至多一处加粗（整段标题被一对 ``**`` 包住）；把它转成 <strong>。
+_CAPTION_BOLD = re.compile(r"^\*\*(.+)\*\*$")
+# 已居中的题注 div，抓内部内容做加粗修复。
+_CENTERED_DIV = re.compile(r'^<div align="center">(.*)</div>\s*$')
+
+
+def _bold_to_strong(text: str) -> str:
+    """题注整行至多一处成对 ``**``；命中转 <strong>，否则原样（幂等）。"""
+    return _CAPTION_BOLD.sub(r"<strong>\1</strong>", text)
 
 
 def _center_caption_line(line: str) -> str:
-    if _CAPTION_LINE.match(line) and not line.lstrip().startswith("<div"):
-        return f'<div align="center">{line}</div>'
+    centered = _CENTERED_DIV.match(line.strip())
+    if centered:
+        # 已包 div：只修内部残留的 ** 加粗（GitHub same-line 裸 HTML 内不解析）。
+        inner = centered.group(1)
+        fixed = _bold_to_strong(inner)
+        return line if fixed == inner else f'<div align="center">{fixed}</div>'
+    if _CAPTION_LINE.match(line):
+        return f'<div align="center">{_bold_to_strong(line)}</div>'
     return line
 
 
@@ -186,6 +208,30 @@ def _fenced_line_numbers(markdown: str) -> set[int]:
     return inside
 
 
+# --- 残留公式占位符护栏（fail-closed） ------------------------------------
+# ``fast_converter.py`` 在 ``original_latex`` 为空（公式未解析/未通过 KaTeX 验证）时
+# emit 唯一形态 ``{{FORMULA:<source_id>}}`` 占位符。pipeline 本身会因此判 blocked、
+# 不出 ZIP；但 strict/blocked 手工收尾时，agent 可能把占位符删掉手编成 inline-code
+# 之类的降级形态、或直接把带占位符的 md 当成品交付。这道机械门在共享后处理阶段扫描
+# 残留占位符：命中即阻断（check 返回 1、apply 拒绝写盘），逼公式走正确验证流程解析成
+# ``$$…$$`` 而不是靠人手瞎编。占位符本身改写不了（缺 LaTeX），所以只检测不改写。
+# fenced code block 内的字面量不算（可能是讲占位符机制的正文）。
+# 规则见 blocking-rules.md「残留公式占位符」。
+_RESIDUAL_FORMULA = re.compile(r"\{\{FORMULA:[^}]+\}\}")
+
+
+def find_residual_formula_placeholders(markdown: str) -> list[tuple[int, str]]:
+    """返回 (行号从1起, 命中文本) 列表，排除 fenced code block 内的字面量。"""
+    inside = _fenced_line_numbers(markdown)
+    hits: list[tuple[int, str]] = []
+    for index, line in enumerate(markdown.split("\n"), start=1):
+        if index in inside:
+            continue
+        for match in _RESIDUAL_FORMULA.finditer(line):
+            hits.append((index, match.group(0)))
+    return hits
+
+
 def postprocess_markdown(markdown: str) -> str:
     """Apply all path-independent line rules outside fenced code blocks.
 
@@ -212,9 +258,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Apply the path-independent Markdown rules (CJK↔inline-math spacing, "
-            "caption centering, **** seam fix) to a Markdown file. Strict-path "
-            "sub-agents run this so their output obeys the same GitHub-rendering "
-            "rules the fast path already enforces."
+            "caption centering, **** seam fix) to a Markdown file, and fail-closed "
+            "on residual {{FORMULA:...}} placeholders. Strict-path sub-agents run "
+            "this so their output obeys the same GitHub-rendering rules the fast "
+            "path already enforces."
         )
     )
     parser.add_argument("file", type=Path, help="Markdown file to process")
@@ -223,7 +270,8 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Do not modify the file. Exit 0 if it already satisfies the rules, "
-            "exit 1 if postprocessing would change it (Phase 3 acceptance gate)."
+            "exit 1 if postprocessing would change it or a residual formula "
+            "placeholder survives (Phase 3 acceptance gate)."
         ),
     )
     return parser
@@ -238,6 +286,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     processed = postprocess_markdown(original)
+
+    # 残留公式占位符：无论 check/apply 都是硬阻断，先于合规比较。
+    residual = find_residual_formula_placeholders(processed)
+    if residual:
+        for line_no, text in residual:
+            print(
+                f"{args.file}:{line_no}: residual formula placeholder {text} — "
+                "formula was never resolved; run the KaTeX validation loop "
+                "(formula-validation.html → --formula-validation-report) instead "
+                "of hand-editing. Delivery blocked.",
+                file=sys.stderr,
+            )
+        return 1
 
     if args.check:
         if processed == original:

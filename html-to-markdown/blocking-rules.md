@@ -266,6 +266,8 @@ kept | removed_as_noise | failed | manual_review
 - **必须在 Markdown 解析前保护数学公式**（占位符替换）
 - 页面自动渲染所有 `$...$`（行内）和 `$$...$$`（块级）
 
+**残留公式占位符阻断：** 交付 Markdown 中出现任何 `{{FORMULA:<source_id>}}`（`fast_converter.py` 在公式未解析/未通过 KaTeX 验证时 emit 的唯一形态）即阻断。`markdown_postprocess.py`（check 与 apply 两路径）机械检测并 fail-closed（fenced code block 内字面量除外）。修复方式是走 KaTeX 验证流程（`formula-validation.html` → `--formula-validation-report` 重跑 pipeline）让公式解析成 `$$…$$`；**禁止手工把占位符删掉编成 inline-code 或其它降级形态**——那正是 08 讲交付把块级 `\frac` 公式编成 `` `a` / `b` `` 的根因。
+
 ---
 
 ## §0.10 列表源码形态阻断

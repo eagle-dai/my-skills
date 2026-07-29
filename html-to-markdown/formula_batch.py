@@ -19,7 +19,12 @@ from pipeline_utils import preflight, root_from_html, write_json
 
 SCHEMA_VERSION = "1.1"
 VALIDATION_SCHEMA_VERSION = "1.1"
-PARSER_VERSION = "katex-html-v3"
+# v4: math-mode literal TeX specials (`_ % # & $ ^`) reaching a leaf text run are
+# now escaped (\_, \%, …). Structural sub/sup come from msupsub/mfrac vlists, not
+# leaf text, so any `_` here is a literal glyph (e.g. identifier field_coverage);
+# emitting it bare produced identifier-as-subscript. Bumps parser output → old
+# cached parses must invalidate. See gap #18/#21.
+PARSER_VERSION = "katex-html-v4"
 # v4: validation now also fails closed on math-mode identifier-as-subscript
 # (bare `_`/`^` followed by 2+ ASCII letters), which local KaTeX renders as a
 # legal (but semantically wrong) subscript without throwing. See gap #21.
@@ -271,14 +276,45 @@ def _strip_text_groups(latex: str) -> str:
     return "".join(out)
 
 
-def has_identifier_subscript(latex: str) -> bool:
-    """True if math-mode LaTeX carries a bare `_`/`^` + 2+ letters (gap #21).
+# GitHub GFM 在 ``$...$`` 内会把 ``\`` + 任意 CommonMark 可转义 ASCII 标点的反斜杠
+# 剥掉,再交给渲染器(``\_`` → ``_``)。命令反斜杠(``\`` + 字母,如 ``\frac``)不动。
+# JS validator(githubMathUnescape)在验证前先做这步;python 镜像此前漏了,导致
+# ``field\_coverage`` 在 python 侧漏判(``\_`` 的反斜杠挡住 lookbehind),与 JS 结论
+# 不一致。补齐:验证前同样反转义,python 与 JS 对齐,如实反映 GitHub 会喂给渲染器的形态。
+_GFM_MATH_UNESCAPE_RE = re.compile(r"\\([!-/:-@\[-`{-~])")
 
-    Mirrors the JS guard emitted into validation.html; kept in sync by
-    test_formula_batch. Text-mode (`\\text{...}`) content is excluded.
+
+def _github_math_unescape(latex: str) -> str:
+    return _GFM_MATH_UNESCAPE_RE.sub(r"\1", latex)
+
+
+def has_identifier_subscript(latex: str) -> bool:
+    r"""True if math-mode LaTeX carries a bare `_`/`^` + 2+ letters (gap #21).
+
+    Mirrors the JS guard emitted into validation.html: first undo GitHub's GFM
+    backslash-stripping (so ``field\_coverage`` is checked as GitHub sees it,
+    ``field_coverage``), then strip text-mode (``\text{...}``) spans, then match.
+    Kept in sync by test_validation_document.
     """
 
-    return bool(_IDENTIFIER_SUBSCRIPT_RE.search(_strip_text_groups(latex)))
+    unescaped = _github_math_unescape(latex)
+    return bool(_IDENTIFIER_SUBSCRIPT_RE.search(_strip_text_groups(unescaped)))
+
+
+# math mode 下作为**字面字符**出现的 TeX 特殊符号必须转义,否则被当结构记号解析。
+# 结构下标/上标来自 msupsub/mfrac 的 vlist(走 _parse_vlist),**不经过本函数**;所以任何
+# 到达 _map_text 的字面 ``_``/``^`` 都是渲染文本里的真实字符(如标识符 field_coverage 的
+# 下划线),不是结构记号。此处按**单字符**转义(KaTeX HTML 的 mord 是逐字符叶子);把同一
+# 标识符的多个 ``\_`` 片段合并成 ``\text{...}`` 是 parse_katex 末尾对**完整装配串**做的,
+# 见 _wrap_literal_underscore_runs。``% # & $`` 直接加反斜杠即可(不受 GitHub 反转义误读)。
+_MATH_MODE_ESCAPES = {
+    "_": r"\_",
+    "%": r"\%",
+    "#": r"\#",
+    "&": r"\&",
+    "$": r"\$",
+    "^": r"\string^",
+}
 
 
 def _map_text(text: str, text_mode: bool = False) -> str:
@@ -287,7 +323,7 @@ def _map_text(text: str, text_mode: bool = False) -> str:
         return _escape_text_mode(text)
     if text in OPERATORS:
         return OPERATORS[text]
-    return "".join(SYMBOLS.get(char, char) for char in text)
+    return "".join(SYMBOLS.get(char) or _MATH_MODE_ESCAPES.get(char, char) for char in text)
 
 
 def _join(parts: Iterable[str]) -> str:
