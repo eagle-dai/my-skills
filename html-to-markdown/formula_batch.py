@@ -241,8 +241,34 @@ _MATH_ONLY_IN_TEXT_RE = re.compile(r"[_^]\{|\\(?:frac|sqrt|overline|mathbb|mathc
 # 2+ ASCII letters is almost always an identifier mis-read as a subscript.
 # `\text{...}` content is text mode (its `_` is handled by gap #18) so strip it
 # first. A command backslash (`\frac`) is not a subscript, hence the (?<!\\).
-_TEXT_GROUP_RE = re.compile(r"\\text\{[^{}]*\}")
 _IDENTIFIER_SUBSCRIPT_RE = re.compile(r"(?<!\\)[_^][A-Za-z]{2,}")
+
+
+def _strip_text_groups(latex: str) -> str:
+    r"""Remove every ``\text{...}`` span, honoring nested braces.
+
+    A plain regex (``\\text\{[^{}]*\}``) stops at the first inner ``{``, so
+    ``\text{a {b} c_def}`` would leak ``c_def`` and cause a false positive. Scan
+    with a brace-depth counter instead. Mirrored by the JS guard.
+    """
+
+    out = []
+    i = 0
+    n = len(latex)
+    while i < n:
+        if latex.startswith(r"\text{", i):
+            depth = 1
+            i += 6  # past \text{
+            while i < n and depth:
+                if latex[i] == "{":
+                    depth += 1
+                elif latex[i] == "}":
+                    depth -= 1
+                i += 1
+        else:
+            out.append(latex[i])
+            i += 1
+    return "".join(out)
 
 
 def has_identifier_subscript(latex: str) -> bool:
@@ -252,8 +278,7 @@ def has_identifier_subscript(latex: str) -> bool:
     test_formula_batch. Text-mode (`\\text{...}`) content is excluded.
     """
 
-    math_only = _TEXT_GROUP_RE.sub("", latex)
-    return bool(_IDENTIFIER_SUBSCRIPT_RE.search(math_only))
+    return bool(_IDENTIFIER_SUBSCRIPT_RE.search(_strip_text_groups(latex)))
 
 
 def _map_text(text: str, text_mode: bool = False) -> str:
@@ -449,9 +474,23 @@ window.githubMathUnescape = function (s) {{
 // followed by 2+ ASCII letters in math mode is almost always an identifier
 // mis-read as a subscript. Strip \\text{{...}} (text mode, handled by gap #18)
 // first; a command backslash (\\frac) is excluded via the (?<!\\\\) lookbehind.
+window.stripTextGroups = function (s) {{
+  // Remove every \\text{{...}} span honoring nested braces (a regex stops at the
+  // first inner brace and would leak e.g. c_def from \\text{{a {{b}} c_def}}).
+  var out = '', i = 0;
+  while (i < s.length) {{
+    if (s.substr(i, 6) === '\\\\text{{') {{
+      var depth = 1; i += 6;
+      while (i < s.length && depth) {{
+        if (s[i] === '{{') depth++; else if (s[i] === '}}') depth--;
+        i++;
+      }}
+    }} else {{ out += s[i]; i++; }}
+  }}
+  return out;
+}};
 window.hasIdentifierSubscript = function (s) {{
-  var mathOnly = s.replace(/\\\\text\{{[^{{}}]*\}}/g, '');
-  return /(?<!\\\\)[_^][A-Za-z]{{2,}}/.test(mathOnly);
+  return /(?<!\\\\)[_^][A-Za-z]{{2,}}/.test(window.stripTextGroups(s));
 }};
 window.runFormulaValidation = function () {{
   if (!window.katex || typeof window.katex.render !== 'function') {{

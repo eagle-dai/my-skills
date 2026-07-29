@@ -38,6 +38,14 @@ class GuessCodeLanguageTests(unittest.TestCase):
         code = "python -m pytest tests/ -q\npip install -r requirements.txt"
         self.assertEqual(fast_converter.guess_code_language(code), "bash")
 
+    def test_explicit_command_invocation_is_bash(self) -> None:
+        # 明确的包/测试命令调用是 STRONG 信号,单条即判 bash(散文不会这样写)。
+        # 关键:这些信号与行首裸命令列表不相交,同一文本不会被两条弱信号重复计分。
+        for code in ("pip install numpy", "python -m pytest tests/", "pytest -q"):
+            self.assertEqual(fast_converter.guess_code_language(code), "bash", code)
+        # 但纯散文即便含 "pip" 词也不该命中(需命令形态)。
+        self.assertIsNone(fast_converter.guess_code_language("use pip to install it"))
+
     def test_powershell_signals(self) -> None:
         # $env: 是 PowerShell 强特征;哪怕含 `python -m`(也命中 bash)也应判 powershell。
         code = '$env:PYTHONPATH="src"\npython -m pytest tests/test_x.py -q'

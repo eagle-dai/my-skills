@@ -121,12 +121,14 @@ _PS_SIGNALS = (
 _BASH_SIGNALS = (
     (re.compile(r"^\s*#!.*\b(?:bash|sh)\b", re.M), _STRONG),
     (re.compile(r"^\s*\$\s+\S", re.M), _STRONG),
-    # A command-line invocation at line start is a weak signal on its own
-    # (one line could be prose); two command lines clear the bar.
-    (re.compile(r"^\s*(?:pip|python|pytest|npm|npx|git|cd|export|sudo|apt|curl)\b", re.M), _WEAK),
-    (re.compile(r"\bpython\s+-m\b|\bpip\s+install\b|\bpytest\b"), _WEAK),
+    # Explicit package/test invocations (`python -m pytest ...`, `pip install`)
+    # read as commands, not prose — one is enough. STRONG. Each pattern set is
+    # disjoint from the line-start command list below so the same text can't
+    # score twice (a plain `pip install numpy` must not reach the bar alone).
+    (re.compile(r"\bpython\s+-m\b|\bpip\s+install\b|^\s*pytest\b", re.M), _STRONG),
+    # Bare shell utilities at line start — weak; two lines (or a pipe) clear it.
+    (re.compile(r"^\s*(?:npm|npx|git|cd|export|sudo|apt|curl|mkdir|rm|cp|mv|echo)\b", re.M), _WEAK),
     (re.compile(r"\|\s*(?:grep|jq|awk|sed|xargs)\b"), _WEAK),
-    (re.compile(r"^\s*-{1,2}\w", re.M), _WEAK),
 )
 
 

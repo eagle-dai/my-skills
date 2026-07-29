@@ -243,6 +243,10 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertFalse(
             formula_batch.has_identifier_subscript(r"\text{observed_at}")
         )
+        # 嵌套花括号的 \text 也须完整剥离(不能停在第一个内层 {)。
+        self.assertFalse(
+            formula_batch.has_identifier_subscript(r"\text{a {b} c_def}")
+        )
         # 但 \text 外的 math-mode 标识符仍命中。
         self.assertTrue(
             formula_batch.has_identifier_subscript(r"rate_value + \text{observed_at}")
@@ -265,17 +269,60 @@ class FormulaBatchTests(unittest.TestCase):
         # 额外转义,{2,} 原样出现)比对字符类与量词。
         self.assertIn("[_^][A-Za-z]{2,}", html)
         self.assertIn("(?<!\\\\)", html)
-        # 抠出的 JS 正则用相同 latex 跑,结果须与 Python 镜像一致(手工镜像 JS 判据)。
-        js_body = _re.search(r"/(\(\?<!\\\\\)\[_\^\]\[A-Za-z\]\{2,\})/", html)
-        self.assertIsNotNone(js_body, "hasIdentifierSubscript 核心正则未找到")
-        py_mirror = _re.compile(r"(?<!\\)[_^][A-Za-z]{2,}")
-        for latex, expect in (
-            ("field_coverage", True),
+
+    def test_emitted_js_guard_runs_in_node_and_matches_python(self) -> None:
+        # 缺陷 20 教训:JS 与 Python 镜像必须真跑比对,不能只做字符串存在检查。
+        # 抠出发货 HTML 里的 stripTextGroups + hasIdentifierSubscript 两函数,用
+        # node 真执行一批用例(含嵌套花括号 \text 的反例),逐条对齐 Python 判据。
+        import re as _re
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node 不可用,跳过 JS 真跑比对")
+
+        html = formula_batch.validation_document(
+            [{"source_id": "f1", "dom_hash": "h1", "latex": "x"}]
+        )
+        # 发货 HTML 里 JS 已是单花括号(validation_document 的 f-string 已把 {{ 还原)。
+        fns = _re.findall(
+            r"window\.(?:stripTextGroups|hasIdentifierSubscript) = function.*?\n\};",
+            html,
+            _re.S,
+        )
+        self.assertEqual(len(fns), 2, "未抠到两个 JS 函数")
+        cases_expected = [
+            ("field_coverage = \\frac{valid_required_fields}{required_fields}", True),
             ("x_i", False),
-            (r"\frac{a}{b}", False),
-        ):
-            self.assertEqual(bool(py_mirror.search(latex)), expect)
-            self.assertEqual(formula_batch.has_identifier_subscript(latex), expect)
+            ("x_2", False),
+            ("x_{ij}", False),
+            ("\\sum_{i=1}^{n}", False),
+            ("\\frac{a}{b}", False),
+            ("A_t = E_t \\leq L", False),
+            ("\\text{observed_at}", False),  # text mode,剥离后不命中
+            ("rate_value + \\text{observed_at}", True),  # \text 外的标识符仍命中
+            ("\\text{a {b} c_def}", False),  # 嵌套花括号:深度剥离后不命中
+        ]
+        cases = [c for c, _ in cases_expected]
+        script = (
+            "global.window = {};\n"
+            + "\n".join(fns)
+            + "\nconst cases = "
+            + json.dumps(cases)
+            + ";\nconsole.log(JSON.stringify("
+            "cases.map(c => window.hasIdentifierSubscript(c))));\n"
+        )
+        proc = subprocess.run(
+            [node, "-e", script], capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        js_results = json.loads(proc.stdout.strip())
+        py_results = [formula_batch.has_identifier_subscript(c) for c in cases]
+        expected = [e for _, e in cases_expected]
+        # 两端一致,且都符合预期(不只是一致但都错)。
+        self.assertEqual(js_results, py_results, "JS 与 Python 镜像判定不一致")
+        self.assertEqual(js_results, expected, f"JS 判定不符合预期: {js_results}")
 
     def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
         html = """
