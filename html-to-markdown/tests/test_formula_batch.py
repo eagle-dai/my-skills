@@ -10,8 +10,8 @@ import unittest
 from bs4 import BeautifulSoup
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "formula_batch.py"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "formula_batch.py"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_formula_batch", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 formula_batch = importlib.util.module_from_spec(SPEC)

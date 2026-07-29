@@ -8,9 +8,9 @@ import unittest
 from bs4 import BeautifulSoup
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "contracts.py"
-FIXTURE_PATH = ROOT / "tests" / "fixtures" / "selector_contract.html"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "contracts.py"
+FIXTURE_PATH = SKILL / "tests" / "fixtures" / "selector_contract.html"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_contracts", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 contracts = importlib.util.module_from_spec(SPEC)

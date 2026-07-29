@@ -5,6 +5,7 @@ Run: python3 -m pytest tests/test_markdown_postprocess.py  (from skill dir)
   or: python3 tests/test_markdown_postprocess.py            (plain asserts)
 """
 import importlib.util
+import tempfile
 from pathlib import Path
 
 _SKILL = Path(__file__).resolve().parent.parent
@@ -385,6 +386,124 @@ def test_clean_file_passes_check(tmp_path=None):
         assert mpp.main([path, "--check"]) == 0
     finally:
         os.unlink(path)
+
+
+# --- 规则6：CJK 行内公式两侧加空格（自根 tests/ 并入）--------------------
+# GitHub 渲染 CJK 紧贴 $…$ 会吞掉分隔，两侧补半角空格；ASCII 已有空格不动，
+# $$ 展示块与 fence 内的 $ 不碰。
+
+
+def test_cjk_both_sides_get_space():
+    assert pp("收益率$r_t$表示\n") == "收益率 $r_t$ 表示\n"
+
+
+def test_fullwidth_paren_gets_space():
+    assert pp("（$w_t$）\n") == "（ $w_t$ ）\n"
+
+
+def test_ascii_spaced_is_left_alone():
+    assert pp("see $r_t$ here\n") == "see $r_t$ here\n"
+
+
+def test_display_dollar_pair_untouched():
+    # $$ 展示分隔紧邻 CJK 不得被拆
+    text = "结论\n\n$$\nx=1\n$$\n"
+    assert pp(text) == text
+
+
+def test_dollar_inside_fence_untouched():
+    text = "前言\n\n```bash\necho 价格$USD 变量\n```\n"
+    out = pp(text)
+    assert "价格$USD" in out
+    assert "价格 $USD" not in out
+
+
+# --- 规则7：相邻加粗拼成的 **** 接缝去除（自根 tests/ 并入）---------------
+
+
+def test_quad_star_seam_removed():
+    # 相邻 bold span 拼成四星，GitHub 渲染错误 → 去接缝
+    assert pp("**表 1-4****置信度**\n") == "**表 1-4置信度**\n"
+
+
+def test_normal_bold_untouched():
+    assert pp("这是**重点**内容\n") == "这是**重点**内容\n"
+
+
+def test_quad_star_inside_fence_untouched():
+    text = "说明\n\n```\na****b\n```\n"
+    assert pp(text) == text
+
+
+# --- 规则1 补充：题注居中的裸表 / 裸字母编号 / fence 反例（自根 tests/ 并入）
+
+
+def test_bare_table_caption_centered():
+    # 裸表题注（区别于已覆盖的裸图题注）：走 bare 路径 + 表关键词
+    assert pp("表 6-1　行情数据的证据边界\n") == (
+        '<div align="center">\n\n**表 6-1　行情数据的证据边界**\n\n</div>\n'
+    )
+
+
+def test_bare_letter_numbered_caption_centered():
+    # 裸字母编号题注（区别于已覆盖的加粗字母编号）：钉住 X-Y 的 X 可为字母
+    assert pp("图 D-1　附录数据地图\n") == (
+        '<div align="center">\n\n**图 D-1　附录数据地图**\n\n</div>\n'
+    )
+    assert pp("表 A-2　字母编号来源卡\n") == (
+        '<div align="center">\n\n**表 A-2　字母编号来源卡**\n\n</div>\n'
+    )
+
+
+def test_caption_like_line_inside_fence_untouched():
+    # 反例：代码块内长得像题注的行不动
+    text = "说明\n\n```\n表 6-1　伪装成题注的代码行\n```\n"
+    assert pp(text) == text
+
+
+def test_letter_numbered_prose_mention_not_centered():
+    # 反例：字母编号的正文提及是半角空格 + 讲解长句，无全角空格锚点，不居中
+    line = "图 D-1 给出本讲核心知识地图。它不是要求每次都画图，而是提醒复核者。\n"
+    assert pp(line) == line
+
+
+# --- 规则8：CLI 三态退出码契约（自根 tests/ 并入）-------------------------
+# strict Phase 3 用 CLI 跑机械后处理门；--check 只读不改，无 --check 原地修复。
+
+
+def _write_delivery(text: str) -> Path:
+    directory = tempfile.mkdtemp()
+    path = Path(directory) / "delivery.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_check_compliant_exits_zero_and_leaves_file():
+    # 合规输入 = 已是多行居中块（当前目标形态）
+    path = _write_delivery('<div align="center">\n\n**表 6-1　标题**\n\n</div>\n')
+    original = path.read_text(encoding="utf-8")
+    assert mpp.main([str(path), "--check"]) == 0
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_check_noncompliant_exits_one_and_leaves_file():
+    # 退化产物：CJK 紧贴 $ + 未居中题注。--check 不改文件，只报退出 1。
+    path = _write_delivery("表 6-1　标题\n收益率$r_t$表示\n")
+    original = path.read_text(encoding="utf-8")
+    assert mpp.main([str(path), "--check"]) == 1
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_fix_rewrites_file_in_place():
+    path = _write_delivery("表 6-1　标题\n收益率$r_t$表示\n")
+    assert mpp.main([str(path)]) == 0
+    fixed = path.read_text(encoding="utf-8")
+    assert '<div align="center">\n\n**表 6-1　标题**\n\n</div>' in fixed
+    assert "收益率 $r_t$ 表示" in fixed
+
+
+def test_missing_file_exits_two():
+    assert mpp.main(["/no/such/file.md", "--check"]) == 2
 
 
 if __name__ == "__main__":

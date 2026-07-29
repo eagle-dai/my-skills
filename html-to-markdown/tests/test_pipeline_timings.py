@@ -7,9 +7,9 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "pipeline.py"
-FIXTURE_PATH = ROOT / "tests" / "fixtures" / "pipeline_article.html"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "pipeline.py"
+FIXTURE_PATH = SKILL / "tests" / "fixtures" / "pipeline_article.html"
 SPEC = importlib.util.spec_from_file_location("html_to_markdown_pipeline_timings", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 pipeline = importlib.util.module_from_spec(SPEC)

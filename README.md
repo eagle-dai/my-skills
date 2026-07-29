@@ -40,13 +40,10 @@
 │   ├── contracts.py
 │   ├── image_disposition.py
 │   ├── markdown_fences.py
-│   └── tests/              # skill 本地测试（脚本入口，由 run_tests.py 逐个子进程运行）
-└── tests/                  # 仓库级套件，unittest discover 收集
-    ├── fixtures/
-    ├── test_pipeline.py
-    ├── test_formula_batch.py
-    ├── test_preflight.py
-    └── test_benchmark.py
+│   └── tests/              # skill 本地测试 + fixtures/（脚本入口，由 run_tests.py 逐个子进程运行）
+└── tests/                  # 仅仓库级/跨 skill 套件，unittest discover 收集
+    ├── test_documentation_alignment.py   # 跨 skill 文档一致性
+    └── test_first_batch_rules.py         # 跨 formula-extraction 与 html-to-markdown
 ```
 
 ### `_meta/`
@@ -119,6 +116,16 @@ python run_tests.py
 `run_tests.py` 是仓库级测试收集器：先用 `unittest discover` 跑根 `tests/`，再扫描每个 `<skill>/tests/test_*.py` 并在独立子进程中按脚本运行（skill 目录名带连字符，不是合法包名，无法被 `unittest discover` 递归）。任一套件失败即返回非零退出码。
 
 新增 skill 时无需改动收集器：把 `<skill>/tests/test_*.py`（按 `Path(__file__).parent` 路径加载本 skill 模块、带脚本入口）放进新 skill 目录即可自动纳入。
+
+### 测试放哪一层
+
+按**被测对象的归属**决定，而不是按运行是否方便：
+
+- **只测某一个 skill 自己的模块或文档** → 放 `<skill>/tests/`。判据：加载的模块、读取的 `.md`、断言的行为都属于同一个 skill。例如 `html-to-markdown/tests/` 里的 `fast_converter`、`formula_batch`、`pipeline` 等单元测试，以及只校验 `html-to-markdown/SKILL.md` 入口契约的测试。
+- **测跨 skill 的一致性，或仓库整体** → 放根 `tests/`。判据：没有任何单个 skill 能"认领"这个测试。例如 `test_documentation_alignment`（同时读多个 skill 的 `.md`，校验规则彼此不矛盾）、`test_first_batch_rules`（跨 `formula-extraction` 与 `html-to-markdown` 的批处理规则）。
+- **A 依赖 B 时的测试跟着依赖方 A 放**，不放 B。B 的测试只对 B 自己的对外契约负责；A 自己写测试验证"我调用 B 的方式没问题"。只有"专门测 A↔B 协作、且不专属任一方"的测试才上升到根 `tests/`。
+
+纯文档 skill（如 `formula-extraction`，只有 `.md`、无可执行代码）没有可断言的模块，因此不带 `tests/` 目录；它对外承诺的规则由根 `tests/` 里的跨 skill 一致性测试覆盖。
 
 GitHub Actions 在 pull request、推送到 `main` 和手动触发时，使用 Python 3.13 安装依赖并运行 `python run_tests.py`。
 

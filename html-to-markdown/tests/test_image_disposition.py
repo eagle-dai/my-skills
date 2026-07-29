@@ -6,8 +6,8 @@ import sys
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "html-to-markdown" / "image_disposition.py"
+SKILL = Path(__file__).resolve().parent.parent
+MODULE_PATH = SKILL / "image_disposition.py"
 SPEC = importlib.util.spec_from_file_location("image_disposition", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 image_disposition = importlib.util.module_from_spec(SPEC)

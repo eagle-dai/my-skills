@@ -21,9 +21,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
-ROOT = Path(__file__).resolve().parents[1]
+SKILL = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-MODULE_PATH = ROOT / "html-to-markdown" / "watermark.py"
+MODULE_PATH = SKILL / "watermark.py"
 SPEC = importlib.util.spec_from_file_location(
     "html_to_markdown_watermark_tests", MODULE_PATH
 )

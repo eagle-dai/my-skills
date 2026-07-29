@@ -109,7 +109,7 @@ def run_skill_suites() -> bool:
         if proc.returncode != 0:
             ok = False
             continue
-        if not _ran_any_tests(proc.stdout):
+        if not _ran_any_tests(proc.stdout, proc.stderr):
             print(
                 f"NO TEST SIGNAL (exited 0 without running tests): {rel}",
                 flush=True,
@@ -118,9 +118,15 @@ def run_skill_suites() -> bool:
     return ok
 
 
-def _ran_any_tests(stdout: str) -> bool:
-    """True if the child's stdout shows it actually ran tests."""
-    return bool(re.search(r"\bpassed\b|\bRan \d+ test", stdout))
+def _ran_any_tests(stdout: str, stderr: str) -> bool:
+    """True if the child showed it actually ran tests.
+
+    ``unittest.main()`` writes its ``Ran N tests`` / ``OK`` summary to stderr,
+    while plain-assert files print a ``passed`` line to stdout — so both
+    streams must be inspected or standard unittest files look like no-ops.
+    """
+    combined = f"{stdout}\n{stderr}"
+    return bool(re.search(r"\bpassed\b|\bRan \d+ test", combined))
 
 
 def main() -> int:
