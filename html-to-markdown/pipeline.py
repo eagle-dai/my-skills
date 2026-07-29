@@ -16,6 +16,54 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
+
+# Third-party runtime dependencies imported (transitively) by the heavy modules
+# below. Import name -> requirements.txt distribution name.
+_RUNTIME_DEPS = {
+    "bs4": "beautifulsoup4",
+    "lxml": "lxml",
+    "numpy": "numpy",
+    "PIL": "pillow",
+    "cv2": "opencv-python-headless",
+}
+_INSTALL_HINT = (
+    "uv venv .venv && "
+    "uv pip install --python .venv/bin/python -r requirements.txt"
+)
+
+
+def _check_runtime_deps(deps: dict[str, str] | None = None) -> str | None:
+    """Return a friendly error string naming missing dependencies, or None.
+
+    Pure and importlib-based so tests can pass a fake dep map. The heavy
+    ``from fast_converter import ...`` lines below fail at *import* time when a
+    dependency like numpy is absent, long before ``main()`` runs; the ``main``
+    guard calls this first so the CLI prints an actionable hint instead of a
+    raw ModuleNotFoundError.
+    """
+    import importlib.util
+
+    deps = _RUNTIME_DEPS if deps is None else deps
+    missing = [
+        dist for mod, dist in deps.items() if importlib.util.find_spec(mod) is None
+    ]
+    if not missing:
+        return None
+    return (
+        "missing required dependencies: "
+        + ", ".join(sorted(missing))
+        + f"\nInstall them into an isolated env, e.g.:\n  {_INSTALL_HINT}"
+    )
+
+
+# When run as a script, fail closed with an actionable hint *before* the heavy
+# imports below explode with a bare ModuleNotFoundError.
+if __name__ == "__main__":
+    _dep_error = _check_runtime_deps()
+    if _dep_error is not None:
+        print(f"pipeline failed: {_dep_error}")
+        raise SystemExit(2)
+
 from fast_converter import EmittedCounts, FastPathUnsupported, MarkdownConverter
 import formula_batch
 from formula_batch import resolve_formulas
@@ -352,6 +400,36 @@ def clear_previous_delivery(output: Path, package: str) -> None:
         zip_path.unlink()
 
 
+def detect_output_collision(output: Path, package: str) -> list[str]:
+    """Names of *other* documents already delivered into this output dir.
+
+    A single output dir holds one document's ``preflight/``, ``.formula-cache``
+    and ``formula-validation.html``. Running a second, differently-named
+    document into the same dir silently overwrites those shared artifacts and
+    loses the first document's formula records. This does not change routing;
+    the caller only surfaces a warning so the user can give each document its
+    own ``--output``. Same-name reruns (resume) are never a collision.
+    """
+    if not output.exists():
+        return []
+    others: set[str] = set()
+    for zip_path in output.glob("*.zip"):
+        if zip_path.is_file() and zip_path.stem != package:
+            others.add(zip_path.stem)
+    for child in output.iterdir():
+        # A delivered package dir is named <name>/ and contains <name>.md — a
+        # marker specific to this pipeline's output, so a stray dir that merely
+        # has a ``files/`` child (e.g. preflight/) is not mistaken for a package.
+        if (
+            child.is_dir()
+            and not child.is_symlink()
+            and child.name != package
+            and (child / f"{child.name}.md").is_file()
+        ):
+            others.add(child.name)
+    return sorted(others)
+
+
 def strict_outcome(
     output: Path,
     mode: str,
@@ -363,6 +441,7 @@ def strict_outcome(
     timings_ms: dict[str, float] | None = None,
     resume_used: bool = False,
     resume_fallback_reason: str = "",
+    output_collision: list[str] | None = None,
 ) -> PipelineOutcome:
     _remove_resume_ledger(output)
     report = {
@@ -371,6 +450,7 @@ def strict_outcome(
         "requested_mode": mode,
         "recommended_mode": "strict",
         "output_name": output_name,
+        "output_collision": output_collision or [],
         "allow_unprocessed_images": allow_unprocessed_images,
         "strict_reasons": reasons,
         "preflight": manifest,
@@ -416,6 +496,7 @@ def run_pipeline(
     timings = _new_timings()
     package = safe_package_name(output_name if output_name is not None else input_path.stem)
     output.mkdir(parents=True, exist_ok=True)
+    output_collision = detect_output_collision(output, package)
     source_bytes = input_path.read_bytes()
     source_sha256 = _sha256_bytes(source_bytes)
 
@@ -498,6 +579,7 @@ def run_pipeline(
             timings_ms=timings,
             resume_used=resume_used,
             resume_fallback_reason=resume_fallback_reason,
+            output_collision=output_collision,
         )
 
     article_dir = output / package
@@ -544,6 +626,7 @@ def run_pipeline(
             timings_ms=timings,
             resume_used=resume_used,
             resume_fallback_reason=resume_fallback_reason,
+            output_collision=output_collision,
         )
     timings["conversion"] = _elapsed_ms(conversion_started)
 
@@ -603,6 +686,7 @@ def run_pipeline(
         "status": status,
         "requested_mode": mode,
         "output_name": package,
+        "output_collision": output_collision,
         "allow_unprocessed_images": allow_unprocessed_images,
         "preflight": result.manifest,
         "emitted_counts": conversion.counts.as_dict(),
