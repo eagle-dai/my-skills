@@ -67,6 +67,9 @@ class FormulaRecord:
     source_kind: str
     dom_hash: str
     original_latex: str
+    # 缺陷 #16：``var \leftarrow \text{ident}`` 映射公式拆分后，标识符从公式里移出、
+    # 变行内代码。非空时 emit 为 ``$original_latex$ ← `trailing_code```。默认空=不拆。
+    trailing_code: str = ""
 
 
 @dataclass(frozen=True)
