@@ -1,6 +1,6 @@
 """Acceptance: 图/表下面的标题（题注）不能在 fast path 被静默吞成纯文本。
 
-对应 acceptance/CASES.md「图/表下面的标题要居中」。
+对应 html-to-markdown/acceptance/CASES.md「图/表下面的标题要居中」。
 
 退化根因：带 <img> 的 <figure> 里如果有 <figcaption>，fast_converter 曾把它
 当普通文本直接吐出——既不居中，也不做 caption ledger 守恒。这类页面必须路由到
