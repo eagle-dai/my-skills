@@ -20,6 +20,7 @@
 .
 ├── README.md
 ├── requirements.txt
+├── run_tests.py
 ├── .github/workflows/tests.yml
 ├── _meta/skill-self-improvement.md
 ├── formula-extraction/
@@ -38,8 +39,9 @@
 │   ├── pipeline_utils.py
 │   ├── contracts.py
 │   ├── image_disposition.py
-│   └── markdown_fences.py
-└── tests/
+│   ├── markdown_fences.py
+│   └── tests/              # skill 本地测试（脚本入口，由 run_tests.py 逐个子进程运行）
+└── tests/                  # 仓库级套件，unittest discover 收集
     ├── fixtures/
     ├── test_pipeline.py
     ├── test_formula_batch.py
