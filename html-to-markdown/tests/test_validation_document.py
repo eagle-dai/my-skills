@@ -54,9 +54,41 @@ def test_autorun_fails_closed_on_missing_runtime():
 
 
 def test_validator_version_unchanged():
-    # 验证语义没变,不得 bump(否则本次刚验的报告失效)
-    assert _fb.VALIDATOR_VERSION == "formula-batch-v3"
-    assert _fb.PARSER_VERSION == "katex-html-v3"
+    # 版本锚:变更解析/验证语义时必须 bump(否则旧缓存/旧报告失效不被察觉)。
+    # v4:validator 增 identifier-as-subscript 门;parser 增 math-mode 字面 `_`/特殊符转义。
+    assert _fb.VALIDATOR_VERSION == "formula-batch-v4"
+    assert _fb.PARSER_VERSION == "katex-html-v4"
+
+
+# --- math-mode 字面特殊符转义(gap #18/#21:field_coverage 被当下标) -----------
+
+def test_map_text_escapes_literal_underscore_per_char():
+    # _map_text 逐字符转义(KaTeX HTML mord 是逐字符叶子):字面 _ → \_,
+    # 装配后 field\_coverage。这是 parser 的忠实输出。
+    assert _fb._map_text("field_coverage") == r"field\_coverage"
+
+
+def test_underscore_identifier_still_fails_github_guard():
+    # 硬事实回归:带下划线标识符即使 \_ 转义,GitHub 也会反转义成下标 → validator
+    # 的 identifier-as-subscript 门必须继续判失败(fail-closed 交 strict/manual)。
+    assert _fb.has_identifier_subscript(r"field\_coverage")
+
+
+def test_map_text_escapes_other_math_specials():
+    assert _fb._map_text("a%b") == r"a\%b"
+    assert _fb._map_text("x#y") == r"x\#y"
+    assert _fb._map_text("p&q") == r"p\&q"
+
+
+def test_map_text_greek_and_operators_unaffected():
+    # 转义不能误伤希腊字母/运算符映射
+    assert _fb._map_text("α") == r"\alpha"
+    assert _fb._map_text("max") == r"\max"
+
+
+def test_map_text_text_mode_still_escapes_underscore():
+    # text mode 分支(\text{} 内)行为不变
+    assert _fb._map_text("valid_at", text_mode=True) == r"valid\_at"
 
 
 def test_copy_katex_runtime_places_asset():
