@@ -19,10 +19,10 @@ pp = mpp.postprocess_markdown
 
 # --- 规则1：题注居中（含加粗表题 bug 修复 + 图题回归） -------------------
 
-def test_bare_figure_caption_centered_regression():
-    # 图题无加粗，原有行为不能回归
+def test_bare_figure_caption_centered_and_bolded():
+    # 用户决策：统一加粗所有题注。图题源里无 **，命中后强制包 <strong>。
     out = pp("图 6-1　数据证据门")
-    assert out == '<div align="center">图 6-1　数据证据门</div>'
+    assert out == '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
 
 
 def test_bold_table_caption_centered():
@@ -55,9 +55,40 @@ def test_prose_mention_not_centered():
     assert pp(line) == line
 
 
-def test_already_centered_not_double_wrapped():
+def test_already_centered_bare_figure_gets_bolded():
+    # 已居中但内部裸文本（旧产物）→ 统一加粗决策下重处理成 <strong>
     line = '<div align="center">图 6-1　数据证据门</div>'
+    assert pp(line) == '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
+
+
+def test_already_centered_strong_not_double_wrapped():
+    # 已居中且已加粗 → 幂等
+    line = '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
     assert pp(line) == line
+
+
+def test_code_caption_centered_and_bolded():
+    # bug: 关键词集漏 `代码`，代码题注既不居中也不加粗
+    out = pp("代码 8-1　normalize 入口")
+    assert out == '<div align="center"><strong>代码 8-1　normalize 入口</strong></div>'
+
+
+def test_code_caption_mixed_bold_and_inline_code():
+    # 实测坏形态：**代码 N…：**`ident`**…** 三段混排，行内代码不能被 ** 破坏
+    line = "**代码 8-2　业务源码：**`normalize_candle`**外部 K 线行标准化入口**"
+    out = pp(line)
+    assert out == (
+        '<div align="center"><strong>代码 8-2　业务源码：</strong>'
+        "<code>normalize_candle</code>"
+        "<strong>外部 K 线行标准化入口</strong></div>"
+    )
+    assert "**" not in out and "`" not in out
+
+
+def test_bare_figure_caption_with_inline_code_bolds_text_only():
+    # 裸图题内含行内代码：只加粗纯文本段，<code> 段不套进 strong
+    out = pp("图 3-1　`main` 调用图")
+    assert out == '<div align="center"><strong>图 3-1　</strong><code>main</code><strong> 调用图</strong></div>'
 
 
 def test_prewrapped_div_bold_repaired():

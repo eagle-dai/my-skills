@@ -53,46 +53,75 @@ def _space_cjk_inline_math_line(line: str) -> str:
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 
 
-# --- 题注居中 -------------------------------------------------------------
-# SingleFile 题注行的稳定形态：``图/表 N`` 后紧跟一个全角空格 U+3000，再接标题，
-# 整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），不含
-# ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
+# --- 题注居中 + 统一加粗 --------------------------------------------------
+# SingleFile 题注行的稳定形态：``图/表/代码/清单/公式 N`` 后紧跟一个全角空格 U+3000，
+# 再接标题，整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），
+# 不含 ``图N　``（全角空格）这个锚点，因此不会被误命中——这是把题注和正文引用区分开
 # 的机制信号，不是靠猜文本内容。命中后包 ``<div align="center">`` 让 GitHub 居中。
 # 编号 ``X-Y`` 的 X/Y 可为数字或字母（``图 D-1``、``表 A-2``、``图 6-1``），与
 # conversion-rules.md「编号识别」一致——只用数字会漏掉附录常见的字母编号题注。
-# 可选的 ``**`` 前缀：SingleFile 的图题是独立 ``<div>``（无加粗）转出裸 ``图 N…``，
-# 表题却是 ``data-slate-type=bold`` span 转出 ``**表 N…**``。此前正则只认行首
-# ``图/表``，加粗表题被前缀 ``**`` 挡住不居中（bug）。这里容忍可选 ``**`` 前缀。
-# 命中加粗表题时**不能**把 ``**…**`` 原样塞进单行 ``<div>``：GitHub 对 same-line 裸
-# HTML 块内的 ``**bold**`` 不做 Markdown 解析，星号会当字面量显示、加粗丢失（bug）。
-# 因此命中后把 ``**X**`` 转成 ``<strong>X</strong>`` 再包 ``<div>``——纯 HTML 加粗
-# 在裸 HTML 块内正常渲染，仍保持单行、与本模块 line-oriented 架构一致。裸图题无 ``**``
-# 时形态不变。规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
 #
-# 已被包进 ``<div align="center">…</div>`` 但内部仍是 ``**…**`` 的行（旧版本产出、
-# 或手工收尾遗留）同样要修：抽出 div 内文，把 ``**X**`` 转 ``<strong>X</strong>`` 后重包。
-# 幂等——内部已是 ``<strong>`` 或无加粗时原样返回。
-_CAPTION_LINE = re.compile(r"^(?:\*\*)?(图|表)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S")
-# 题注整行至多一处加粗（整段标题被一对 ``**`` 包住）；把它转成 <strong>。
-_CAPTION_BOLD = re.compile(r"^\*\*(.+)\*\*$")
-# 已居中的题注 div，抓内部内容做加粗修复。
+# **关键词集**：``图 表 代码 清单 公式``。此前只认 ``图 表``，``代码 N-N`` 的代码题注
+# （SingleFile 常见）漏命中、既不居中也不统一加粗（bug）。keyword 与 conversion-rules.md
+# 「块级居中与题注」的命名性短标题列表保持一致。
+#
+# **统一加粗（用户决策）**：所有题注一律加粗，不管源 HTML 有无加粗 mark。SingleFile 里
+# 表题/代码题是 ``data-slate-type=bold`` span（转出带 ``**``），图题却是纯 ``<div>``
+# （转出裸文本无 ``**``）。为视觉一致，命中后强制加粗。
+#
+# **加粗/行内代码在裸 HTML 块内的渲染陷阱**：GitHub 对 same-line 裸 ``<div>`` 块内的
+# Markdown 标记（``**bold**``、`` `code` ``）不做解析，会当字面量显示（bug）。因此命中后：
+#   1. ``**X**`` → ``<strong>X</strong>``（可多段，如 ``**A**`code`**B**`` 混排）；
+#   2. `` `Y` `` → ``<code>Y</code>``；
+#   3. 转换后仍无任何 ``<strong>`` 的裸题注（如图题）→ 把 strong 外的纯文本段整体包
+#      ``<strong>``，行内代码 ``<code>`` 段保持不动（不套进 strong）。
+# 全 HTML 后再包 ``<div align="center">``，加粗、行内代码、居中都能在 GitHub 正常渲染，
+# 仍保持单行、与本模块 line-oriented 架构一致。
+# 规则见 conversion-rules.md「块级居中与题注」；回归 tests/test_markdown_postprocess.py。
+#
+# 已被包进 ``<div align="center">…</div>`` 的行（旧版本产出、或手工收尾遗留）同样重处理：
+# 抽出 div 内文按上面步骤修复后重包。幂等——已是 ``<strong>``/``<code>`` 且已加粗时原样返回。
+_CAPTION_LINE = re.compile(
+    r"^(?:\*\*)?(图|表|代码|清单|公式)\s*[A-Za-z0-9]+(?:[-–][A-Za-z0-9]+)?　\S"
+)
+# 行内一段成对 ``**…**``（非贪婪，可多段）；转 <strong>。
+_BOLD_SPAN = re.compile(r"\*\*(.+?)\*\*")
+# 行内代码 `` `…` ``；转 <code>。
+_CODE_SPAN = re.compile(r"`([^`]+)`")
+# 已居中的题注 div，抓内部内容重处理。
 _CENTERED_DIV = re.compile(r'^<div align="center">(.*)</div>\s*$')
 
 
-def _bold_to_strong(text: str) -> str:
-    """题注整行至多一处成对 ``**``；命中转 <strong>，否则原样（幂等）。"""
-    return _CAPTION_BOLD.sub(r"<strong>\1</strong>", text)
+def _caption_inner_to_html(text: str) -> str:
+    """把题注内文的 Markdown 标记转成裸 HTML 块内能渲染的形态，并强制加粗。
+
+    步骤：``**X**`` → <strong>，`` `Y` `` → <code>；若转换后无任何 <strong>
+    （裸题注如图题），把 <code>/已有 HTML tag 之外的纯文本整体包 <strong>。
+    幂等：已含 <strong>（源本就加粗）时不再追加外层加粗。
+    """
+    html = _BOLD_SPAN.sub(r"<strong>\1</strong>", text)
+    html = _CODE_SPAN.sub(r"<code>\1</code>", html)
+    if "<strong>" in html:
+        return html  # 源已加粗（表题/代码题），保留其加粗边界
+    # 裸题注（图题）：强制加粗——把 <code>…</code> 之外的纯文本段各自包 <strong>。
+    parts = re.split(r"(<code>.*?</code>)", html)
+    out = []
+    for part in parts:
+        if part.startswith("<code>") or not part:
+            out.append(part)
+        else:
+            out.append(f"<strong>{part}</strong>")
+    return "".join(out)
 
 
 def _center_caption_line(line: str) -> str:
     centered = _CENTERED_DIV.match(line.strip())
     if centered:
-        # 已包 div：只修内部残留的 ** 加粗（GitHub same-line 裸 HTML 内不解析）。
         inner = centered.group(1)
-        fixed = _bold_to_strong(inner)
+        fixed = _caption_inner_to_html(inner)
         return line if fixed == inner else f'<div align="center">{fixed}</div>'
     if _CAPTION_LINE.match(line):
-        return f'<div align="center">{_bold_to_strong(line)}</div>'
+        return f'<div align="center">{_caption_inner_to_html(line)}</div>'
     return line
 
 
