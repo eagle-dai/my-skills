@@ -20,7 +20,10 @@ from pipeline_utils import preflight, root_from_html, write_json
 SCHEMA_VERSION = "1.1"
 VALIDATION_SCHEMA_VERSION = "1.1"
 PARSER_VERSION = "katex-html-v3"
-VALIDATOR_VERSION = "formula-batch-v3"
+# v4: validation now also fails closed on math-mode identifier-as-subscript
+# (bare `_`/`^` followed by 2+ ASCII letters), which local KaTeX renders as a
+# legal (but semantically wrong) subscript without throwing. See gap #21.
+VALIDATOR_VERSION = "formula-batch-v4"
 
 # Pinned local KaTeX runtime bundled under assets/ and copied next to each
 # validation.html. Bumping the version does NOT change validation semantics
@@ -229,6 +232,55 @@ def _escape_text_mode(text: str) -> str:
 _MATH_ONLY_IN_TEXT_RE = re.compile(r"[_^]\{|\\(?:frac|sqrt|overline|mathbb|mathcal)\b")
 
 
+# gap #21: an engineering identifier written with a bare underscore inside math
+# mode (e.g. `field_coverage`, `valid_required_fields`) is rendered by KaTeX as a
+# *legal* subscript — `_c`, `_r` become subscripts — so throwOnError never fires,
+# yet on GitHub the reader sees the underscore vanish and the tail shrink into a
+# subscript. A real math subscript is a single char (`x_i`), a digit (`x_2`), or
+# a braced group (`x_{ij}`, `\sum_{i}`); a bare `_`/`^` immediately followed by
+# 2+ ASCII letters is almost always an identifier mis-read as a subscript.
+# `\text{...}` content is text mode (its `_` is handled by gap #18) so strip it
+# first. A command backslash (`\frac`) is not a subscript, hence the (?<!\\).
+_IDENTIFIER_SUBSCRIPT_RE = re.compile(r"(?<!\\)[_^][A-Za-z]{2,}")
+
+
+def _strip_text_groups(latex: str) -> str:
+    r"""Remove every ``\text{...}`` span, honoring nested braces.
+
+    A plain regex (``\\text\{[^{}]*\}``) stops at the first inner ``{``, so
+    ``\text{a {b} c_def}`` would leak ``c_def`` and cause a false positive. Scan
+    with a brace-depth counter instead. Mirrored by the JS guard.
+    """
+
+    out = []
+    i = 0
+    n = len(latex)
+    while i < n:
+        if latex.startswith(r"\text{", i):
+            depth = 1
+            i += 6  # past \text{
+            while i < n and depth:
+                if latex[i] == "{":
+                    depth += 1
+                elif latex[i] == "}":
+                    depth -= 1
+                i += 1
+        else:
+            out.append(latex[i])
+            i += 1
+    return "".join(out)
+
+
+def has_identifier_subscript(latex: str) -> bool:
+    """True if math-mode LaTeX carries a bare `_`/`^` + 2+ letters (gap #21).
+
+    Mirrors the JS guard emitted into validation.html; kept in sync by
+    test_formula_batch. Text-mode (`\\text{...}`) content is excluded.
+    """
+
+    return bool(_IDENTIFIER_SUBSCRIPT_RE.search(_strip_text_groups(latex)))
+
+
 def _map_text(text: str, text_mode: bool = False) -> str:
     text = " ".join(text.split())
     if text_mode:
@@ -417,6 +469,29 @@ window.__FORMULA_VALIDATION__ = {{
 window.githubMathUnescape = function (s) {{
   return s.replace(/\\\\([!-\\/:-@\\[-`{{-~}}])/g, '$1');
 }};
+// gap #21: KaTeX renders `field_coverage` as a legal subscript (no throw), but
+// on GitHub the reader loses the underscore and the tail shrinks. A bare `_`/`^`
+// followed by 2+ ASCII letters in math mode is almost always an identifier
+// mis-read as a subscript. Strip \\text{{...}} (text mode, handled by gap #18)
+// first; a command backslash (\\frac) is excluded via the (?<!\\\\) lookbehind.
+window.stripTextGroups = function (s) {{
+  // Remove every \\text{{...}} span honoring nested braces (a regex stops at the
+  // first inner brace and would leak e.g. c_def from \\text{{a {{b}} c_def}}).
+  var out = '', i = 0;
+  while (i < s.length) {{
+    if (s.substr(i, 6) === '\\\\text{{') {{
+      var depth = 1; i += 6;
+      while (i < s.length && depth) {{
+        if (s[i] === '{{') depth++; else if (s[i] === '}}') depth--;
+        i++;
+      }}
+    }} else {{ out += s[i]; i++; }}
+  }}
+  return out;
+}};
+window.hasIdentifierSubscript = function (s) {{
+  return /(?<!\\\\)[_^][A-Za-z]{{2,}}/.test(window.stripTextGroups(s));
+}};
 window.runFormulaValidation = function () {{
   if (!window.katex || typeof window.katex.render !== 'function') {{
     throw new Error('KaTeX runtime is missing');
@@ -438,7 +513,13 @@ window.runFormulaValidation = function () {{
     const target = window.githubMathUnescape(item.latex);
     try {{
       window.katex.render(target, node, {{throwOnError: true}});
-      result.items.push(item);
+      // Render succeeded, but gap #21: a legal-to-KaTeX identifier-as-subscript
+      // still renders wrong on GitHub. Fail closed so it goes to strict/manual.
+      if (window.hasIdentifierSubscript(target)) {{
+        result.failures.push({{...item, error: 'identifier-as-subscript'}});
+      }} else {{
+        result.items.push(item);
+      }}
     }} catch (error) {{
       result.failures.push({{...item, error: String(error)}});
     }}
