@@ -27,14 +27,14 @@ SKILL = Path(__file__).resolve().parent.parent
 HTML_TO_MARKDOWN = SKILL.parent / "html-to-markdown"
 
 
-def _load(module_name: str, filename: str):
+def _load(filename: str):
     """按路径加载 html-to-markdown 的实现模块。
 
     用带 skill 前缀的唯一 sys.modules 名，避免与 html-to-markdown 自己的测试
     在同名 key 上互相覆盖（各 skill 测试跑在独立子进程，此处再加一层保险）。
     """
     path = HTML_TO_MARKDOWN / filename
-    spec = importlib.util.spec_from_file_location(f"formula_extraction_ref_{module_name}", path)
+    spec = importlib.util.spec_from_file_location(f"formula_extraction_ref_{path.stem}", path)
     assert spec is not None and spec.loader is not None, f"无法定位实现模块: {path}"
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -42,7 +42,7 @@ def _load(module_name: str, filename: str):
     return module
 
 
-formula_batch = _load("formula_batch", "formula_batch.py")
+formula_batch = _load("formula_batch.py")
 
 
 def _katex(inner_html: str) -> BeautifulSoup:
