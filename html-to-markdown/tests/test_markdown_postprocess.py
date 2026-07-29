@@ -17,36 +17,38 @@ _spec.loader.exec_module(mpp)
 pp = mpp.postprocess_markdown
 
 
-# --- 规则1：题注居中（含加粗表题 bug 修复 + 图题回归） -------------------
+# --- 规则1：题注居中 + 统一加粗 + 多行块级形态（间距修复）----------------
+# 目标形态：多行居中块，内部用 Markdown ** / `code`（GitHub 会解析出 <p>，有 margin，
+# 与后段自然分开）。gh api /markdown 实测：单行 div 无内部 <p>、后段贴太近。
+
+_BLOCK = '<div align="center">\n\n{}\n\n</div>'
+
 
 def test_bare_figure_caption_centered_and_bolded():
-    # 用户决策：统一加粗所有题注。图题源里无 **，命中后强制包 <strong>。
+    # 图题源里无 **，命中后强制整题注加粗，包多行块
     out = pp("图 6-1　数据证据门")
-    assert out == '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
+    assert out == _BLOCK.format("**图 6-1　数据证据门**")
 
 
 def test_bold_table_caption_centered():
-    # bug1: **表 …** 被 ** 前缀挡住不居中；bug2: div 内 ** 在 GitHub 不渲染加粗
-    # → 转 <strong> 后再包 div，星号不再泄漏成字面量
     out = pp("**表 6-5　market_tickers 来源卡示例**")
-    assert out == '<div align="center"><strong>表 6-5　market_tickers 来源卡示例</strong></div>'
+    assert out == _BLOCK.format("**表 6-5　market_tickers 来源卡示例**")
 
 
 def test_bold_figure_caption_centered():
     out = pp("**图 6-2　市场数据地图**")
-    assert out == '<div align="center"><strong>图 6-2　市场数据地图</strong></div>'
+    assert out == _BLOCK.format("**图 6-2　市场数据地图**")
 
 
 def test_letter_numbered_bold_caption_centered():
     out = pp("**表 A-2　附录来源卡**")
-    assert out == '<div align="center"><strong>表 A-2　附录来源卡</strong></div>'
+    assert out == _BLOCK.format("**表 A-2　附录来源卡**")
 
 
-def test_bold_caption_no_literal_stars_in_div():
-    # 关键回归：GitHub same-line 裸 HTML 块内 ** 不解析，输出 div 内绝不能留 **
+def test_caption_block_has_blank_lines_for_spacing():
+    # 间距修复核心：块内前后必须有空行（GitHub 才解析出带 margin 的 <p>）
     out = pp("**表 8-8　展示、指标与回测的放行矩阵**")
-    assert "**" not in out
-    assert "<strong>" in out and out.startswith('<div align="center">')
+    assert out == '<div align="center">\n\n**表 8-8　展示、指标与回测的放行矩阵**\n\n</div>'
 
 
 def test_prose_mention_not_centered():
@@ -55,52 +57,63 @@ def test_prose_mention_not_centered():
     assert pp(line) == line
 
 
-def test_already_centered_bare_figure_gets_bolded():
-    # 已居中但内部裸文本（旧产物）→ 统一加粗决策下重处理成 <strong>
+def test_already_centered_bare_figure_gets_bolded_and_blocked():
+    # 上一轮单行 div 裸文本 → 归一成多行块 + 加粗
     line = '<div align="center">图 6-1　数据证据门</div>'
-    assert pp(line) == '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
+    assert pp(line) == _BLOCK.format("**图 6-1　数据证据门**")
 
 
-def test_already_centered_strong_not_double_wrapped():
-    # 已居中且已加粗 → 幂等
+def test_prev_singleline_strong_div_migrated_to_block():
+    # 上一轮单行 <strong> div → 迁移成多行块（形态变了但内容等价）
     line = '<div align="center"><strong>图 6-1　数据证据门</strong></div>'
-    assert pp(line) == line
+    assert pp(line) == _BLOCK.format("**图 6-1　数据证据门**")
 
 
 def test_code_caption_centered_and_bolded():
-    # bug: 关键词集漏 `代码`，代码题注既不居中也不加粗
+    # 关键词集含 `代码`，代码题注也居中加粗
     out = pp("代码 8-1　normalize 入口")
-    assert out == '<div align="center"><strong>代码 8-1　normalize 入口</strong></div>'
+    assert out == _BLOCK.format("**代码 8-1　normalize 入口**")
 
 
 def test_code_caption_mixed_bold_and_inline_code():
-    # 实测坏形态：**代码 N…：**`ident`**…** 三段混排，行内代码不能被 ** 破坏
+    # 混排 **代码 N…：**`ident`**…**：多行块内用 Markdown，整题注一对 **，`code` 留在内
     line = "**代码 8-2　业务源码：**`normalize_candle`**外部 K 线行标准化入口**"
     out = pp(line)
-    assert out == (
+    assert out == _BLOCK.format("**代码 8-2　业务源码：`normalize_candle`外部 K 线行标准化入口**")
+
+
+def test_prev_singleline_div_with_code_tag_migrated():
+    # 上一轮单行 div 含 <strong>/<code> → 迁移多行块，<code> 还原成 `code`
+    line = (
         '<div align="center"><strong>代码 8-2　业务源码：</strong>'
         "<code>normalize_candle</code>"
         "<strong>外部 K 线行标准化入口</strong></div>"
     )
-    assert "**" not in out and "`" not in out
+    out = pp(line)
+    assert out == _BLOCK.format("**代码 8-2　业务源码：`normalize_candle`外部 K 线行标准化入口**")
 
 
-def test_bare_figure_caption_with_inline_code_bolds_text_only():
-    # 裸图题内含行内代码：只加粗纯文本段，<code> 段不套进 strong
+def test_bare_figure_caption_with_inline_code():
+    # 裸图题内含行内代码：多行块内 `main` 保留反引号（会被 Markdown 解析）
     out = pp("图 3-1　`main` 调用图")
-    assert out == '<div align="center"><strong>图 3-1　</strong><code>main</code><strong> 调用图</strong></div>'
+    assert out == _BLOCK.format("**图 3-1　`main` 调用图**")
 
 
-def test_prewrapped_div_bold_repaired():
-    # 交付 md 的实际坏形态：已包 div 但内部还是 **，GitHub 不渲染加粗 → 修成 <strong>
+def test_prewrapped_singleline_div_bold_migrated():
+    # 上一轮单行 div 内残留 ** → 迁移多行块
     line = '<div align="center">**表 8-8　展示、指标与回测的放行矩阵**</div>'
     out = pp(line)
-    assert out == '<div align="center"><strong>表 8-8　展示、指标与回测的放行矩阵</strong></div>'
-    assert "**" not in out
+    assert out == _BLOCK.format("**表 8-8　展示、指标与回测的放行矩阵**")
 
 
-def test_already_strong_div_idempotent():
-    line = '<div align="center"><strong>表 8-8　放行矩阵</strong></div>'
+def test_multiline_block_idempotent():
+    # 已是多行块 → 幂等，不重复包
+    line = '<div align="center">\n\n**表 8-8　放行矩阵**\n\n</div>'
+    assert pp(line) == line
+
+
+def test_multiline_block_with_code_idempotent():
+    line = '<div align="center">\n\n**代码 8-2　业务源码：`normalize_candle`入口**\n\n</div>'
     assert pp(line) == line
 
 
