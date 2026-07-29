@@ -110,6 +110,14 @@ _JS_SIGNALS = (
     (re.compile(r"\brequire\(|\bexport\s+(?:default|const|function)\b"), _WEAK),
     (re.compile(r"\bconsole\.\w+\("), _WEAK),
 )
+_PS_SIGNALS = (
+    # $env:VAR and $PSItem/heredoc @"..."@ are unambiguous PowerShell; without
+    # these a `$env:PYTHONPATH=...; python -m pytest` block scores as bash.
+    (re.compile(r"\$env:\w+", re.I), _STRONG),
+    (re.compile(r'@"[\s\S]*?"@'), _STRONG),
+    (re.compile(r"\bWrite-(?:Host|Output)\b|\bGet-\w+\b|\bSet-\w+\b"), _STRONG),
+    (re.compile(r"\$PSItem\b|\$_\."), _WEAK),
+)
 _BASH_SIGNALS = (
     (re.compile(r"^\s*#!.*\b(?:bash|sh)\b", re.M), _STRONG),
     (re.compile(r"^\s*\$\s+\S", re.M), _STRONG),
@@ -154,8 +162,13 @@ def guess_code_language(code: str) -> str | None:
     scores = {
         "python": _score(_PY_SIGNALS),
         "javascript": _score(_JS_SIGNALS),
+        "powershell": _score(_PS_SIGNALS),
         "bash": _score(_BASH_SIGNALS),
     }
+    # PowerShell command blocks (`$env:...`) also match bash command signals
+    # (`python -m`); a positive PowerShell-only signal disambiguates in its favor.
+    if scores["powershell"] >= _STRONG and scores["bash"] <= scores["powershell"]:
+        scores["bash"] = 0
     best = max(scores, key=lambda k: scores[k])
     top = scores[best]
     if top < 2:

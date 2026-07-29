@@ -38,6 +38,16 @@ class GuessCodeLanguageTests(unittest.TestCase):
         code = "python -m pytest tests/ -q\npip install -r requirements.txt"
         self.assertEqual(fast_converter.guess_code_language(code), "bash")
 
+    def test_powershell_signals(self) -> None:
+        # $env: 是 PowerShell 强特征;哪怕含 `python -m`(也命中 bash)也应判 powershell。
+        code = '$env:PYTHONPATH="src"\npython -m pytest tests/test_x.py -q'
+        self.assertEqual(fast_converter.guess_code_language(code), "powershell")
+        # heredoc @"..."@ 同为强特征。
+        self.assertEqual(
+            fast_converter.guess_code_language('$env:X="1"\npython -c @"\nprint(1)\n"@'),
+            "powershell",
+        )
+
     def test_prose_and_weak_evidence_return_none(self) -> None:
         # 反例:含 def/{} 的英文散文、纯注释、普通句子,都不该误判。
         for code in (
