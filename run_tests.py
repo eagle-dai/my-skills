@@ -25,6 +25,7 @@ Exit code is non-zero if any suite fails.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import unittest
@@ -32,6 +33,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ROOT_SUITE_DIR = ROOT / "tests"
+
+# Virtualenv directory names to skip when scanning for skill test dirs.
+VENV_DIR_NAMES = {".venv", "venv", "env"}
+
+# Per-skill test files run as scripts; guard against a hung test locally
+# (CI also has its own job-level wall-clock timeout).
+SKILL_TEST_TIMEOUT = 300
 
 
 def run_root_suite() -> bool:
@@ -59,27 +67,60 @@ def find_skill_test_files() -> list[Path]:
         # ROOT/tests is handled by run_root_suite; skip anything under it.
         if tests_dir.resolve() == ROOT_SUITE_DIR.resolve():
             continue
-        if ".venv" in tests_dir.parts:
+        if VENV_DIR_NAMES & set(tests_dir.parts):
             continue
         files.extend(sorted(tests_dir.glob("test_*.py")))
     return files
 
 
 def run_skill_suites() -> bool:
-    """Run each per-skill test file as an isolated subprocess."""
+    """Run each per-skill test file as an isolated subprocess.
+
+    A skill test file must run its tests on import-as-script and exit non-zero
+    on failure. It must also emit a recognizable "ran tests" signal on stdout
+    (a ``passed`` summary, or unittest's ``Ran N``); a file that exits 0 with
+    no such signal is treated as a failure, so a file of bare ``TestCase``
+    classes with no ``__main__`` guard cannot silently skip everything and be
+    reported green.
+    """
     ok = True
     for test_file in find_skill_test_files():
         rel = test_file.relative_to(ROOT)
         print(f"=== skill suite: {rel} ===", flush=True)
         # Run from the skill directory so Path(__file__).parent resolution and
         # any relative expectations match the file's documented run command.
-        proc = subprocess.run(
-            [sys.executable, str(test_file.name)],
-            cwd=str(test_file.parent),
-        )
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(test_file.name)],
+                cwd=str(test_file.parent),
+                capture_output=True,
+                text=True,
+                timeout=SKILL_TEST_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"TIMEOUT after {SKILL_TEST_TIMEOUT}s: {rel}", flush=True)
+            ok = False
+            continue
+        # Echo the child's own output so its per-test lines stay visible.
+        if proc.stdout:
+            print(proc.stdout, end="", flush=True)
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr, flush=True)
         if proc.returncode != 0:
             ok = False
+            continue
+        if not _ran_any_tests(proc.stdout):
+            print(
+                f"NO TEST SIGNAL (exited 0 without running tests): {rel}",
+                flush=True,
+            )
+            ok = False
     return ok
+
+
+def _ran_any_tests(stdout: str) -> bool:
+    """True if the child's stdout shows it actually ran tests."""
+    return bool(re.search(r"\bpassed\b|\bRan \d+ test", stdout))
 
 
 def main() -> int:
