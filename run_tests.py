@@ -121,12 +121,14 @@ def run_skill_suites() -> bool:
 def _ran_any_tests(stdout: str, stderr: str) -> bool:
     """True if the child showed it actually ran tests.
 
-    ``unittest.main()`` writes its ``Ran N tests`` / ``OK`` summary to stderr,
-    while plain-assert files print a ``passed`` line to stdout — so both
-    streams must be inspected or standard unittest files look like no-ops.
+    ``unittest.main()`` writes its ``Ran N tests`` summary to stderr, so that
+    signal is accepted from either stream. The looser ``passed`` convention is
+    only honored on stdout, where plain-assert files print it — this avoids
+    counting an unrelated "passed" that a crashing file happens to emit.
     """
-    combined = f"{stdout}\n{stderr}"
-    return bool(re.search(r"\bpassed\b|\bRan \d+ test", combined))
+    if re.search(r"\bRan \d+ test", f"{stdout}\n{stderr}"):
+        return True
+    return bool(re.search(r"\bpassed\b", stdout))
 
 
 def main() -> int:
