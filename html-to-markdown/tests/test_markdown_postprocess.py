@@ -4,7 +4,9 @@ Loads the sibling module by path (skill dir is not a package).
 Run: python3 -m pytest tests/test_markdown_postprocess.py  (from skill dir)
   or: python3 tests/test_markdown_postprocess.py            (plain asserts)
 """
+import atexit
 import importlib.util
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -472,7 +474,10 @@ def test_letter_numbered_prose_mention_not_centered():
 
 
 def _write_delivery(text: str) -> Path:
+    # plain-assert 风格无 unittest fixture，用 atexit 在进程结束时清理临时目录，
+    # 避免每跑一次测试就漏一个 mkdtemp 目录。
     directory = tempfile.mkdtemp()
+    atexit.register(shutil.rmtree, directory, True)
     path = Path(directory) / "delivery.md"
     path.write_text(text, encoding="utf-8")
     return path
