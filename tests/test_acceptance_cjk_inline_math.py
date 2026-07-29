@@ -1,6 +1,6 @@
 """Acceptance: 中文紧贴 $ 的行内公式，在 GitHub 里要能正常渲染。
 
-对应 acceptance/CASES.md「中文紧贴的行内公式，GitHub 里要能正常显示」。
+对应 html-to-markdown/acceptance/CASES.md「中文紧贴的行内公式，GitHub 里要能正常显示」。
 
 机制：CJK / 全角标点直接贴着 $ 时（如 收益率$r_t$），GitHub 不渲染这段数学。
 在紧贴的一侧插一个 ASCII 空格（收益率 $r_t$）即可修好，且不改变公式本身。
