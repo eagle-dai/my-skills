@@ -211,6 +211,72 @@ class FormulaBatchTests(unittest.TestCase):
         # 但转义标点仍被还原(全 ASCII 标点集,不止 _)。
         self.assertEqual(self._github_math_unescape(r"a\_b\%c\#d\&e\,f"), r"a_b%c#d&e,f")
 
+    # gap #21: math-mode 裸 _/^ 后接多字母 = 标识符误当下标,KaTeX 不报错但 GitHub
+    # 语义错。检测护栏 fail-close。回归用例表(禁删已有行)。
+    def test_has_identifier_subscript_flags_bare_underscore_identifiers(self) -> None:
+        for latex in (
+            r"field_coverage = \frac{valid_required_fields}{required_fields}",
+            r"missing_rate = \frac{missing_required_fields}{required_fields}",
+            r"a^abc",  # 上标同理
+        ):
+            self.assertTrue(
+                formula_batch.has_identifier_subscript(latex),
+                f"应命中(标识符误当下标): {latex}",
+            )
+
+    def test_has_identifier_subscript_allows_real_math(self) -> None:
+        for latex in (
+            r"x_i",  # 单字母下标
+            r"x_2",  # 数字下标
+            r"x_{ij}",  # 花括号下标
+            r"\sum_{i=1}^{n}",
+            r"\frac{a}{b}",  # 命令字母非下标
+            r"A_t = E_t \leq L",  # 单字母下标 + 命令
+        ):
+            self.assertFalse(
+                formula_batch.has_identifier_subscript(latex),
+                f"合法数学不该命中: {latex}",
+            )
+
+    def test_has_identifier_subscript_ignores_text_mode(self) -> None:
+        # \text{...} 是 text mode,其 _ 由 gap #18 处理,本护栏须先剥离不误判。
+        self.assertFalse(
+            formula_batch.has_identifier_subscript(r"\text{observed_at}")
+        )
+        # 但 \text 外的 math-mode 标识符仍命中。
+        self.assertTrue(
+            formula_batch.has_identifier_subscript(r"rate_value + \text{observed_at}")
+        )
+
+    def test_emitted_js_identifier_subscript_matches_python_mirror(self) -> None:
+        # 抠出发货 HTML 里的 hasIdentifierSubscript JS 正则,对齐 Python 判据,
+        # 防"只测 Python 镜像、JS 悄悄跑偏"(缺陷 20 教训)。
+        import re as _re
+
+        html = formula_batch.validation_document(
+            [{"source_id": "f1", "dom_hash": "h1", "latex": "x"}]
+        )
+        self.assertIn("hasIdentifierSubscript", html)
+        # 护栏在 render 成功后被调用,命中记 identifier-as-subscript failure。
+        self.assertIn("hasIdentifierSubscript(target)", html)
+        self.assertIn("identifier-as-subscript", html)
+        # 核心检测正则应与 Python 的 _IDENTIFIER_SUBSCRIPT_RE 同义:裸 _/^ + 2+ 字母,
+        # 带 (?<!\) lookbehind 排除命令反斜杠。抠出 JS 字面正则(HTML 里 { } 未做
+        # 额外转义,{2,} 原样出现)比对字符类与量词。
+        self.assertIn("[_^][A-Za-z]{2,}", html)
+        self.assertIn("(?<!\\\\)", html)
+        # 抠出的 JS 正则用相同 latex 跑,结果须与 Python 镜像一致(手工镜像 JS 判据)。
+        js_body = _re.search(r"/(\(\?<!\\\\\)\[_\^\]\[A-Za-z\]\{2,\})/", html)
+        self.assertIsNotNone(js_body, "hasIdentifierSubscript 核心正则未找到")
+        py_mirror = _re.compile(r"(?<!\\)[_^][A-Za-z]{2,}")
+        for latex, expect in (
+            ("field_coverage", True),
+            ("x_i", False),
+            (r"\frac{a}{b}", False),
+        ):
+            self.assertEqual(bool(py_mirror.search(latex)), expect)
+            self.assertEqual(formula_batch.has_identifier_subscript(latex), expect)
+
     def test_reusing_preflight_root_does_not_mutate_compact_snapshot(self) -> None:
         html = """
         <article>
