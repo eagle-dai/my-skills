@@ -111,10 +111,14 @@ benchmark 只对至少 80% 的 snapshot 缩减设置稳定门槛。绝对耗时�
 
 ```bash
 python -m pip install -r requirements.txt
-python -m unittest discover -s tests -p 'test_*.py' -v
+python run_tests.py
 ```
 
-GitHub Actions 在 pull request、推送到 `main` 和手动触发时，使用 Python 3.13 安装依赖并运行完整 `unittest` suite。
+`run_tests.py` 是仓库级测试收集器：先用 `unittest discover` 跑根 `tests/`，再扫描每个 `<skill>/tests/test_*.py` 并在独立子进程中按脚本运行（skill 目录名带连字符，不是合法包名，无法被 `unittest discover` 递归）。任一套件失败即返回非零退出码。
+
+新增 skill 时无需改动收集器：把 `<skill>/tests/test_*.py`（按 `Path(__file__).parent` 路径加载本 skill 模块、带脚本入口）放进新 skill 目录即可自动纳入。
+
+GitHub Actions 在 pull request、推送到 `main` 和手动触发时，使用 Python 3.13 安装依赖并运行 `python run_tests.py`。
 
 ## 维护约定
 
