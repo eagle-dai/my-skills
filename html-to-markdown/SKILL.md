@@ -47,7 +47,7 @@ python html-to-markdown/pipeline.py input.html \
 | status | 含义 | 下一步 |
 |---|---|---|
 | `converted` | deterministic path 已完成并生成 ZIP | 主 agent 独立检查报告、ZIP 内容和关键渲染；通过后交付 |
-| `blocked` | 已生成 Markdown 工作产物，但公式验证或结构守恒未完成 | 根据 `blockers` 修复；需要时运行 formula validation 后重跑；不得交付 ZIP |
+| `blocked` | 已生成 Markdown 工作产物，但公式验证或结构守恒未完成 | 根据 `blockers` 修复；公式待验证时起 http server 打开 `formula-validation.html`（自带本地 KaTeX，`DOMContentLoaded` 后 auto-run），读 `window.__FORMULA_VALIDATION__` 存报告后带 `--formula-validation-report` 重跑；不得交付 ZIP |
 | `strict_required` | deterministic path 已确认不应猜测或不能满足完整合同 | 读取 `strict_reasons`，进入本 skill 的 Phase 1-5 strict 工作流 |
 
 - `converted` 不等于无需验收；仍要抽检内容、结构、公式与图片。

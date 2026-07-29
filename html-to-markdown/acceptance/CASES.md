@@ -60,3 +60,42 @@ python3 markdown_postprocess.py <交付>.md           # 就地修
 ```
 
 守卫：`tests/test_markdown_postprocess.py::CommandLineInterface`（三态退出码契约）。
+
+---
+
+## 公式验证不用再手工搭 KaTeX
+
+**症状**：`blocked` 于公式待验证时，主 agent 得手动往 `formula-validation.html` 注入 KaTeX（CDN 或本地），起 server 跑验证函数，再把结果 JSON 手抄回填——全流程最慢、最易错的一段。
+
+**根因**：`formula-validation.html` 原来只有公式容器 + 验证函数，不带 runtime，也不自动跑。
+
+**判据（机制信号）**：pipeline 把本地打包的 `assets/katex.min.js` 复制到 validation.html 同目录（相对引用，离线），validation.html `DOMContentLoaded` 后 auto-run `runFormulaValidation()`，结果写进 `window.__FORMULA_VALIDATION__`。只用 js 不带字体：`throwOnError` 只看 LaTeX 解析，与字体无关。runtime 没加载则保持 `completed:false`（fail closed），可回退手动注入。
+
+**期望**：
+- 主 agent 起 server 打开 validation.html → 直接读 `window.__FORMULA_VALIDATION__.completed===true` + `passed==total`，无需注入或手抄
+- `validation_document()` 输出含 `src="katex.min.js"` + `DOMContentLoaded` auto-run，不引 CDN
+- 验证语义（`githubMathUnescape` + `throwOnError`）不变 → `VALIDATOR_VERSION` 不 bump
+- runtime 缺失 → `completed:false` + `load_error`，绝不伪装成功
+
+**守卫**：
+- `tests/test_validation_document.py` — 文档含本地 KaTeX 引用 + auto-run + fail-close + 版本未变；`copy_katex_runtime` 复制/幂等/缺源 fail-close
+
+---
+
+## 缺依赖直接崩，报错要能指路
+
+**症状**：新环境首跑 `pipeline.py` 直接 `ModuleNotFoundError: numpy`，不知道要装什么、怎么装。
+
+**判据**：CLI `main()` 在重 import 前试探关键依赖（numpy/cv2/PIL/bs4/lxml），缺失打印 requirements.txt 的 `uv` 安装命令并 exit 2。仅 CLI 生效，库调用方自管环境。
+
+**守卫**：`tests/test_pipeline_deps.py`
+
+---
+
+## 多文档混进同一 `--output` 会互相覆盖
+
+**症状**：两个 HTML 都 `--output dist`，第二个静默覆盖第一个的 `preflight/`、`formula-validation.html`、`.formula-cache.json`，第一个的失败公式记录丢失，无任何提示。
+
+**判据**：`output.mkdir` 后扫已交付的**异名**包（`*.zip` stem / `<name>/files/` 子树），异于本次 `output_name` 即在 `report.json.output_collision` 列出。同名（resume）不算冲突。只警告不阻断不改路由。
+
+**守卫**：`tests/test_pipeline_output_collision.py`

@@ -22,6 +22,12 @@ VALIDATION_SCHEMA_VERSION = "1.1"
 PARSER_VERSION = "katex-html-v3"
 VALIDATOR_VERSION = "formula-batch-v3"
 
+# Pinned local KaTeX runtime bundled under assets/ and copied next to each
+# validation.html. Bumping the version does NOT change validation semantics
+# (githubMathUnescape + throwOnError), so VALIDATOR_VERSION is left untouched.
+KATEX_VERSION = "0.16.9"
+KATEX_ASSET_NAME = "katex.min.js"
+
 SYMBOLS = {
     "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta",
     "ε": r"\varepsilon", "ϵ": r"\epsilon", "θ": r"\theta",
@@ -384,6 +390,10 @@ def validation_document(items: Sequence[dict[str, Any]]) -> str:
     return f"""<!doctype html>
 <meta charset="utf-8">
 <title>Formula batch validation</title>
+<!-- Local pinned KaTeX runtime ({KATEX_VERSION}); copied next to this file by
+     the pipeline so validation is fully offline. Only katex.min.js is needed
+     (parse-time throwOnError is font-independent), so no CSS/fonts. -->
+<script src="{KATEX_ASSET_NAME}"></script>
 {rows}
 <script>
 window.__FORMULA_VALIDATION__ = {{
@@ -437,8 +447,39 @@ window.runFormulaValidation = function () {{
   result.completed = true;
   return result;
 }};
+// Auto-run once the DOM + local KaTeX <script> have parsed, so the main agent
+// only has to open this page and read window.__FORMULA_VALIDATION__ — no manual
+// runtime injection or copy-paste. If KaTeX failed to load, stay completed:false
+// (fail closed) so a stale/partial report is never mistaken for success; the
+// agent can then inject a runtime and call runFormulaValidation() by hand.
+window.addEventListener('DOMContentLoaded', function () {{
+  try {{
+    window.runFormulaValidation();
+  }} catch (error) {{
+    window.__FORMULA_VALIDATION__.completed = false;
+    window.__FORMULA_VALIDATION__.load_error = String(error);
+  }}
+}});
 </script>
 """
+
+
+def copy_katex_runtime(dest_dir: Path) -> bool:
+    """Copy the bundled KaTeX runtime next to a validation.html.
+
+    Returns True if the asset now exists in ``dest_dir``. Copies only when the
+    destination is missing or differs, so repeated runs are cheap and
+    deterministic. Missing source asset fails closed (returns False) rather
+    than raising; validation.html then falls back to manual runtime injection.
+    """
+    src = MODULE_DIR / "assets" / KATEX_ASSET_NAME
+    if not src.is_file():
+        return False
+    dest = dest_dir / KATEX_ASSET_NAME
+    src_bytes = src.read_bytes()
+    if not dest.exists() or dest.read_bytes() != src_bytes:
+        dest.write_bytes(src_bytes)
+    return True
 
 
 def _load_validation_report(
@@ -590,6 +631,8 @@ def resolve_formulas(
     validation_jobs = _validation_jobs(records, resolved_by_hash)
     html = validation_document(validation_jobs)
     validation_html_written = _write_text_if_changed(validation_path, html)
+    if validation_jobs:
+        copy_katex_runtime(validation_path.parent)
     validated_hashes, validation_error = _load_validation_report(
         validation_report_path,
         validation_jobs,

@@ -108,7 +108,11 @@ python html-to-markdown/pipeline.py input.html \
 
 独立的 MathJax v2 source script 不属于上述 batch 输入。preflight 会在首次解析完整页面时同步检测它们并返回 `strict_required`；不会为了这项检测再次解析 CSS-heavy SingleFile。只有嵌入 `.katex`、Slate KaTeX 等已识别公式容器的 `math/tex` script 才能作为对应 FormulaRecord 的原始 LaTeX。
 
-运行 `formula-validation.html` 中的批量验证逻辑并保存 JSON 报告后，使用：
+`formula-validation.html` 自带本地打包的 KaTeX runtime（pipeline 把 `assets/katex.min.js` 复制到 validation.html 同目录，相对引用，完全离线），并在 `DOMContentLoaded` 后**自动执行** `runFormulaValidation()`，把结果写入 `window.__FORMULA_VALIDATION__`。因此主 agent 只需：起本地 http server（`file://` 会被 Playwright 拦）→ 打开 validation.html → 读 `window.__FORMULA_VALIDATION__`（`completed===true` 即验证跑完）→ 存成 JSON 报告。无需再手动注入 KaTeX 或手抄结果。
+
+只用 `katex.min.js`、不带 CSS/字体：`katex.render(..., {throwOnError:true})` 抛不抛错只取决于 LaTeX 解析，与字体渲染无关。本地 runtime 万一没加载，auto-run 保持 `completed:false`（fail closed），主 agent 可回退手动注入。
+
+保存 JSON 报告后，使用：
 
 ```bash
 python html-to-markdown/pipeline.py input.html \
