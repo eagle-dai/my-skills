@@ -75,16 +75,16 @@ class QuadStarFix(unittest.TestCase):
 
 class CaptionCentering(unittest.TestCase):
     def test_table_caption_centered(self) -> None:
-        # 全角空格锚点：表 N-N　标题 → 居中包裹。
+        # 全角空格锚点：表 N-N　标题 → 多行居中块 + 统一加粗（间距修复）。
         self.assertEqual(
             pp.postprocess_markdown("表 6-1　行情数据的证据边界\n"),
-            '<div align="center">表 6-1　行情数据的证据边界</div>\n',
+            '<div align="center">\n\n**表 6-1　行情数据的证据边界**\n\n</div>\n',
         )
 
     def test_figure_caption_centered(self) -> None:
         self.assertEqual(
             pp.postprocess_markdown("图 6-2　市场数据地图实战路径\n"),
-            '<div align="center">图 6-2　市场数据地图实战路径</div>\n',
+            '<div align="center">\n\n**图 6-2　市场数据地图实战路径**\n\n</div>\n',
         )
 
     def test_prose_mention_not_centered(self) -> None:
@@ -92,9 +92,17 @@ class CaptionCentering(unittest.TestCase):
         line = "图 6-1 把四类数据进入结论前的检查门画出来。\n"
         self.assertEqual(pp.postprocess_markdown(line), line)
 
-    def test_already_centered_untouched(self) -> None:
-        # 反例：已经是 <div> 包裹的不重复包。
+    def test_prev_singleline_div_migrated_to_block(self) -> None:
+        # 上一轮单行 div → 归一成多行块 + 加粗（形态迁移，非幂等）。
         line = '<div align="center">表 6-1　标题</div>\n'
+        self.assertEqual(
+            pp.postprocess_markdown(line),
+            '<div align="center">\n\n**表 6-1　标题**\n\n</div>\n',
+        )
+
+    def test_multiline_block_idempotent(self) -> None:
+        # 已是多行块 → 幂等。
+        line = '<div align="center">\n\n**表 6-1　标题**\n\n</div>\n'
         self.assertEqual(pp.postprocess_markdown(line), line)
 
     def test_caption_like_line_inside_fence_untouched(self) -> None:
@@ -107,11 +115,11 @@ class CaptionCentering(unittest.TestCase):
         # 明确 X-Y 的 X 可为字母。纯 \d+ 会漏掉，这里钉住字母编号也居中。
         self.assertEqual(
             pp.postprocess_markdown("图 D-1　附录数据地图\n"),
-            '<div align="center">图 D-1　附录数据地图</div>\n',
+            '<div align="center">\n\n**图 D-1　附录数据地图**\n\n</div>\n',
         )
         self.assertEqual(
             pp.postprocess_markdown("表 A-2　字母编号来源卡\n"),
-            '<div align="center">表 A-2　字母编号来源卡</div>\n',
+            '<div align="center">\n\n**表 A-2　字母编号来源卡**\n\n</div>\n',
         )
 
     def test_letter_numbered_prose_mention_not_centered(self) -> None:
@@ -130,7 +138,8 @@ class CommandLineInterface(unittest.TestCase):
         return path
 
     def test_check_compliant_exits_zero_and_leaves_file(self) -> None:
-        path = self._write('<div align="center">表 6-1　标题</div>\n')
+        # 合规输入 = 已是多行居中块（当前目标形态）。
+        path = self._write('<div align="center">\n\n**表 6-1　标题**\n\n</div>\n')
         original = path.read_text(encoding="utf-8")
         self.assertEqual(pp.main([str(path), "--check"]), 0)
         self.assertEqual(path.read_text(encoding="utf-8"), original)
@@ -146,7 +155,7 @@ class CommandLineInterface(unittest.TestCase):
         path = self._write("表 6-1　标题\n收益率$r_t$表示\n")
         self.assertEqual(pp.main([str(path)]), 0)
         fixed = path.read_text(encoding="utf-8")
-        self.assertIn('<div align="center">表 6-1　标题</div>', fixed)
+        self.assertIn('<div align="center">\n\n**表 6-1　标题**\n\n</div>', fixed)
         self.assertIn("收益率 $r_t$ 表示", fixed)
 
     def test_missing_file_exits_two(self) -> None:
