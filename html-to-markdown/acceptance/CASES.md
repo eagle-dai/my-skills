@@ -151,5 +151,7 @@ python3 markdown_postprocess.py <交付>.md           # 就地修
 - `tests/test_preflight.py::WeChatMmbizTests` — 正文 selector（正例 + 语义优先 + 歧义失败 3 例）、`data-formula` 公式源（块/行内 + 插图 SVG 非公式 + KaTeX 旧源仍在）、data-URI 路由（真图优先 + 1px 占位仍 lazy + 空 src 仍 lazy）
 - `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_wechat_article_converts_with_formulas_and_data_uri_image` — 端到端 converted，块/行内公式与图片产物
 - `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_wechat_plain_svg_illustration_routes_to_strict` — 无 data-formula 插图 SVG 保守路由 strict
+- `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_wechat_span_wrapper_with_block_children_passes_through` — 微信 `<span data-tool>` 块级包裹透明穿透
+- `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_slate_typed_span_still_fails_closed` — slate 语义 span 仍保守 fail-close
 
 **未机械化（仍靠人工）**：插图 SVG → PNG 的栅格化在 strict 里用 Playwright 做，本轮未做进确定性 pipeline；公式里 `\text{95\%}`、`\text{偏度 }` 这类 CJK/转义在真 GitHub 的渲染仍需肉眼验。

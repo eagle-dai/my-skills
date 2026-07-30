@@ -613,6 +613,47 @@ class WeChatMmbizPipelineTests(unittest.TestCase):
             # 图片按 data-URI 处理（未被误判 lazy 推向 strict）
             self.assertIn("files/wechat/", markdown)
 
+    def test_wechat_span_wrapper_with_block_children_passes_through(self) -> None:
+        # 正例：WeChat 用 <span data-tool> 包裹块级 <section>，块位置 span 含块子
+        # 时应透明穿透（等价 block-transparent），不再 unsupported <span> → strict。
+        html = self._wechat_html(
+            "<span data-tool='mp' style='display:block'>"
+            "<section><p>这是被 span 包裹的一段足够长的微信正文，用来越过 body "
+            "选择的最小文本阈值，并验证块位置 span 透明穿透后正文能正常转换，"
+            "而不是因为一个包裹用的 span 就把整篇文章保守地推到 strict 处理。</p>"
+            "<h2>小节标题</h2></section>"
+            "</span>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat-span.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertIn(outcome.status, {"converted", "blocked"})
+            self.assertNotEqual(outcome.status, "strict_required")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("## 小节标题", markdown)
+            self.assertIn("这是被 span 包裹的一段足够长的微信正文", markdown)
+
+    def test_slate_typed_span_still_fails_closed(self) -> None:
+        # 反例：带 data-slate-type 的 span 不当透明 wrapper（not slate 守卫），
+        # 落到 block() 无匹配分支仍 fail-close → strict。
+        html = self._wechat_html(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后出现一个带 slate 语义但 fast path 未知的块级 span，"
+            "它应当被 not-slate 守卫挡住，保守地把整篇路由到 strict 处理。</p>"
+            "<span data-slate-type='mystery-block'><section><p>x</p></section></span>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat-slate-span.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertEqual(outcome.status, "strict_required")
+
     def test_wechat_plain_svg_illustration_routes_to_strict(self) -> None:
         # 反例：正文含无 data-formula 的真插图 <svg> → fast path fail-closed → strict。
         html = self._wechat_html(
