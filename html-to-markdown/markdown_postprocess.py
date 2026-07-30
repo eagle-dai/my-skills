@@ -58,10 +58,22 @@ _DOLLAR_BEFORE_CJK = re.compile(rf"(?<!\$)\$([{_CJK_CLASS}])")
 _NBSP_BEFORE_DOLLAR = re.compile("\u00a0(?=\\$)")
 _DOLLAR_BEFORE_NBSP = re.compile("(?<=\\$)\u00a0")
 
+# 折叠 ``$`` 紧邻的多个 ASCII 空格成一个。源里常见 ``半角空格 + NBSP + $``
+# （微信 mmbiz 在已有半角空格后又插 NBSP 分隔）——NBSP 归一成半角空格后就成了
+# ``  $`` 两个连续空格。GitHub 渲染会把多空格折叠、``$`` 边界仍合法（公式照常
+# 渲染），但源码留冗余双空格不干净。只折叠**紧贴 ``$`` 的**多空格，不碰正文其它
+# 多空格（避免泛化过宽误伤对齐/缩进），且折叠后仍留一个空格 = 合法边界，不会把
+# ``$`` 重新贴到 CJK。在 NBSP 归一之后跑（CJK 补空格规则只在单侧紧贴时补一个，
+# 不产生双空格，所以放最后兜住 NBSP 这一唯一来源即可）。
+_MULTISPACE_BEFORE_DOLLAR = re.compile(r" {2,}(?=\$)")
+_MULTISPACE_AFTER_DOLLAR = re.compile(r"(?<=\$) {2,}")
+
 
 def _space_cjk_inline_math_line(line: str) -> str:
     line = _NBSP_BEFORE_DOLLAR.sub(" ", line)
     line = _DOLLAR_BEFORE_NBSP.sub(" ", line)
+    line = _MULTISPACE_BEFORE_DOLLAR.sub(" ", line)
+    line = _MULTISPACE_AFTER_DOLLAR.sub(" ", line)
     line = _CJK_BEFORE_DOLLAR.sub(r"\1 $", line)
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 
