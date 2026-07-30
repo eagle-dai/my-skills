@@ -377,14 +377,27 @@ git branch -M main
 git add .
 git commit -m "Initialize personal Claude skills"
 
+# Create an empty GitHub repository first: no README, license, or .gitignore.
 git remote add origin git@github.com:<your-account>/<your-skills-repo>.git
 git push -u origin main
 ```
 
-On another machine, clone the repository into the same location:
+On another machine, clone the repository into the same location, but only when `~/.claude/skills` does not already exist:
 
 ```bash
 git clone git@github.com:<your-account>/<your-skills-repo>.git ~/.claude/skills
+```
+
+If the directory already contains local skills, do not clone over it. Back it up first, or initialize it as a repository and reconcile the two histories deliberately.
+
+I also keep a small `.gitignore` at the root:
+
+```gitignore
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.env
 ```
 
 Do not put credentials, tokens, machine-specific paths, private customer data, or generated working files into this repository. Keep it focused on skill instructions, references, small fixtures, tests, and scripts that are safe to version.
@@ -435,8 +448,8 @@ Convert the input page and validate the result before reporting success.
 
 When changing this skill itself:
 
-1. Read `../_meta/skill-self-improvement.md`.
-2. Read `self-improvement.md` and `acceptance/CASES.md`.
+1. Read the [shared change rules](../_meta/skill-self-improvement.md).
+2. Read the [regression record](self-improvement.md) and [acceptance cases](acceptance/CASES.md).
 3. Add a failing regression test first and run the full suite after the change.
 ```
 
@@ -453,7 +466,7 @@ The acceptance file should describe effects, not implementation details:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Claude Code is only one place to use this structure. Its skills follow the open Agent Skills format, so keeping the package mostly standard makes future reuse easier. SAP has publicly described Joule Work as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
+Claude Code is only one place to use this structure. Its skills follow the open Agent Skills format, so keeping the package mostly standard makes future reuse easier. One caveat: the shared `_meta` file sits outside the individual skill package. If I distribute `html-to-markdown` by itself, I copy that rule into the skill's own `references/` directory or package the whole library, so the skill does not depend on a missing sibling file. SAP has publicly described Joule Work as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
 
 ## Practical checklist
 
