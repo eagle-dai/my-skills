@@ -58,7 +58,9 @@ python html-to-markdown/pipeline.py input.html \
 ### 0.3 图片与题注的 deterministic 边界
 
 - data-URI 图片默认走 fast path：`@image_processing.py` 在写盘前确定性执行“原图备份 → 去水印 → 压缩 → 原尺寸验证”的完整合同（fail-closed，见下方护栏）。纯 data-URI 图片页面不再因图片单独返回 `strict_required`。
+- data-URI 优先于残留 `data-src`：SingleFile 把真图内联进 `src`（data-URI）时，`preflight.py::_asset_source` 用 `_substantial_data_uri`（解码 ≥512B）判定其为 authoritative，忽略微信等站点残留在 `data-src` 的原始 CDN 地址——这类图不是 lazy。只有 1px 占位 data-URI / 空 `src` + 真 `data-src` 才判 `lazy:*` → strict。
 - 仍进入 strict 的图片：外部/未本地化 `src`（`fast_converter` 抛 `FastPathUnsupported`）、lazy/missing（preflight 信号）、iframe/video、已确认的 `<caption>`/`<figcaption>`（caption ledger 守恒未实现）。
+- 微信公众号 (mmbiz) 页面：正文容器 `#js_content`/`.rich_media_content` 已进 `BODY_SELECTORS`；公式是 MathJax-SVG，原始 LaTeX 存 `[data-formula]` 属性（`_formula_source` 认，verbatim，外层 `display:block` → 块级 `$$…$$`，否则行内 `$…$`）。无 `data-formula` 的真插图 `<svg>` 仍 fail-close 到 strict（用 Playwright 截图成 PNG——cairosvg 渲 CJK 出豆腐块，不可用）。
 - 只有用户明确接受图片保持原样、跳过所有图片后处理时，才可传 `--allow-unprocessed-images`：它只跳过图片后处理、按原样打包 data-URI 图，不改变 fast/strict 路由，也不会绕过外部资源、本地化失败、题注、虚拟化或其他 strict 条件。
 - 已确认的 `<caption>` / `<figcaption>` 默认进入 strict，因为 deterministic converter 尚未实现 caption ledger 守恒。
 

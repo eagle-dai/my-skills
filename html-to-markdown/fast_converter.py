@@ -326,6 +326,12 @@ class MarkdownConverter:
             return "---"
         if node.name in BLOCK_TRANSPARENT_TAGS:
             return self.blocks(node) if has_block_child(node) else self.inline_children(node)
+        # WeChat (mmbiz) 用 <span data-tool ...> 包裹块级 <section>（编辑器产物）。
+        # 当这样的 <span> 出现在块位置且**含块子**时，它是透明容器，穿透递归成
+        # blocks（等价 BLOCK_TRANSPARENT_TAGS）。无块子的块位置 span 视为一段行内
+        # 文本发出（内容保留）。有 data-slate 语义的 span 已在上面分支处理，不到这里。
+        if node.name == "span" and not slate:
+            return self.blocks(node) if has_block_child(node) else self.inline_children(node)
         raise FastPathUnsupported(f"unsupported semantic element <{node.name}>")
 
     def inline_children(self, node: Tag) -> str:

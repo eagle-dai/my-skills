@@ -27,8 +27,13 @@ BODY_SELECTORS: tuple[str, ...] = (
     "article",
     "main",
     '[role="main"]',
+    # WeChat 公众号 (mmbiz) SingleFile 页面：正文容器无 article/main 语义，
+    # 用固定 id/class。排在语义 selector 之后，仍受「首个有 substantial
+    # 命中的优先级必须唯一」的 fail-closed 约束（多个命中→ambiguous 失败）。
+    "#js_content",
+    ".rich_media_content",
 )
-FORMULA_SELECTOR = '[data-slate-type*="katex"], .katex, math'
+FORMULA_SELECTOR = '[data-slate-type*="katex"], .katex, math, [data-formula]'
 REMOVABLE_TAGS: tuple[str, ...] = ("script", "style", "noscript", "template")
 LAZY_SOURCE_ATTRIBUTES: tuple[str, ...] = (
     "data-src",
@@ -262,7 +267,9 @@ def _formula_source(node: Tag) -> tuple[str, str]:
     if annotation is not None and annotation.get_text(strip=True):
         return "annotation", annotation.get_text(strip=True)
 
-    for attribute in ("data-tex", "data-latex", "data-math", "alttext"):
+    # ``data-formula`` 是微信公众号 (mmbiz) 里 MathJax-SVG 公式 wrapper 携带的原始
+    # LaTeX（如 ``R_t = \frac{P_t}{P_{t-1}} - 1``）。verbatim 可用，无需 KaTeX HTML 重建。
+    for attribute in ("data-tex", "data-latex", "data-math", "data-formula", "alttext"):
         value = str(node.attrs.get(attribute, "")).strip()
         if value:
             return attribute, value
@@ -289,6 +296,18 @@ def _formula_display(node: Tag) -> str:
         slate_type = str(current.attrs.get("data-slate-type", ""))
         if "katex-display" in classes or "block-katex" in slate_type:
             return "block"
+        # WeChat (mmbiz) MathJax-SVG 公式：块级公式 wrapper 是 <section>，其 style
+        # 含 display:block；行内公式 wrapper 是 <span>，style 无 display:block。
+        # 只认**传入的 formula 节点自身** (current is node) 的 display:block——不看
+        # 任何祖先，否则一个块级公式 wrapper 若恰是某行内公式的祖先，会把行内误判为
+        # 块级。祖先仍参与上面的 katex-display/block-katex 判定（那是 KaTeX 语义）。
+        if (
+            current is node
+            and current.has_attr("data-formula")
+            and "display:block"
+            in str(current.attrs.get("style", "")).replace(" ", "")
+        ):
+            return "block"
         parent = current.parent
         current = parent if isinstance(parent, Tag) else None
     return "inline"
@@ -310,6 +329,32 @@ def collect_formulas(root: Tag) -> tuple[FormulaRecord, ...]:
     return tuple(records)
 
 
+def _substantial_data_uri(source: str) -> bool:
+    """True when ``src`` is a data-URI carrying a real (non-placeholder) payload.
+
+    SingleFile inlines the actual image into ``src`` as a base64 data-URI. A
+    genuine image decodes to well over a KiB; 1x1 tracking/placeholder pixels
+    decode to under ~100 bytes. The 512-byte floor sits safely between the two
+    (smallest real inlined image observed ~9 KiB) so a real inlined image is
+    trusted while a tiny placeholder still falls through to the lazy check.
+    """
+
+    if not source.startswith("data:") or "," not in source:
+        return False
+    header, payload = source.split(",", 1)
+    if ";base64" in header:
+        # 4 base64 chars encode 3 bytes; approximate decoded size without decoding.
+        # Strip whitespace (some encoders wrap every 76 chars) and trailing "="
+        # padding first, so newlines/padding are not miscounted as real data —
+        # otherwise a whitespace-heavy sub-512B payload could overcount past the
+        # floor and be wrongly trusted over a real data-src.
+        payload = "".join(payload.split()).rstrip("=")
+        approx_bytes = len(payload) * 3 // 4
+    else:
+        approx_bytes = len(payload)
+    return approx_bytes >= 512
+
+
 def _asset_source(node: Tag) -> tuple[str, str]:
     """Return the effective source class without trusting placeholder ``src``.
 
@@ -319,6 +364,16 @@ def _asset_source(node: Tag) -> tuple[str, str]:
     """
 
     source = str(node.attrs.get("src", "")).strip()
+
+    # WeChat (mmbiz) SingleFile pages inline the real image into ``src`` as a
+    # data-URI yet keep the original CDN URL in ``data-src``. That leftover is
+    # NOT a lazy placeholder — the image is fully present — so a substantial
+    # data-URI ``src`` is authoritative and must win over the ``data-src``
+    # lazy heuristic below. Tiny placeholder data-URIs (tracking pixels) fail
+    # the size floor and still fall through to the lazy routing.
+    if _substantial_data_uri(source):
+        return "data-uri", source
+
     lazy_candidates = [
         (attribute, str(node.attrs.get(attribute, "")).strip())
         for attribute in LAZY_SOURCE_ATTRIBUTES

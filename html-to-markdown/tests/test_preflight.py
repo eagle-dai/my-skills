@@ -149,5 +149,180 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(manifest["schema_version"], "1.0")
 
 
+# 一段 ≥512B 解码的 data-URI（SingleFile 内联真图的形态），和一个 1px 占位 data-URI。
+_BIG_DATA_URI = "data:image/png;base64," + ("A" * 1076)  # 解码 ~807B，过 512 门槛
+_TINY_DATA_URI = (
+    "data:image/gif;base64,"
+    "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw=="  # 1px gif，解码 43B
+)
+
+
+class WeChatMmbizTests(unittest.TestCase):
+    """微信公众号 (mmbiz) 页面支持：正文 selector、MathJax-SVG 公式源、data-URI 图路由。"""
+
+    def _wechat(self, inner: str) -> str:
+        return (
+            "<html><body id='activity-detail'>"
+            "<div id='js_article' class='rich_media'>"
+            "<div id='js_content' class='rich_media_content'>"
+            f"{inner}"
+            "</div></div></body></html>"
+        )
+
+    # --- 正文 selector ---
+    def test_wechat_js_content_selected_as_body(self) -> None:
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "确保 #js_content 被唯一选中而不是回退到 strict inspection。</p>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.manifest["body"]["selector"], "#js_content")
+
+    def test_semantic_article_still_wins_over_wechat_selector(self) -> None:
+        # 反例：同时有 <article> 语义容器时，优先级更高的语义 selector 命中，
+        # 微信 selector 不该抢先（保证不影响旧的语义页面）。
+        html = (
+            "<html><body><article>"
+            "<p>This substantial semantic article body must be selected by the "
+            "higher-priority article selector, not by any WeChat fallback rule.</p>"
+            "</article></body></html>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.manifest["body"]["selector"], "article")
+
+    def test_wechat_ambiguous_body_still_fails_closed(self) -> None:
+        # 反例：两个 substantial 的 .rich_media_content 仍然 ambiguous 失败，
+        # 不因新增 selector 而放松 fail-closed。
+        block = (
+            "<div class='rich_media_content'><p>这是足够长的微信正文文本块，"
+            "长度越过 body 选择的最小文本阈值，用来制造两个同优先级的 substantial "
+            "命中从而形成歧义，验证 fail-closed 不因新增 selector 而放松。</p></div>"
+        )
+        html = f"<html><body>{block}{block}</body></html>"
+        with self.assertRaisesRegex(preflight.BodySelectionError, "ambiguous"):
+            preflight.build_preflight(html)
+
+    # --- MathJax-SVG 公式源 data-formula ---
+    def test_data_formula_block_and_inline_sources(self) -> None:
+        html = self._wechat(
+            "<p>正文引入公式：块级公式随后给出，行内公式 "
+            "<span data-formula='n'><svg role='img'></svg></span> 嵌在句中。"
+            "这段文本足够长以越过 body 选择的最小文本阈值并让 preflight 正常运行，"
+            "因此后面的公式收集逻辑能够按预期在渲染后的紧凑 DOM 上执行。</p>"
+            "<section data-formula='R_t = \\frac{P_t}{P_{t-1}} - 1' "
+            "style='text-align:center;display:block'><svg role='img'></svg></section>"
+        )
+        result = preflight.build_preflight(html)
+        kinds = {f.source_kind for f in result.formulas}
+        self.assertEqual(kinds, {"data-formula"})
+        by_disp = {f.display: f for f in result.formulas}
+        self.assertIn("block", by_disp)
+        self.assertIn("inline", by_disp)
+        # verbatim LaTeX 直接来自 data-formula 属性，无需 KaTeX 重建
+        self.assertEqual(by_disp["block"].original_latex, "R_t = \\frac{P_t}{P_{t-1}} - 1")
+        self.assertEqual(by_disp["inline"].original_latex, "n")
+
+    def test_inline_formula_under_block_formula_ancestor_stays_inline(self) -> None:
+        # 反例（PR review 发现）：块级 data-formula wrapper 若恰是某行内 data-formula
+        # 的祖先，display:block 判定必须只看行内节点自身，不能被块级祖先污染成 block。
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后构造一个块级公式 wrapper 内部嵌套一个行内公式的病态结构，"
+            "用来验证 display 判定只看节点自身、不被块级祖先污染。</p>"
+            "<section data-formula='A' style='text-align:center;display:block'>"
+            "<svg role='img'></svg>"
+            "<span data-formula='n'><svg role='img'></svg></span>"
+            "</section>"
+        )
+        result = preflight.build_preflight(html)
+        by_latex = {f.original_latex: f.display for f in result.formulas}
+        # 外层 section 自身 display:block → block；内层 span 自身无 display:block → inline
+        self.assertEqual(by_latex.get("A"), "block")
+        self.assertEqual(by_latex.get("n"), "inline")
+
+    def test_substantial_data_uri_ignores_base64_whitespace_and_padding(self) -> None:
+        # 反例（PR review 发现）：base64 payload 含换行/=padding 时，体量估算须先剥掉，
+        # 否则空白撑大估值让 <512B 的占位图误过门槛。构造一个解码 <512B 但含大量换行的
+        # data-URI + 真 data-src，期望仍判 lazy。
+        import base64
+
+        raw = base64.b64encode(b"\x89PNG" + b"x" * 200).decode()  # 解码 ~204B < 512
+        wrapped = "\n".join(raw[i : i + 4] for i in range(0, len(raw), 4))  # 每4字符插换行
+        tiny_but_whitespaced = "data:image/png;base64," + wrapped
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "图片 src 是含大量换行的小 data-URI（解码不足 512B），真图在 data-src。</p>"
+            f"<img src='{tiny_but_whitespaced}' "
+            "data-src='https://mmbiz.qpic.cn/real.png' alt='图片'>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.assets[0].source_kind, "lazy:data-src")
+        self.assertTrue(result.assets[0].lazy)
+
+    def test_plain_svg_without_data_formula_is_not_a_formula(self) -> None:
+        # 反例：真插图 <svg>（无 data-formula wrapper）不该被当公式收集，
+        # 交给 fast_converter 落到 unsupported <svg> → strict。
+        html = self._wechat(
+            "<p>下面是一张统计图插图，它是普通 SVG，没有 data-formula 属性，"
+            "因此不应进入公式清单。这段正文足够长以越过 body 选择的最小文本阈值，"
+            "保证 preflight 能正常选择正文容器并收集公式与资源清单。</p>"
+            "<p><svg role='img' viewBox='0 0 720 480'><path d='M0 0'/></svg></p>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(len(result.formulas), 0)
+
+    def test_katex_source_still_recognized(self) -> None:
+        # 反例：旧的 KaTeX 源不受 data-formula 新增影响，仍正常识别。
+        html = (
+            "<html><body><article>"
+            "<p>This substantial article body carries a KaTeX formula with an "
+            "embedded TeX annotation that preflight must keep recognizing.</p>"
+            "<span class='katex'><annotation encoding='application/x-tex'>a+b"
+            "</annotation></span>"
+            "</article></body></html>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(len(result.formulas), 1)
+        self.assertEqual(result.formulas[0].source_kind, "annotation")
+        self.assertEqual(result.formulas[0].original_latex, "a+b")
+
+    # --- data-URI 图优先于残留 data-src ---
+    def test_substantial_data_uri_src_wins_over_leftover_data_src(self) -> None:
+        html = self._wechat(
+            "<p>微信正文里的图片：src 已内联为完整 data-URI，data-src 只是残留的"
+            " CDN 地址。这段文本足够长以越过 body 选择的最小文本阈值，"
+            "确保图片资源路由逻辑能够在正常选中的正文容器上被执行到。</p>"
+            f"<img src='{_BIG_DATA_URI}' data-src='https://mmbiz.qpic.cn/x.png' alt='图片'>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.assets[0].source_kind, "data-uri")
+        self.assertFalse(result.assets[0].lazy)
+        self.assertEqual(result.manifest["recommended_mode"], "fast")
+
+    def test_tiny_data_uri_placeholder_with_data_src_still_lazy(self) -> None:
+        # 反例：1px 占位 data-URI + 真 data-src = 真 lazy，仍走 strict。
+        html = self._wechat(
+            "<p>这里的图片 src 只是 1px 占位符，真图在 data-src，属于真正的 lazy。"
+            "这段文本足够长以越过 body 选择的最小文本阈值，"
+            "确保图片资源路由逻辑能够在正常选中的正文容器上被执行到。</p>"
+            f"<img src='{_TINY_DATA_URI}' data-src='https://mmbiz.qpic.cn/real.png' alt='图片'>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.assets[0].source_kind, "lazy:data-src")
+        self.assertTrue(result.assets[0].lazy)
+
+    def test_empty_src_with_data_src_still_lazy(self) -> None:
+        # 反例：空 src + data-src = 经典 lazy，不因 data-URI 规则被误放。
+        html = self._wechat(
+            "<p>图片 src 为空，真图在 data-src，是经典 lazy 占位。"
+            "这段文本足够长以越过 body 选择的最小文本阈值，"
+            "确保图片资源路由逻辑能够在正常选中的正文容器上被执行到。</p>"
+            "<img src='' data-src='https://mmbiz.qpic.cn/real.png' alt='图片'>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.assets[0].source_kind, "lazy:data-src")
+        self.assertTrue(result.assets[0].lazy)
+
+
 if __name__ == "__main__":
     unittest.main()

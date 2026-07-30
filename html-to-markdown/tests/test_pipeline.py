@@ -553,5 +553,124 @@ class PipelineTests(unittest.TestCase):
             )
 
 
+def _substantial_png_data_uri() -> str:
+    """A decodable, non-placeholder PNG data-URI (>512B) like SingleFile inlines."""
+    import base64
+    import io
+    import random
+
+    from PIL import Image
+
+    img = Image.new("RGB", (96, 72))
+    px = img.load()
+    rng = random.Random(42)  # 固定种子=可重复；噪声保证 PNG 不被压到 512B 以下
+    for y in range(72):
+        for x in range(96):
+            px[x, y] = (rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+class WeChatMmbizPipelineTests(unittest.TestCase):
+    """端到端：微信公众号页面（正文 + MathJax-SVG 公式 + data-URI 图）的路由与产出。"""
+
+    def _wechat_html(self, body_inner: str) -> str:
+        return (
+            "<html><body id='activity-detail'>"
+            "<div id='js_article' class='rich_media'>"
+            "<div id='js_content' class='rich_media_content'>"
+            f"{body_inner}"
+            "</div></div></body></html>"
+        )
+
+    def test_wechat_article_converts_with_formulas_and_data_uri_image(self) -> None:
+        # 正例：微信正文 + 块级/行内 data-formula 公式 + 完整 data-URI 图 → converted。
+        html = self._wechat_html(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后给出块级与行内公式，并附一张已内联为 data-URI 的图片。</p>"
+            "<section data-formula='R_t = \\frac{P_t}{P_{t-1}} - 1' "
+            "style='text-align:center;display:block'><svg role='img'></svg></section>"
+            "<p>行内公式 <span data-formula='n'><svg role='img'></svg></span> 出现在句中。</p>"
+            f"<p><img src='{_substantial_png_data_uri()}' "
+            "data-src='https://mmbiz.qpic.cn/leftover.png' alt='图片'></p>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertIn(outcome.status, {"converted", "blocked"})
+            self.assertNotEqual(outcome.status, "strict_required")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            # 块级公式 → $$…$$；行内公式 → $…$（verbatim LaTeX，来自 data-formula）
+            self.assertIn("$$\nR_t = \\frac{P_t}{P_{t-1}} - 1\n$$", markdown)
+            self.assertIn("$n$", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 1)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 1)
+            # 图片按 data-URI 处理（未被误判 lazy 推向 strict）
+            self.assertIn("files/wechat/", markdown)
+
+    def test_wechat_span_wrapper_with_block_children_passes_through(self) -> None:
+        # 正例：WeChat 用 <span data-tool> 包裹块级 <section>，块位置 span 含块子
+        # 时应透明穿透（等价 block-transparent），不再 unsupported <span> → strict。
+        html = self._wechat_html(
+            "<span data-tool='mp' style='display:block'>"
+            "<section><p>这是被 span 包裹的一段足够长的微信正文，用来越过 body "
+            "选择的最小文本阈值，并验证块位置 span 透明穿透后正文能正常转换，"
+            "而不是因为一个包裹用的 span 就把整篇文章保守地推到 strict 处理。</p>"
+            "<h2>小节标题</h2></section>"
+            "</span>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat-span.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertIn(outcome.status, {"converted", "blocked"})
+            self.assertNotEqual(outcome.status, "strict_required")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("## 小节标题", markdown)
+            self.assertIn("这是被 span 包裹的一段足够长的微信正文", markdown)
+
+    def test_slate_typed_span_still_fails_closed(self) -> None:
+        # 反例：带 data-slate-type 的 span 不当透明 wrapper（not slate 守卫），
+        # 落到 block() 无匹配分支仍 fail-close → strict。
+        html = self._wechat_html(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后出现一个带 slate 语义但 fast path 未知的块级 span，"
+            "它应当被 not-slate 守卫挡住，保守地把整篇路由到 strict 处理。</p>"
+            "<span data-slate-type='mystery-block'><section><p>x</p></section></span>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat-slate-span.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertEqual(outcome.status, "strict_required")
+
+    def test_wechat_plain_svg_illustration_routes_to_strict(self) -> None:
+        # 反例：正文含无 data-formula 的真插图 <svg> → fast path fail-closed → strict。
+        html = self._wechat_html(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后嵌入一张普通统计图插图（没有 data-formula 的 SVG），"
+            "它应当让 fast path 保守失败并把整篇路由到 strict 处理。</p>"
+            "<p><svg role='img' viewBox='0 0 720 480'><path d='M0 0L10 10'/>"
+            "<text>标签</text></svg></p>"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "wechat-svg.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="auto")
+
+            self.assertEqual(outcome.status, "strict_required")
+
+
 if __name__ == "__main__":
     unittest.main()
