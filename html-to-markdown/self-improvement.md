@@ -179,4 +179,29 @@ DOM 稳定顺序，标题取 DOM 原文。
 
 ---
 
+## 微信公众号 (mmbiz) 页面支持（结构规则，非正则）
+
+判定项三处，都在 `preflight.py`，回归 `tests/test_preflight.py::WeChatMmbizTests` + `tests/test_pipeline.py::WeChatMmbizPipelineTests`：
+
+1. **正文 selector**：`BODY_SELECTORS` 追加 `#js_content` / `.rich_media_content`，排在语义 selector（`data-slate-editor`/`article`/`main`/`[role=main]`）之后。保持 `select_body` 的「首个有 substantial 命中的优先级必须唯一，否则 ambiguous 失败」语义。
+2. **MathJax-SVG 公式源**：`FORMULA_SELECTOR` 加 `[data-formula]`；`_formula_source` 在 `data-tex/data-latex/data-math/alttext` 循环里加 `data-formula`（verbatim LaTeX，无需 KaTeX HTML 重建）；`_formula_display` 认 `data-formula` 节点**自身** style 含 `display:block` → block（收紧到 wrapper 节点，避免任意居中祖先误判行内为块级）。`fast_converter.formula` 复用既有 `original_latex` 分支，无需改。
+3. **data-URI 图优先于残留 data-src**：`_asset_source` 在 lazy 检查**之前**加判——`_substantial_data_uri(src)`（data-URI 且解码 ≥512B）为真即 `data-uri`（authoritative），忽略 `data-src`。512B 门槛坐在 1px 占位（解码 <100B）和真内联图（观测最小 ~9KiB）之间；小于门槛的 data-URI + 不同 data-src 仍 fail-close 判 lazy。
+
+**为什么这么定**（真机诊断）：微信公众号 SingleFile 页无 `article`/`main` 语义，正文固定 `#js_content.rich_media_content`；公式是 MathJax→SVG，原始 LaTeX 存 `<section|span data-formula="...">`（块级 section 带 `display:block`，行内 span 无）；图片 `src` 已内联为完整 webp/png data-URI，`data-src` 只是残留 CDN 地址（图其实完整存在，非 lazy）。无 `data-formula` 的 `<svg>` 是真插图，不当公式，到 `fast_converter.block()` 落 `unsupported <svg>` → strict（用 Playwright 截图，cairosvg 渲 CJK 出豆腐块不可用）。
+
+| 输入结构 | 期望 | 类别 | 理由 |
+|------|------|------|------|
+| `#js_content.rich_media_content` 内足够长正文 | 选中，selector=`#js_content` | 正例 | 微信正文容器 |
+| 同时有 `<article>` 语义容器 | 选中 `article` | 反例 | 语义 selector 优先级更高，微信不抢 |
+| 两个 substantial `.rich_media_content` | ambiguous 失败 | 反例 | 不因新增 selector 放松 fail-closed |
+| `<section data-formula='R_t=\frac{...}' style='...display:block'>` | source=`data-formula`、display=`block`、latex verbatim | 正例 | 块级公式 |
+| `<span data-formula='n'>` | source=`data-formula`、display=`inline` | 正例 | 行内公式 |
+| `<svg viewBox='0 0 720 480'>`（无 data-formula） | 不进公式清单；pipeline→strict | 反例 | 真插图非公式，保守路由 |
+| `<span class='katex'><annotation encoding='application/x-tex'>a+b</annotation></span>` | source=`annotation` | 反例 | 旧 KaTeX 源不受 data-formula 新增影响 |
+| 完整 data-URI src（解码 ≥512B）+ 残留 data-src | `data-uri`、非 lazy、mode=fast | 正例 | 真图已内联，data-src 是残留 |
+| 1px 占位 data-URI（解码 43B）+ 真 data-src | `lazy:data-src`、lazy | 反例 | 真 lazy，门槛拦住占位 |
+| 空 src + data-src | `lazy:data-src`、lazy | 反例 | 经典 lazy，data-URI 规则不误放 |
+
+---
+
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

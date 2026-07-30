@@ -124,3 +124,32 @@ python3 markdown_postprocess.py <交付>.md           # 就地修
 - `tests/test_validation_document.py::test_double_backslash_underscore_passes_github_guard` — 双反斜杠过验证门
 - `tests/test_validation_document.py::test_single_backslash_underscore_still_fails_github_guard` — 单反斜杠（旧错形态）仍被拦
 - `tests/test_validation_document.py::test_real_math_subscript_not_touched_by_map_text` — 真数学下标不被误伤
+
+---
+
+## 微信公众号文章能直接转，不再整篇卡死
+
+**症状**：把微信公众号（mmbiz）保存的 SingleFile 页面丢进 pipeline，直接硬失败 `no unique semantic body found`，一个字都转不出来。这类页面里公式全是插图、图片下面挂着原始链接。
+
+**根因**：skill 原本只认 `article`/`main`/`data-slate-editor` 这类语义正文容器，微信正文是固定的 `#js_content`，不在名单里 → 保守停下（行为对，但覆盖不到微信这一大来源）。另外微信的公式不是常见的 KaTeX，而是 MathJax 渲染的 SVG，原始 LaTeX 藏在外层 `data-formula` 属性里；图片则是真图已内联进 `src`（data-URI），只是残留了原始 CDN 地址在 `data-src`，被旧规则误当成"图还没加载"（lazy）而推去人工。
+
+**判据（机制信号）**：
+- 正文容器：`#js_content` / `.rich_media_content`（微信固定 id/class），排在语义 selector 之后，仍受"同一优先级只能唯一命中，否则歧义失败"的保守约束。
+- 公式：`data-formula` 属性里的 LaTeX 原样可用（无需重建）；外层是 `<section ...display:block>` 就是块级 `$$…$$`，是 `<span>` 就是行内 `$…$`。
+- 图片：`src` 是体量够大（解码 ≥512B）的 data-URI = 真图已内联，直接用，忽略残留的 `data-src`；只有 1px 占位符 / 空 `src` + 真 `data-src` 才是真 lazy，继续走人工。
+
+**期望**：
+- 微信文章（正文 + `data-formula` 公式 + data-URI 图）→ `converted`，块级公式出 `$$…$$`、行内出 `$…$`、图片进 `files/`
+- 文章里没有 `data-formula` 的**真插图 SVG**（如统计图）→ 保守路由到 strict，由 Playwright 真浏览器截图成 PNG（cairosvg 会把中文渲成豆腐块，不可用）
+- 已有 `<article>` 语义的旧页面 → 仍走 `article`，不被微信 selector 抢
+- 两个 `.rich_media_content` 同时够长 → 仍歧义失败（不放松保守）
+- 1px 占位 data-URI / 空 src + `data-src` → 仍判 lazy 走 strict
+
+**不该触发**：真数学下标不受影响（公式走 `data-formula` verbatim，不经重建）；体量小的 data-URI（解码 <512B）+ 不同 `data-src` → 保守当 lazy 走 strict（宁可慢不猜错）。
+
+**守卫**：
+- `tests/test_preflight.py::WeChatMmbizTests` — 正文 selector（正例 + 语义优先 + 歧义失败 3 例）、`data-formula` 公式源（块/行内 + 插图 SVG 非公式 + KaTeX 旧源仍在）、data-URI 路由（真图优先 + 1px 占位仍 lazy + 空 src 仍 lazy）
+- `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_wechat_article_converts_with_formulas_and_data_uri_image` — 端到端 converted，块/行内公式与图片产物
+- `tests/test_pipeline.py::WeChatMmbizPipelineTests::test_wechat_plain_svg_illustration_routes_to_strict` — 无 data-formula 插图 SVG 保守路由 strict
+
+**未机械化（仍靠人工）**：插图 SVG → PNG 的栅格化在 strict 里用 Playwright 做，本轮未做进确定性 pipeline；公式里 `\text{95\%}`、`\text{偏度 }` 这类 CJK/转义在真 GitHub 的渲染仍需肉眼验。
