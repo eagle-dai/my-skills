@@ -380,6 +380,29 @@ def test_whole_sentence_closer_still_removed():
     assert pp(md) == ""
 
 
+def test_bold_wrapped_opener_removed():
+    # 整行 ** 加粗包裹的开场白 → 脱壳后按句删（行首是 * 不能当列表跳过）
+    md = "**你好，我是张三。**\n\n正文。"
+    assert pp(md) == "正文。"
+
+
+def test_bold_wrapped_closer_removed():
+    md = "正文。\n\n**我们下节课再见！**"
+    assert pp(md) == "正文。"
+
+
+def test_bold_wrapped_partial_keeps_survivor_bold():
+    # 加粗行里开场白句 + 正文句 → 删开场白句，幸存正文重新包 **
+    md = "**你好，我是张三。这是本讲核心。**"
+    assert pp(md) == "**这是本讲核心。**"
+
+
+def test_bold_non_greeting_not_touched():
+    # 加粗正文（非寒暄）保持不动
+    md = "**加粗正文，不是寒暄，很重要。**"
+    assert pp(md) == md
+
+
 # --- 规则5：残留公式占位符护栏（fail-closed） ---------------------------
 
 def test_find_residual_formula_placeholder():

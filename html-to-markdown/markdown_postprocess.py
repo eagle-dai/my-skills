@@ -283,44 +283,70 @@ def _sentence_is_opener(sentence: str) -> bool:
 
 
 def _sentence_is_closer(sentence: str) -> bool:
-    """该句是结束语：以强道别短语收尾。"""
-    text = sentence.strip()
+    """该句是结束语：去掉可选 ** 加粗后以强道别短语收尾。"""
+    text = sentence.strip().strip("*").strip()
     if not text:
         return False
     return any(p.search(text) for p in _CLOSER_SUFFIXES)
 
 
+# 行首正文结构标记 → 不做寒暄处理。列表项要求 marker + 空格（`- `/`* `/`+ `），
+# 否则 `**大家好！**`（加粗寒暄，行首是 `*`）会被误判成列表而跳过——它是寒暄，
+# 该按句剥离（_sentence_is_* 会 strip 掉 `**` 再匹配）。
+_STRUCTURE_MARKER = re.compile(r"(?:[#>|!]|```|\$\$|[-*+]\s)")
+
+
 def _has_structure_marker(line: str) -> bool:
-    """行首是正文结构标记（#/列表/表格/代码/公式/图片）→ 不做寒暄处理。"""
-    return line.strip().startswith(("#", "-", "*", ">", "|", "```", "$$", "!"))
+    """行首是正文结构标记（标题/列表/表格/代码/公式/图片）→ 不做寒暄处理。"""
+    return bool(_STRUCTURE_MARKER.match(line.strip()))
+
+
+# 整行被 ** 加粗包裹（`**寒暄整句**`）：先脱壳再切句，否则句切会把闭合 ``**`` 割成
+# 单独一段污染判定；剥离后若有幸存正文，重新包壳保持加粗。
+_BOLD_WRAP = re.compile(r"^\*\*(?P<inner>.+)\*\*$", re.DOTALL)
+
+
+def _unwrap_bold(line: str) -> tuple[str, bool]:
+    """整行 ``**…**`` → (内层, True)；否则 (原行, False)。内层不含裸 ``**`` 才脱壳。"""
+    stripped = line.strip()
+    m = _BOLD_WRAP.match(stripped)
+    if m and "**" not in m.group("inner"):
+        return m.group("inner"), True
+    return line, False
 
 
 def _strip_opener_from_line(line: str) -> str | None:
     """删掉行首连续的开场白句，保留其后实质内容；整行皆开场白则返回 None（删整行）。"""
     if _has_structure_marker(line):
         return line
-    sentences = _split_sentences(line)
+    body, wrapped = _unwrap_bold(line)
+    sentences = _split_sentences(body)
     idx = 0
     while idx < len(sentences) and _sentence_is_opener(sentences[idx]):
         idx += 1
     if idx == 0:
         return line  # 行首不是开场白，不动
     remainder = "".join(sentences[idx:]).strip()
-    return remainder or None
+    if not remainder:
+        return None
+    return f"**{remainder}**" if wrapped else remainder
 
 
 def _strip_closer_from_line(line: str) -> str | None:
     """删掉行尾连续的结束语句，保留其前实质内容；整行皆结束语则返回 None（删整行）。"""
     if _has_structure_marker(line):
         return line
-    sentences = _split_sentences(line)
+    body, wrapped = _unwrap_bold(line)
+    sentences = _split_sentences(body)
     idx = len(sentences)
     while idx > 0 and _sentence_is_closer(sentences[idx - 1]):
         idx -= 1
     if idx == len(sentences):
         return line  # 行尾不是结束语，不动
     remainder = "".join(sentences[:idx]).strip()
-    return remainder or None
+    if not remainder:
+        return None
+    return f"**{remainder}**" if wrapped else remainder
 
 
 def _strip_author_greetings(markdown: str) -> str:
