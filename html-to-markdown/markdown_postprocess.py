@@ -47,8 +47,21 @@ _CJK_CLASS = "一-鿿　-〿＀-￯"
 _CJK_BEFORE_DOLLAR = re.compile(rf"([{_CJK_CLASS}])\$(?!\$)")
 _DOLLAR_BEFORE_CJK = re.compile(rf"(?<!\$)\$([{_CJK_CLASS}])")
 
+# A U+00A0 NBSP directly touching a ``$`` inline-math delimiter stops GitHub
+# from rendering the math: GitHub requires an ASCII-whitespace (or start/end)
+# boundary around ``$…$`` and does NOT accept NBSP as that boundary, so the
+# formula shows up literally (``有\u00a0$n$\u00a0个`` → literal ``$n$``). WeChat
+# (mmbiz) SingleFile pages use NBSP to separate formulas from surrounding CJK.
+# Normalize an NBSP that is adjacent to a ``$`` into a plain ASCII space so the
+# boundary is valid. Leaves NBSP elsewhere in prose untouched. Verified against
+# real GitHub rendering (not local KaTeX/MathJax — see gap #25 铁律).
+_NBSP_BEFORE_DOLLAR = re.compile("\u00a0(?=\\$)")
+_DOLLAR_BEFORE_NBSP = re.compile("(?<=\\$)\u00a0")
+
 
 def _space_cjk_inline_math_line(line: str) -> str:
+    line = _NBSP_BEFORE_DOLLAR.sub(" ", line)
+    line = _DOLLAR_BEFORE_NBSP.sub(" ", line)
     line = _CJK_BEFORE_DOLLAR.sub(r"\1 $", line)
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 

@@ -468,6 +468,47 @@ def test_dollar_inside_fence_untouched():
     assert "价格 $USD" not in out
 
 
+# --- 规则6b：NBSP 紧贴 $ 换成半角空格（gap#37，微信 mmbiz 真机验证）--------
+# U+00A0 NBSP 紧贴 $ 时 GitHub 不认作行内公式边界 → 公式字面显示。换成 ASCII 空格。
+
+_NB = " "  # NBSP
+
+
+def test_nbsp_before_dollar_becomes_ascii_space():
+    # 正例：NBSP 在 $ 前（微信正文分隔符），换成半角空格后 GitHub 能渲染
+    assert pp(f"有{_NB}$n$ 个\n") == "有 $n$ 个\n"
+
+
+def test_nbsp_after_dollar_becomes_ascii_space():
+    # 正例：NBSP 在 $ 后
+    assert pp(f"见 $n${_NB}个\n") == "见 $n$ 个\n"
+
+
+def test_nbsp_both_sides_of_inline_formula():
+    # 正例：两侧都是 NBSP（微信最常见形态）
+    assert pp(f"有{_NB}$n${_NB}个\n") == "有 $n$ 个\n"
+
+
+def test_nbsp_not_touching_dollar_untouched():
+    # 反例：NBSP 不紧贴 $（正文里的 NBSP）保留不动
+    assert pp(f"价格{_NB}上涨了\n") == f"价格{_NB}上涨了\n"
+
+
+def test_nbsp_not_adjacent_to_dollar_preserved():
+    # 反例：NBSP 不紧贴 $（跨了换行/在别处）不被规则触碰
+    text = f"结论{_NB}\n\n$$\nx=1\n$$\n"
+    out = pp(text)
+    assert "$$\nx=1\n$$" in out          # 展示块完整
+    assert f"结论{_NB}" in out            # 非相邻 NBSP 保留
+
+
+def test_nbsp_dollar_inside_fence_untouched():
+    # 反例：fence 内的 NBSP+$ 不碰
+    text = f"前言\n\n```bash\necho 价格{_NB}$USD\n```\n"
+    out = pp(text)
+    assert f"价格{_NB}$USD" in out
+
+
 # --- 规则7：相邻加粗拼成的 **** 接缝去除（自根 tests/ 并入）---------------
 
 
