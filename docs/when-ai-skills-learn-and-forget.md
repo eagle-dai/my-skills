@@ -1,8 +1,12 @@
 # When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
-A skill normally becomes more useful step by step. We add one rule, support one more input, or handle one more edge case. Then one day, a new improvement quietly breaks something that already worked.
+One of the most frustrating problems in skill development is not that a new feature fails. It is that the new feature works, while something old quietly stops working.
+
+This happens more often than expected. We add one rule, support one more input, or handle one more edge case. The new example passes. The change looks successful. Several days later, an older scenario produces a worse result, sometimes without any error message.
 
 I met this problem while improving a small HTML-to-Markdown skill. One requirement was simple: remove unhelpful greetings from the beginning of an article.
+
+Consider this HTML:
 
 ```html
 <p>
@@ -11,7 +15,7 @@ I met this problem while improving a small HTML-to-Markdown skill. One requireme
 </p>
 ```
 
-The expected Markdown was:
+The expected Markdown is:
 
 ```markdown
 **The migration must finish before Friday.**
@@ -19,11 +23,11 @@ The expected Markdown was:
 
 A first implementation checked whether a paragraph started with a greeting. If yes, it removed the paragraph. The greeting disappeared, but so did the meaningful sentence and its bold formatting.
 
-The new feature worked. The skill became worse.
+The new feature worked. The old capability did not.
 
-A skill does not only accumulate capabilities. It also accumulates interactions between natural-language instructions, Python code, regular expressions, tools, fallback paths, and platform-specific behavior.
+This is the central difficulty of skill evolution. A skill does not only accumulate capabilities. It also accumulates interactions between natural-language instructions, deterministic code, regular expressions, tools, fallback paths, and platform-specific behavior.
 
-This article shares the structure I now use to improve skills more safely:
+The approach in this article is based on one simple idea:
 
 > Every real failure should become a durable rule, a regression case, and an executable test. If the same kind of failure happens repeatedly, it should also improve the rules for changing the skill itself.
 
@@ -31,17 +35,17 @@ This is not autonomous self-modification. It is a controlled engineering loop.
 
 ## Why skills can forget silently
 
-Traditional code has compilers, type systems, interfaces, and tests. A skill is different because its behavior is often defined by both text and code:
+Normal software already has regression problems, but skills add another difficulty: their behavior is often defined by both text and code.
 
-- instructions describe what the agent should do;
-- reference documents explain rules and exceptions;
-- Python implements deterministic parts;
-- examples influence how the model interprets the instructions;
-- tests cover only cases that somebody remembered to encode.
+- Natural-language instructions describe what the agent should do.
+- Reference documents explain rules and exceptions.
+- Python or another language implements deterministic parts.
+- Examples influence how the model interprets the instructions.
+- Tests cover only the cases that somebody remembered to encode.
 
-The text part does not fail loudly. A deleted rule in a Markdown file causes no compilation error. A rewritten instruction may look cleaner but lose an old exception. A broader regular expression may fix one input and damage several others.
+The text part does not fail loudly. Removing a sentence from a skill document causes no compilation error. Rewriting an instruction may make it shorter but lose an old exception. A broader regular expression may fix one input and damage several others.
 
-The output can still look fluent and complete. This makes the regression dangerous.
+The output can still look fluent and complete. This makes the regression dangerous: a plausible result may already have lost information.
 
 In practice, I saw three recurring causes:
 
@@ -51,7 +55,7 @@ In practice, I saw three recurring causes:
 
 These problems need a change process, not more instructions.
 
-## Separate shared rules from skill-specific knowledge
+## Separate shared improvement rules from skill-specific knowledge
 
 A useful structural decision is to separate two kinds of knowledge.
 
@@ -76,20 +80,20 @@ html-to-markdown/
     └── test_regressions.py
 ```
 
-The shared meta-rule file does not explain HTML conversion. It defines the change workflow, generalization checks, forbidden shortcuts, trade-off priorities, and release requirements.
+The shared meta-rule file does not explain HTML conversion. It defines the workflow for changing any skill: generalization checks, forbidden shortcuts, trade-off priorities, and release requirements.
 
-The skill-specific `self-improvement.md` records concrete regression knowledge: the input, expected result, positive and negative examples, mechanism, target platform, and protecting test.
+The skill-specific `self-improvement.md` records concrete regression knowledge: the failed input, expected result, mechanism, positive and negative examples, target platform, and protecting test.
 
-The acceptance file is written from the user's point of view. A user describes the visible effect, not the selector, regular expression, or routing logic.
+The acceptance file is written from the user's point of view. The user describes the visible effect, not a selector, regular expression, or routing rule.
 
-The tests are the machine side of the same rule.
+The automated test is the machine side of the same rule.
 
 A skill therefore has two readers:
 
 - the user cares about the visible result;
 - the machine needs an executable contract.
 
-Both sides are needed. A user-readable rule without a test can drift. A test without a readable intent becomes hard to review.
+Both sides are needed. A readable rule without a test can drift. A test without a readable intent becomes difficult to review.
 
 ## A six-step evolution loop
 
@@ -97,15 +101,15 @@ Both sides are needed. A user-readable rule without a test can drift. A test wit
 
 A change should either produce a visible improvement or fix a regression that really happened.
 
-For the example, the reason is:
+For the example, the purpose is:
 
 > Remove a pure opening greeting without deleting meaningful content or supported formatting in the same container.
 
 This sentence also limits the scope. The change is not a general refactoring of paragraph handling.
 
-Before coding, classify the problem. Is the rule too narrow? Too broad? Did a shared component affect another path? Was the rule documented but not tested?
+Before coding, identify the failure pattern. Is the rule too narrow? Too broad? Did a shared component affect another path? Was the rule documented but not tested?
 
-Without this step, we often fix the symptom and keep the root cause.
+Without this step, it is easy to fix the symptom and keep the root cause.
 
 ### 2. Generalize before implementing: Gate One
 
@@ -113,10 +117,10 @@ The first gate asks whether the proposed rule can survive another input.
 
 I use five questions:
 
-1. **Are the examples varied enough?** Consider languages, punctuation, full-width and half-width characters, letter case, or different HTML structures.
-2. **Does the rule describe a mechanism?** A DOM relationship, rendering rule, or format standard is stronger than “this string looked wrong.”
+1. **Are the examples varied enough?** Consider languages, numbers, punctuation, full-width and half-width characters, letter case, or different HTML structures.
+2. **Does the rule describe a mechanism?** A DOM relationship, renderer behavior, or format standard is stronger than “this string looked wrong.”
 3. **Are there negative examples?** Every detection rule should have at least two cases that must not match.
-4. **Is the boundary precise?** Broad classes such as `.` or `\S` are often warning signs.
+4. **Is the boundary precise?** Broad classes such as `.` or `\S` are warning signs. The rule should know whether it is dealing with letters, CJK characters, punctuation, whitespace, or structural nodes.
 5. **Is the target platform explicit?** GitHub, VS Code, KaTeX, MathJax, and local renderers may behave differently.
 
 For the greeting example, this rule is too broad:
@@ -127,7 +131,7 @@ A better rule is:
 
 > Remove only an independent greeting sentence. Do not remove its parent block when the block also contains meaningful text or supported inline structure.
 
-The key is not a smarter regular expression. It is the correct unit of meaning. The wrong rule uses the whole paragraph as the deletion unit. The better rule uses the pure greeting sentence.
+The important change is not a more complicated regular expression. It is the correct unit of meaning. The wrong rule treats the paragraph as the deletion unit. The better rule treats only the pure greeting sentence as removable.
 
 Useful boundaries include:
 
@@ -180,7 +184,7 @@ def test_keeps_quoted_greeting() -> None:
     )
 ```
 
-The user-readable case can point back to the test:
+The user-readable acceptance case can point back to the test:
 
 ```markdown
 ### Greeting followed by meaningful content
@@ -191,9 +195,11 @@ The user-readable case can point back to the test:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
+The acceptance case says what the user wants. The test makes sure the system continues to respect it.
+
 After the new test passes, run the complete suite, not only the new file.
 
-The new test proves that this defect was fixed. The full suite checks that the fix did not become the next defect.
+The new test proves that the reported defect was fixed. The full suite checks that the fix did not become the next defect.
 
 Old regression cases should normally not be deleted. If an old expectation is proven wrong, record the reason before changing it. Otherwise, deleting a test is deleting part of the skill's memory.
 
@@ -237,7 +243,7 @@ Success is not the absence of an exception. Success means the required evidence 
 
 ### 5. Protect the boundary and make trade-offs explicit
 
-A skill change should touch only what is needed for its stated purpose. This matters when rules are shared across fast paths, strict paths, post-processing stages, or several skills.
+A change should touch only what is needed for its stated purpose. This matters when rules are shared across fast paths, strict paths, post-processing stages, or several skills.
 
 A small regular-expression change can affect many behaviors. Duplicate copies of the same selector or default rule can also drift apart.
 
@@ -283,8 +289,6 @@ A recurring way of failing belongs to the shared meta-rules:
 - contributors repeatedly run only new tests;
 - documentation-only rules repeatedly disappear.
 
-This final feedback is what closes the loop.
-
 A concrete failure improves the skill. A recurring failure pattern improves the way the skill is improved.
 
 ## Test more than the converter
@@ -301,9 +305,31 @@ Useful repository-level checks can verify that:
 
 Test ownership should follow capability ownership. Tests for one skill's modules or documentation belong to that skill. Cross-skill consistency tests belong at repository level.
 
-The target platform also matters. Markdown that looks correct in one local preview may fail on GitHub because the processing pipeline is different. Test the real target semantics, or reproduce them as closely as possible.
+The target platform also matters. Markdown that looks correct in one local preview may fail on GitHub because its processing pipeline is different. Test the real target semantics, or reproduce them as closely as possible.
 
 A fixture should be minimal but still faithful. The right fixture is the smallest one that preserves the real failure mechanism, not simply the smallest file.
+
+## Where this approach works best
+
+This method is most useful when four conditions are present:
+
+1. the task is repeated, not one-off;
+2. some behavior can be stated as a stable contract or invariant;
+3. a failure can be reproduced with a fixture or recorded execution;
+4. a plausible but wrong result has a real cost.
+
+Typical examples include:
+
+- document conversion, parsing, extraction, normalization, and validation;
+- code or configuration generation with schemas and structural rules;
+- tool-based workflows with known inputs, outputs, states, or approval steps;
+- enterprise tasks with stable business rules and versioned APIs;
+- skills with several execution paths, shared rules, or platform-specific behavior;
+- agent tasks where tool calls or intermediate states can be checked, not only the final wording.
+
+The method is less suitable as a strict TDD framework for one-off creative writing, open brainstorming, or tasks where many very different outputs are equally correct. In such cases, there may be no stable expected output to protect. Human review, rubric-based evaluations, or comparison across several samples are often more useful.
+
+Some parts still apply widely: keep changes bounded, preserve known failures, record platform differences, and do not claim success without evidence. But the heavier regression machinery is valuable only when the task has repeatable behavior worth protecting.
 
 ## A brief connection to Joule Studio
 
@@ -328,6 +354,7 @@ Before merging a skill change, ask:
 - Are instructions, implementation, tests, and acceptance cases aligned?
 - Was the concrete failure stored in the skill's regression knowledge?
 - Was any recurring failure pattern stored in the shared meta-rules?
+- Does this task have repeatable behavior that is worth protecting?
 
 A skill will continue to change. New models, tools, formats, and user expectations will keep arriving. The goal is not to stop this change.
 
