@@ -250,5 +250,69 @@ class UnimplementedRulesAreMarkedTests(unittest.TestCase):
                 )
 
 
+class UnsupportedSemanticStructuresTests(unittest.TestCase):
+    """守卫：katex-html-parser.md 里 fail-closed 的结构 ↔ 实现 ↔ 文档标记三者同步。
+
+    `katex-html-parser.md` 详细写了 op-limits / accent / mtable / munder / mover 的
+    解析要点，但仓库解析器把它们放进 `formula_batch.py::UNSUPPORTED_SEMANTIC`、命中即
+    `success=False`（fail-closed）。曾经文档把这 5 类当"可解析结构"平铺，读者/agent 会
+    误以为矩阵、\\hat、cases 能被重建——正是 skill 自己禁的"把设计目标写成已落地能力"。
+
+    本守卫三管齐下：
+    1. 钉住 UNSUPPORTED_SEMANTIC 常量本身（谁动集合这里变红）；
+    2. 端到端跑 parse_katex，确认每类真的 fail-close（不是只改常量没接线）；
+    3. 检查 katex-html-parser.md 对每类都带 `[未实现-仅设计]` 标记（防文档漂移）。
+
+    若将来给某类补了真实现：从集合里去掉、去文档标记、加 import-and-call 成功用例，
+    本守卫会随之要求同步改动。
+    """
+
+    EXPECTED = {"mtable", "accent", "op-limits", "munder", "mover"}
+    # 每类一个最小 DOM 触发片段（带对应 CSS 类即命中 UNSUPPORTED_SEMANTIC）
+    SAMPLES = {
+        "mtable": '<span class="mtable"><span class="col-align-c"></span></span>',
+        "accent": '<span class="accent"><span class="accent-body"></span></span>',
+        "op-limits": '<span class="mop op-limits"><span class="vlist"></span></span>',
+        "munder": '<span class="munder"><span class="vlist"></span></span>',
+        "mover": '<span class="mover"><span class="vlist"></span></span>',
+    }
+    # 文档里标注每类的行关键字（首格文案）
+    DOC_ROW_KEYS = {
+        "op-limits": "运算符（op-limits）",
+        "accent": "重音",
+        "mtable": "矩阵/分段/cases",
+        "munder": "下加标（munder）",
+        "mover": "上加标（mover）",
+    }
+
+    def test_constant_matches_expected_set(self) -> None:
+        self.assertEqual(formula_batch.UNSUPPORTED_SEMANTIC, self.EXPECTED)
+
+    def test_each_structure_fails_closed_via_parse(self) -> None:
+        for kind, inner in self.SAMPLES.items():
+            with self.subTest(structure=kind):
+                node = _katex(inner).select_one(".katex")
+                assert node is not None
+                result = formula_batch.parse_katex(node)
+                self.assertFalse(
+                    result.success,
+                    f"'{kind}' 应 fail-closed（success=False），不得被静默解析",
+                )
+
+    def test_doc_marks_each_row_unimplemented(self) -> None:
+        doc = (SKILL / "katex-html-parser.md").read_text(encoding="utf-8")
+        for kind, row_key in self.DOC_ROW_KEYS.items():
+            with self.subTest(structure=kind):
+                rows = [
+                    ln for ln in doc.splitlines()
+                    if ln.lstrip().startswith("|") and row_key in ln
+                ]
+                self.assertTrue(rows, f"katex-html-parser.md 找不到结构表行: {row_key}")
+                self.assertTrue(
+                    all("[未实现-仅设计]" in ln for ln in rows),
+                    f"结构 '{kind}' 在 UNSUPPORTED_SEMANTIC，文档表行必须标 [未实现-仅设计]",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

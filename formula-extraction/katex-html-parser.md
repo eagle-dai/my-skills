@@ -5,10 +5,16 @@
 ## 前提条件（全部满足才可使用）
 
 1. 编写**可复用的程序化解析器**（Python/JS），非手动逐公式提取
-2. 解析器覆盖下方列出的关键结构
+2. 解析器覆盖下方**已实现**的关键结构；带 `[未实现-仅设计]` 的行是设计目标，仓库解析器对它们 **fail-closed**（不是已落地能力），要支持得自己按该行的要点补实现
 3. 通过 Playwright 渲染验证达到 **0 KaTeX error + 0 mstyle[mathcolor] error**
 4. 批量处理后执行完整后处理管道（见 SKILL.md）
 5. 对未识别结构采用 fail-closed：返回失败并交给调用方截图，不静默摊平成文本
+
+> **`[未实现-仅设计]` 标记**：仓库解析器 `html-to-markdown/formula_batch.py` 把该结构放进
+> `UNSUPPORTED_SEMANTIC`，命中即返回 `success=False` 交 strict/人工，**没有**按下方要点重建。
+> 标记只在文档层描述"要支持得怎么解析"，不代表已实现——正是 SKILL.md「不得把设计目标写成
+> 已经落地的能力」。三者同步（实现↔标记↔测试）由 `tests/test_formula_postprocess_rules.py`
+> 的 `UnsupportedSemanticStructuresTests` 守卫。
 
 ## KaTeX HTML 关键结构
 
@@ -19,22 +25,26 @@ KaTeX 的 HTML 渲染层 CSS 类由 KaTeX 定义，与宿主网站无关，但�
 | 普通字符 | `.mord` (text node) | Unicode → LaTeX 映射 |
 | 上下标 | `.msupsub > .vlist-t / .vlist-t2` | 见 vlist 方向规则 |
 | 分式 | `.mfrac > .vlist` | top 最小 = 分子，top 最大 = 分母 |
-| 运算符（无 limits） | `.mop`（无 `.msupsub`） | textContent → OP_MAP |
+| 运算符（无 limits） | `.mop`（无 `.msupsub`） | textContent → `OPERATORS` |
 | 运算符（有 limits） | `.mop > .msupsub` | 先提取 op，再解析 supsub |
-| 运算符（op-limits） | `.mop.op-limits > .vlist` | 见 op-limits 结构 |
+| 运算符（op-limits）`[未实现-仅设计]` | `.mop.op-limits > .vlist` | 见 op-limits 结构 |
 | 根号 | `.msqrt` | `\sqrt{内容}` |
-| 重音 | `.accent > .accent-body + .mord` | `\hat` / `\tilde` / `\bar` / `\dot` / `\vec` |
+| 重音 `[未实现-仅设计]` | `.accent > .accent-body + .mord` | `\hat` / `\tilde` / `\bar` / `\dot` / `\vec` |
 | 上划线 | `.overline` | `\overline{内容}` |
 | 括号 + 上下标 | `.mclose/.mopen + .msupsub` | 递归进入子节点 |
 | 黑板体 | `.mord.mathbb` | `\mathbb{内容}` |
 | 花体 | `.mord.mathcal` | `\mathcal{内容}` |
 | 文本模式 | `.mord.text` | `\text{内容}` |
-| 矩阵/分段/cases | `.mtable > .col-align-* > .vlist` | 见 mtable |
-| 分段函数包装 | `.minner > .mopen + .mtable + .mclose` | 识别 `cases` |
+| 矩阵/分段/cases `[未实现-仅设计]` | `.mtable > .col-align-* > .vlist` | 见 mtable |
+| 分段函数包装 `[未实现-仅设计]` | `.minner > .mopen + .mtable + .mclose` | 识别 `cases` |
+| 下加标（munder）`[未实现-仅设计]` | `.munder > .vlist` | 见 op-limits 结构 |
+| 上加标（mover）`[未实现-仅设计]` | `.mover > .vlist` | 见 op-limits 结构 |
 | 数组列间距 | `.arraycolsep` | 忽略 |
 | 空分隔符 | `.mclose.nulldelimiter` | 忽略 |
 | 空格 | `.mspace` | 空格 |
 | 渲染辅助 | `.strut` / `.vlist-s` / `.frac-line` / `.rule` | 忽略 |
+
+**已实现 vs `[未实现-仅设计]`**：仓库解析器实现的是普通字符、上下标（msupsub/vlist）、分式（mfrac）、根号（msqrt）、上划线（overline）、无 limits 运算符、括号+上下标、mathbb/mathcal、text、mspace 及各忽略类。`op-limits`、`accent`（重音）、`mtable`（矩阵/cases/array）、`munder`、`mover` 在 `UNSUPPORTED_SEMANTIC` 里，**fail-closed**——下方 op-limits / mtable 小节是给自己补实现时的参考要点，不是仓库已有能力。
 
 ## text-mode 转义（`\text` / `\mathbb` / `\mathcal` 内）
 
@@ -92,7 +102,10 @@ CSS `top`：从 `style="top: -Xem"` 中提取数值。
 
 **仓库已有实现**：`html-to-markdown/formula_batch.py` 的 `_join()` 就是这条规则——前一 part `re.search(r"\\[A-Za-z]+$", result)`（控制字结尾）且后一 part `re.match(r"[A-Za-z\\]", part)`（**字母或反斜杠**开头）才插空格；`_merge()` 把它同时用于分式、上下标和 `.katex-html` 下多个 `.base` 的合并。自己写临时 parser 时照抄这一条，不要用 `''.join`。
 
-## op-limits 结构
+## op-limits 结构 `[未实现-仅设计]`
+
+> 仓库解析器对 `op-limits` / `munder` / `mover` **fail-closed**（在 `UNSUPPORTED_SEMANTIC`）。
+> 以下是自己补实现时的参考要点，不是已有能力。
 
 ```text
 .mop.op-limits 内的 .vlist：
@@ -100,9 +113,12 @@ CSS `top`：从 `style="top: -Xem"` 中提取数值。
   2 个 span（按 top 排序）：运算符本体、下标
 ```
 
-解析结果可能已是 `\max` 等命令；先查 SYM_MAP/OP_MAP，无匹配则保留解析结果。
+解析结果可能已是 `\max` 等命令；先查 `SYMBOLS`/`OPERATORS`，无匹配则保留解析结果。
 
-## mtable 解析规则
+## mtable 解析规则 `[未实现-仅设计]`
+
+> 仓库解析器对 `mtable`（矩阵/cases/array）**fail-closed**（在 `UNSUPPORTED_SEMANTIC`）。
+> 以下是自己补实现时的参考要点，不是已有能力。
 
 ```text
 .mtable：
