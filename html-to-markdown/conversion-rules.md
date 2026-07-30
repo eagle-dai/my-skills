@@ -103,6 +103,10 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 **仓库已有实现**：`html-to-markdown/fast_converter.py` 的 `_join_inline()` 在 `inline_children` 拼接时执行此分隔（前片段 `$` 结尾 + 后片段 `$` 开头 → 插空格）；回归见 `tests/test_pipeline.py::test_adjacent_inline_formulas_are_separated`。strict 路径的临时转换器同样须在相邻行内公式间保留分隔符。
 
+## 数学段反斜杠加倍（GitHub GFM，`markdown_postprocess.py`）
+
+GitHub GFM 在 `$…$` / `$$…$$` 内会把 `\`+ASCII标点的反斜杠**剥掉一层**再喂 MathJax，所以矩阵/cases 换行 `\\`、`\,` `\;` `\%` 等在源 md 里必须**双写**（`\\`→`\\\\`）才能在 GitHub 上渲染正确；`\`+字母（`\sigma` `\frac` 命令）不受影响，不动。这条规则由共享后处理门 `markdown_postprocess.py::_double_math_backslashes` 机械执行（fast/strict 两路径都经过），与 `formula-extraction` skill gap #31 的提取器侧 `\\_` 产出幂等兼容。完整机制、transform 三分支与实证表见 self-improvement.md「数学段反斜杠加倍（缺陷 38）」。
+
 ## 无语义 wrapper 穿透（inline 上下文）
 
 SingleFile/Slate 常在段落内嵌无语义 `<div>`（无 `data-slate-*`、纯排版包裹）。fast path 的 **block** 上下文对 `div/section/article/main` 已按 `has_block_child` 穿透（有块子→当块，无块子→当内联），但 **inline** 上下文旧实现遇 `<div>` 一律 `FastPathUnsupported` → 整页被迫 strict（~19min），两处不对称即 bug。
