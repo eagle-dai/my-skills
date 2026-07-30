@@ -355,6 +355,31 @@ def test_all_greeting_document_not_emptied_to_none():
     assert out == "" or out == "大家好！"
 
 
+# 静默丢正文回归（按句剥离，不整行删）：单行「实质正文 + 道别/开场白」混排
+
+def test_closer_line_with_leading_substance_kept():
+    # 行尾是道别句，但同一行前面有实质结论 → 只删道别句，保留结论（曾整行删丢正文）
+    md = "重要结论：算法收敛。我们下节课再见！"
+    assert pp(md) == "重要结论：算法收敛。"
+
+
+def test_opener_line_with_trailing_substance_kept():
+    # 行首是开场白句，但同一行后面有实质正文 → 只删开场白句，保留正文
+    md = "你好，我是张三。这是本讲的核心正文，非常重要。"
+    assert pp(md) == "这是本讲的核心正文，非常重要。"
+
+
+def test_daijia_hao_opener_same_line_body_kept():
+    md = "大家好！今天讲第一课，内容很关键。"
+    assert pp(md) == "今天讲第一课，内容很关键。"
+
+
+def test_whole_sentence_closer_still_removed():
+    # 整句都是求转发+道别客套（无实质信息）→ 仍整句删掉
+    md = "如果今天的课程让你有所收获，欢迎转发给有需要的朋友，我们下节课再见！"
+    assert pp(md) == ""
+
+
 # --- 规则5：残留公式占位符护栏（fail-closed） ---------------------------
 
 def test_find_residual_formula_placeholder():
