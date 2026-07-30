@@ -43,9 +43,10 @@
 - `see $r_t$ here`（已有半角空格）→ 原样不动
 - `$$…$$` 显示公式贴中文 → 不拆
 - code block 内 `价格$USD` → 不动
+- **NBSP（U+00A0）紧贴 `$`**（微信 mmbiz 用它分隔公式与中文）→ 换成半角空格（`有 $n$ 个` → `有 $n$ 个`）；不紧贴 `$` 的 NBSP 保留。GitHub 不认 NBSP 作行内公式边界，不换则公式字面显示。真机（真 GitHub）验证。
 
 **守卫**：
-- `tests/test_markdown_postprocess.py::CjkInlineMathSpacing` — 规则本体（正例 + 反例）
+- `tests/test_markdown_postprocess.py`（`test_cjk_*` + `test_nbsp_*` 函数）— 规则本体（正例 + 反例）
 - `tests/test_acceptance_cjk_inline_math.py` — 端到端产物层
 
 ---
