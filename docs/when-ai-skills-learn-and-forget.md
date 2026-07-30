@@ -335,49 +335,71 @@ Some parts still apply widely: keep changes bounded, preserve known failures, re
 
 ## Put the skill where the tool can find it
 
-The method is easier to follow when the files live next to the code and are versioned with it. For Claude Code, project skills belong under `.claude/skills/<skill-name>/SKILL.md`. According to the [Claude Code skills documentation](https://code.claude.com/docs/en/skills), Claude Code follows the Agent Skills format, and a skill directory can also contain references, examples, templates, and scripts that are loaded or executed only when needed.
-
-For a small project, I would start with this layout:
+For skills that I want to use across several projects, I prefer the personal Claude Code directory:
 
 ```text
-CLAUDE.md
-.claude/
-└── skills/
-    ├── _meta/
-    │   └── skill-self-improvement.md
-    └── html-to-markdown/
-        ├── SKILL.md
-        ├── self-improvement.md
-        ├── acceptance/
-        │   └── CASES.md
-        ├── scripts/
-        │   └── converter.py
-        └── tests/
-            └── test_acceptance.py
+~/.claude/skills/
 ```
 
-`CLAUDE.md` belongs at the project root, not inside a skill directory. The project skill itself lives under `.claude/skills/html-to-markdown/`. The `_meta` directory is only a shared reference area; it is not presented as another user-facing skill.
+Claude Code loads a personal skill from `~/.claude/skills/<skill-name>/SKILL.md`, making it available in all projects for the same user. A project-specific skill can still live under `.claude/skills/`, but that is a better fit when the behavior belongs to one repository or should be reviewed together with that repository's code.
 
-The exact names are not important. The useful separation is: one shared file for how changes are governed, and one local record for what the actual skill has learned.
+For the running example, I would keep a small personal skill library like this:
 
-### Reference: project instructions
-
-`CLAUDE.md` should stay short. It is useful for the few rules that must be visible in every session:
-
-```markdown
-# Project instructions
-
-- Project skills live under `.claude/skills/`.
-- Before changing a skill, read `.claude/skills/_meta/skill-self-improvement.md`.
-- Then read the target skill's `self-improvement.md` and `acceptance/CASES.md`.
-- Add a failing regression test before changing behavior.
-- Do not remove an existing regression case unless the old expectation is proven wrong and the reason is recorded.
-- Run the complete test suite before opening a pull request.
+```text
+~/.claude/skills/
+├── _meta/
+│   └── skill-self-improvement.md
+└── html-to-markdown/
+    ├── SKILL.md
+    ├── self-improvement.md
+    ├── acceptance/
+    │   └── CASES.md
+    ├── scripts/
+    │   └── converter.py
+    └── tests/
+        └── test_acceptance.py
 ```
+
+The `html-to-markdown` directory is the actual skill. The `_meta` directory is only a shared reference area for how skills should be changed; it is not another user-facing skill.
+
+### Put the personal skill library under Git
+
+The whole `~/.claude/skills/` directory can be a Git repository. This is useful even for one person: every rule change has a diff, regression cases have history, and the same library can be used on another machine.
+
+A minimal setup is:
+
+```bash
+mkdir -p ~/.claude/skills
+cd ~/.claude/skills
+
+git init
+git branch -M main
+git add .
+git commit -m "Initialize personal Claude skills"
+
+git remote add origin git@github.com:<your-account>/<your-skills-repo>.git
+git push -u origin main
+```
+
+On another machine, clone the repository into the same location:
+
+```bash
+git clone git@github.com:<your-account>/<your-skills-repo>.git ~/.claude/skills
+```
+
+Do not put credentials, tokens, machine-specific paths, private customer data, or generated working files into this repository. Keep it focused on skill instructions, references, small fixtures, tests, and scripts that are safe to version.
+
+If a team needs to share a skill together with one application, use the project-level path instead:
+
+```text
+<project>/.claude/skills/<skill-name>/SKILL.md
+```
+
+That version naturally travels with the application repository and its pull requests. The personal directory is better for a reusable toolbox; the project directory is better for behavior owned by one codebase.
 
 ### Reference: the shared change rules
 
-A minimal `.claude/skills/_meta/skill-self-improvement.md` can be written like this:
+A minimal `~/.claude/skills/_meta/skill-self-improvement.md` can be written like this:
 
 ```markdown
 # Changing a skill safely
@@ -397,9 +419,9 @@ Use this file when adding, removing, or changing behavior in an existing skill.
 Stop with `blocked` or route to a stricter path when correctness cannot be established.
 ```
 
-### Reference: the actual project skill
+### Reference: the actual skill
 
-The main `.claude/skills/html-to-markdown/SKILL.md` only needs a short maintenance pointer; the detailed history stays outside the main execution instructions:
+The main `~/.claude/skills/html-to-markdown/SKILL.md` should stay focused on execution. It can point to the maintenance files when the skill itself is being changed:
 
 ```markdown
 ---
@@ -431,9 +453,7 @@ The acceptance file should describe effects, not implementation details:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Keep these files in Git. That gives the team a diff for every rule change, a history for why a regression case was added, and a normal pull-request review path. It also prevents one developer's local prompt from becoming an invisible dependency. Personal settings and credentials should of course stay out of the repository.
-
-Claude Code is only one place to use this structure. Its skills follow the open Agent Skills format, so keeping the package mostly standard makes future reuse easier. SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, the Git-managed instructions, references, acceptance cases, and regression discipline described here should transfer with much less rework. Even before that happens, the governance pattern is still useful for any capability that is stored as files and evolves through reviewed versions.
+Claude Code is only one place to use this structure. Its skills follow the open Agent Skills format, so keeping the package mostly standard makes future reuse easier. SAP has publicly described Joule Work as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
 
 ## Practical checklist
 
