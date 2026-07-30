@@ -12,7 +12,7 @@ Technology Blog Posts by Members, or the closest AI/developer category available
 
 **Recommended title**
 
-How I Evolve AI Skills Without Breaking Existing Behavior
+When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
 **Short description**
 
@@ -59,9 +59,9 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 ---
 
-# How I Evolve AI Skills Without Breaking Existing Behavior
+# When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
-*A regression-safe workflow for file-based agent skills using acceptance cases, tests, and Git*
+*A Practical Way to Evolve AI Skills Without Breaking What Already Works*
 
 I once made a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
