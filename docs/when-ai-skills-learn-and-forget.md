@@ -1,3 +1,19 @@
+# Repository Note — Not Part of the Blog Article
+
+> **Publishing rule:** This file contains a standalone blog article. When publishing it, copy only the content below the **BLOG ARTICLE STARTS HERE** marker.
+>
+> The published article must not link to, mention, or depend on any other file, directory, implementation, issue, pull request, or documentation in this repository. Code and directory structures shown in the article are self-contained examples. Links to external official documentation are allowed.
+
+---
+
+<!-- ==================== BLOG ARTICLE START ==================== -->
+
+## BLOG ARTICLE STARTS HERE
+
+*The repository note and this marker are not part of the article. Start copying from the title below.*
+
+---
+
 # When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
