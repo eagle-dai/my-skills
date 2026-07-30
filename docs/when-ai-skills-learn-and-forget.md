@@ -1,3 +1,19 @@
+# Repository Note — Not Part of the Blog Article
+
+> **Publishing rule:** This file contains a standalone blog article. When publishing it, copy only the content below the **BLOG ARTICLE STARTS HERE** marker.
+>
+> The published article must not link to, mention, or depend on any other file, directory, implementation, issue, pull request, or documentation in this repository. Code and directory structures shown in the article are self-contained examples. Links to external official documentation are allowed.
+
+---
+
+<!-- ==================== BLOG ARTICLE START ==================== -->
+
+## BLOG ARTICLE STARTS HERE
+
+*The repository note and this marker are not part of the article. Start copying from the title below.*
+
+---
+
 # When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
@@ -29,11 +45,11 @@ The new feature worked. The old capability did not.
 
 This is the central difficulty of skill evolution. A skill does not only accumulate capabilities. It also accumulates interactions between natural-language instructions, deterministic code, regular expressions, tools, fallback paths, and platform-specific behavior.
 
-The approach in this article is based on one simple idea:
+After being bitten by this a few times, I settled on one working rule:
 
 > Every real failure should become a durable rule, a regression case, and an executable test. If the same kind of failure happens repeatedly, it should also improve the rules for changing the skill itself.
 
-This is not autonomous self-modification. It is a controlled engineering loop.
+I do not let the skill rewrite and release itself. The loop is still reviewed, tested, and committed like other engineering work.
 
 ## Why skills can forget silently
 
@@ -142,7 +158,7 @@ Useful boundaries include:
 - a sentence quoting “Hello everyone” should stay unchanged;
 - a title containing similar words should not be treated as a greeting.
 
-Positive cases prove that a rule can act. Negative cases define where it must stop.
+The positive cases show that the rule does its job. The negative cases are usually more valuable: they show where it must stop.
 
 ### 3. Turn every rule into executable evidence: Gate Two
 
@@ -241,7 +257,7 @@ class ConversionResult:
 - `strict_required`: the input exceeded the safe deterministic path;
 - `blocked`: a working result may exist, but it did not pass the contract and must not be delivered as success.
 
-Success is not the absence of an exception. Success means the required evidence exists.
+In other words, 'no exception was thrown' is not a useful definition of success. The output should have passed the checks that matter for this skill.
 
 ### 5. Protect the boundary and make trade-offs explicit
 
@@ -291,7 +307,7 @@ A recurring way of failing belongs to the shared meta-rules:
 - contributors repeatedly run only new tests;
 - documentation-only rules repeatedly disappear.
 
-A concrete failure improves the skill. A recurring failure pattern improves the way the skill is improved.
+The concrete case goes into the skill's regression record. If the same kind of mistake keeps returning, the change process itself needs a new rule.
 
 ## Test more than the converter
 
@@ -333,13 +349,140 @@ The method is less suitable as a strict TDD framework for one-off creative writi
 
 Some parts still apply widely: keep changes bounded, preserve known failures, record platform differences, and do not claim success without evidence. But the heavier regression machinery is valuable only when the task has repeatable behavior worth protecting.
 
-## A brief connection to Joule Studio
+## Put the skill where the tool can find it
 
-The technical artifact described here is not the same as a Joule Skill. However, the lifecycle problem is similar. SAP documentation describes Joule Skills as tailored, deterministic tasks, while Joule Agents handle more complex or multi-step work. Joule Studio also supports managing and deploying updated versions of these capabilities.
+For skills that I want to use across several projects, I prefer the personal Claude Code directory:
 
-As SAP moves toward faster, intent-based development in the newly announced Joule Studio, capability creation can become faster. This makes regression evidence more important, not less. Acceptance cases, executable contracts, versioned tests, controlled fallback, and release gates are still needed when a capability evolves.
+```text
+~/.claude/skills/
+```
 
-For current product details, see [What is Joule Studio?](https://help.sap.com/docs/Joule_Studio/45f9d2b8914b4f0ba731570ff9a85313/6af9c49f47cc4da1bc012c049df92569.html) and [New Joule Studio for Enterprise Scale Agentic Development](https://news.sap.com/2026/05/new-joule-studio-enterprise-scale-agentic-development/).
+[Claude Code loads a personal skill](https://code.claude.com/docs/en/skills#where-skills-live) from `~/.claude/skills/<skill-name>/SKILL.md`, making it available in all projects for the same user. A project-specific skill can still live under `.claude/skills/`, but that is a better fit when the behavior belongs to one repository or should be reviewed together with that repository's code.
+
+For the running example, I would keep a small personal skill library like this:
+
+```text
+~/.claude/skills/
+├── _meta/
+│   └── skill-self-improvement.md
+└── html-to-markdown/
+    ├── SKILL.md
+    ├── self-improvement.md
+    ├── acceptance/
+    │   └── CASES.md
+    ├── scripts/
+    │   └── converter.py
+    └── tests/
+        └── test_acceptance.py
+```
+
+The `html-to-markdown` directory is the actual skill. The `_meta` directory is only a shared reference area for how skills should be changed; it is not another user-facing skill.
+
+### Put the personal skill library under Git
+
+The whole `~/.claude/skills/` directory can be a Git repository. This is useful even for one person: every rule change has a diff, regression cases have history, and the same library can be used on another machine.
+
+A minimal setup is:
+
+```bash
+mkdir -p ~/.claude/skills
+cd ~/.claude/skills
+
+git init
+git branch -M main
+git add .
+git commit -m "Initialize personal Claude skills"
+
+# Create an empty GitHub repository first: no README, license, or .gitignore.
+git remote add origin git@github.com:<your-account>/<your-skills-repo>.git
+git push -u origin main
+```
+
+On another machine, clone the repository into the same location, but only when `~/.claude/skills` does not already exist:
+
+```bash
+git clone git@github.com:<your-account>/<your-skills-repo>.git ~/.claude/skills
+```
+
+If the directory already contains local skills, do not clone over it. Back it up first, or initialize it as a repository and reconcile the two histories deliberately.
+
+I also keep a small `.gitignore` at the root:
+
+```gitignore
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.env
+```
+
+Do not put credentials, tokens, machine-specific paths, private customer data, or generated working files into this repository. Keep it focused on skill instructions, references, small fixtures, tests, and scripts that are safe to version.
+
+If a team needs to share a skill together with one application, use the project-level path instead:
+
+```text
+<project>/.claude/skills/<skill-name>/SKILL.md
+```
+
+That version naturally travels with the application repository and its pull requests. The personal directory is better for a reusable toolbox; the project directory is better for behavior owned by one codebase.
+
+### Reference: the shared change rules
+
+A minimal `~/.claude/skills/_meta/skill-self-improvement.md` can be written like this:
+
+```markdown
+# Changing a skill safely
+
+Use this file when adding, removing, or changing behavior in an existing skill.
+
+1. State the user-visible purpose in one sentence.
+2. Read the target skill's `self-improvement.md` and `acceptance/CASES.md`.
+3. Add or identify a fixture that reproduces the failure.
+4. Write a test that fails before changing the implementation.
+5. Add varied positive cases and at least two negative cases.
+6. Make the smallest change that fixes the mechanism, not only the example.
+7. Run the full test suite. Do not weaken or delete old guards to make it green.
+8. Update the acceptance case and regression record with the test name.
+9. If the failure exposes a recurring mistake, update this shared file too.
+
+Stop with `blocked` or route to a stricter path when correctness cannot be established.
+```
+
+### Reference: the actual skill
+
+The main `~/.claude/skills/html-to-markdown/SKILL.md` should stay focused on execution. It can point to the maintenance files when the skill itself is being changed:
+
+```markdown
+---
+name: html-to-markdown
+description: Convert saved HTML pages into clean Markdown while preserving supported content and structure.
+---
+
+# HTML to Markdown
+
+Convert the input page and validate the result before reporting success.
+
+When changing this skill itself:
+
+1. Read the [shared change rules](../_meta/skill-self-improvement.md).
+2. Read the [regression record](self-improvement.md) and [acceptance cases](acceptance/CASES.md).
+3. Add a failing regression test first and run the full suite after the change.
+```
+
+### Reference: a user-readable acceptance case
+
+The acceptance file should describe effects, not implementation details:
+
+```markdown
+### Greeting followed by meaningful content
+
+- Input: one paragraph containing a greeting and meaningful formatted text
+- Expected: remove only the greeting
+- Must not: delete meaningful text or lose supported formatting
+- Guard: `test_preserves_content_after_greeting`
+```
+
+Claude Code is only one place to use this structure. Its [skills follow the open Agent Skills format](https://code.claude.com/docs/en/skills), so keeping the package mostly standard makes future reuse easier. One caveat: the shared `_meta` file sits outside the individual skill package. If I distribute `html-to-markdown` by itself, I copy that rule into the skill's own `references/` directory or package the whole library, so the skill does not depend on a missing sibling file. SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
 
 ## Practical checklist
 
