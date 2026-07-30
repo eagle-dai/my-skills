@@ -512,6 +512,28 @@ def test_nbsp_dollar_inside_fence_untouched():
     assert f"价格{_NB}$USD" in out
 
 
+def test_space_then_nbsp_before_dollar_collapses_to_single():
+    # 正例：源里「半角空格 + NBSP + $」(微信在已有空格后又插 NBSP)。NBSP 归一成
+    # 半角空格后成 "  $" 双空格 → 折叠成单空格，边界仍合法、公式渲染不受影响。
+    assert pp(f"期望 {_NB}$x$ 表示\n") == "期望 $x$ 表示\n"
+
+
+def test_space_then_nbsp_after_dollar_collapses_to_single():
+    # 正例：$ 后侧「NBSP + 半角空格」同理折叠
+    assert pp(f"见 $x${_NB} 表示\n") == "见 $x$ 表示\n"
+
+
+def test_single_space_around_dollar_unchanged():
+    # 反例：已是单个半角空格 = 合法边界，不动
+    assert pp("见 $x$ 表示\n") == "见 $x$ 表示\n"
+
+
+def test_collapse_does_not_reattach_dollar_to_cjk():
+    # 边界：折叠后仍留一个空格，绝不把 $ 重新贴到 CJK（否则又坏边界）。
+    # 三个空格 + $ → 单空格 + $，不是零空格。
+    assert pp("状态   $s$   下\n") == "状态 $s$ 下\n"
+
+
 # --- 规则7：相邻加粗拼成的 **** 接缝去除（自根 tests/ 并入）---------------
 
 
