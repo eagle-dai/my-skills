@@ -263,6 +263,23 @@ caption/comment/image ledger
 人工复核项目
 ```
 
+## 可选：diagram→mermaid 还原（opt-in，不进 auto 管线）
+
+auto 转换完成、产物含流程图 / 思维导图类**栅格图**后，用户可**手动触发**把这类图还原成 mermaid
+代码块。这是可选子流程，**不属于 Phase 0 auto 管线、不改任何脚本、不影响可复现契约**。只有用户
+显式要求才跑。
+
+四条硬约束：
+
+- 图无结构可解析（栅格图，mermaid 源已丢），还原 = 视觉重画，**天生非确定**。
+- **不污染可复现契约** —— 绝不进 auto 管线、不加 CLI flag、不改脚本。
+- **只还原 mermaid 能表达的**（flowchart / mindmap / 时序图…）；定量图（坐标轴 + 曲线/散点/
+  柱状/分布）一律不碰。
+- **人验收** —— 渲染出来跟原图并排，够像 / 不像由用户定。
+
+完整规程（判据、五步流程、落盘替换表、子 agent prompt 模板、渲染命令）见
+@diagram-to-mermaid.md。
+
 ## 参考文档
 
 - @pipeline.py / @pipeline.md — deterministic auto/fast/strict 路由
@@ -277,4 +294,5 @@ caption/comment/image ledger
 - @checklist.md — 主 agent 验收
 - `../_meta/skill-self-improvement.md` — 通用改进规则
 - @self-improvement.md — 本 skill 回归用例
+- @diagram-to-mermaid.md — 可选 opt-in：把流程图/思维导图类栅格图还原成 mermaid（视觉重画 + 渲染对比 + 人验收）
 - `formula-extraction` skill — 公式提取权威规则
