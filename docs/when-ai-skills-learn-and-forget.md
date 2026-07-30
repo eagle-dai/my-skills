@@ -16,7 +16,7 @@ How I Evolve AI Skills Without Breaking Existing Behavior
 
 **Short description**
 
-AI skills can regress silently: a new case works while older behavior breaks. This post presents a practical six-step evolution loop that turns real failures into acceptance cases, regression tests, and reusable change rules, with a Git-managed Claude Code setup as a concrete example.
+AI skills can regress silently: a new case works while older behavior breaks. This post presents a practical six-step evolution loop for repeatable, contract-driven skills where failures can be reproduced and wrong outputs carry real cost, with a Git-managed Claude Code setup as a concrete example.
 
 **Suggested SAP Managed Tags**
 
@@ -98,6 +98,8 @@ In this post, I will show:
 - the six-step evolution loop I use;
 - a concrete Claude Code directory and Git setup;
 - why the same discipline is useful for SAP-oriented AI workflows and potentially for Joule Work in the future.
+
+> **Scope:** This approach is designed for repeatable, contract-driven skills where failures can be reproduced and a plausible but wrong result has a real cost. It is not a rigid testing framework for every prompt, one-off creative task, or open-ended conversation. Those tasks usually need human review, rubrics, or comparison across several samples instead.
 
 > **Terminology note:** In this article, “skill” means a file-based agent capability package containing instructions, references, scripts, and tests. It does not mean a Joule Skill specifically.
 
