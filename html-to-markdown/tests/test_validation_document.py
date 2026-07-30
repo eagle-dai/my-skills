@@ -58,8 +58,10 @@ def test_validator_version_unchanged():
     # v4:validator 增 identifier-as-subscript 门;parser 增 math-mode 字面 `_`/特殊符转义。
     # v5(gap #31):parser 字面 `_` 改产双反斜杠 \\_(过 GitHub GFM + 过 gap#21 门);
     # validator 语义未变故保持 v4。
+    # v6(gap #32):parser 增 .op-limits 重建(\sum/\prod/\int 带上下限);
+    # validator 语义未变故仍保持 v4。
     assert _fb.VALIDATOR_VERSION == "formula-batch-v4"
-    assert _fb.PARSER_VERSION == "katex-html-v5"
+    assert _fb.PARSER_VERSION == "katex-html-v6"
 
 
 # --- math-mode 字面特殊符转义(gap #18/#21/#31:field_coverage 被当下标) -------

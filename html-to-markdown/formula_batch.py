@@ -28,7 +28,7 @@ VALIDATION_SCHEMA_VERSION = "1.1"
 # so MathJax saw a bare `field_coverage` and rendered `_coverage` as a subscript;
 # `\\_` survives GFM stripping as `\_` → MathJax literal underscore (gap #31).
 # Changes parser output → old cached parses (v4 and earlier) must invalidate.
-PARSER_VERSION = "katex-html-v5"
+PARSER_VERSION = "katex-html-v6"
 # v4: validation now also fails closed on math-mode identifier-as-subscript
 # (bare `_`/`^` followed by 2+ ASCII letters), which local KaTeX renders as a
 # legal (but semantically wrong) subscript without throwing. See gap #21.
@@ -61,7 +61,7 @@ WRAPPER_CLASSES = {
     "katex", "katex-html", "base", "vlist-r", "vlist", "vlist-t", "vlist-t2",
     "sizing", "mtight", "textstyle", "displaystyle", "scriptstyle", "scriptscriptstyle",
 }
-UNSUPPORTED_SEMANTIC = {"mtable", "accent", "op-limits", "munder", "mover"}
+UNSUPPORTED_SEMANTIC = {"mtable", "accent", "munder", "mover"}
 
 
 @dataclass(frozen=True)
@@ -405,6 +405,50 @@ def _parse_vlist(node: Tag, kind: str) -> ParseResult:
     return ParseResult(f"^{{{parsed[0].latex}}}_{{{parsed[1].latex}}}", True)
 
 
+def _parse_op_limits(node: Tag) -> ParseResult:
+    r"""Rebuild a large operator carrying limits (``\sum_{i=0}^{N-1}``).
+
+    KaTeX renders ``\sum``/``\prod``/``\int`` in displaystyle as ``.mop.op-limits``:
+    a single ``.vlist-t2`` whose content spans stack the over-limit, the operator
+    symbol, and the under-limit. The rows are laid out by ``top`` (more-negative =
+    higher on the page). The middle row carries ``.op-symbol`` (∑/∏/∫, mapped via
+    SYMBOLS); rows above it are the superscript limit, rows below the subscript.
+    Everything is math mode, so ``_``/``^`` here are structural, not literal.
+    """
+
+    vlist = node.select_one(".vlist")
+    if not isinstance(vlist, Tag):
+        return _unknown(node, "op-limits-missing-vlist")
+    spans = sorted(_content_spans(vlist), key=_top_value)
+    if not 1 <= len(spans) <= 3:
+        return _unknown(node, "op-limits-arity")
+    symbol_index = next(
+        (i for i, span in enumerate(spans) if span.select_one(".op-symbol")),
+        None,
+    )
+    if symbol_index is None:
+        return _unknown(node, "op-limits-no-symbol")
+    symbol = _parse_children(spans[symbol_index])
+    if not symbol.success:
+        return symbol
+    over = spans[:symbol_index]      # higher rows -> superscript
+    under = spans[symbol_index + 1:]  # lower rows -> subscript
+    if len(over) > 1 or len(under) > 1:
+        return _unknown(node, "op-limits-arity")
+    latex = symbol.latex or ""
+    if under:
+        sub = _parse_children(under[0])
+        if not sub.success:
+            return sub
+        latex += f"_{{{sub.latex}}}"
+    if over:
+        sup = _parse_children(over[0])
+        if not sup.success:
+            return sup
+        latex += f"^{{{sup.latex}}}"
+    return ParseResult(latex, True)
+
+
 def _parse(node: Any, *, text_mode: bool = False) -> ParseResult:
     if isinstance(node, NavigableString):
         return ParseResult(_map_text(str(node), text_mode), True)
@@ -419,6 +463,8 @@ def _parse(node: Any, *, text_mode: bool = False) -> ParseResult:
         return _unknown(node, "unsupported-semantic")
     # 结构容器(分式/上下标/根号/上划线)内部一律是 math mode,即便嵌在 \text{} 内
     # (对应 \text{$...$});其下标 _ / 上标 ^ 是结构字符,不得当字面字符转义。
+    if "op-limits" in classes:
+        return _parse_op_limits(node)
     if "mfrac" in classes:
         return _parse_vlist(node, "fraction")
     if "msupsub" in classes:
