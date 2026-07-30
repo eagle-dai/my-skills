@@ -145,6 +145,83 @@ class FormulaBatchTests(unittest.TestCase):
         self.assertIn("_{", result.latex)
         self.assertNotIn(r"\_", result.latex)
 
+    # --- gap #32: KaTeX 大算符带上下限 (.mop.op-limits) 重建 ---------------------
+    # \sum_{i=0}^{N-1} 等在 displaystyle 下渲染成 .mop.op-limits:一个 vlist-t2 内
+    # 三个 content span 按 top 排布 —— top 最小(最高)= 上限(^),中间 = 算符符号
+    # (.op-symbol,∑/∏/∫ 经 SYMBOLS 映射),top 最大(最低)= 下限(_)。此前 op-limits
+    # 在 UNSUPPORTED_SEMANTIC 里 fail-close,现忠实重建为 \sum_{下}^{上}。
+    def _op_limits_span(
+        self, symbol: str, lower: str | None, upper: str | None
+    ) -> str:
+        rows = []
+        if upper is not None:
+            rows.append(
+                '<span style="top:-4.3em;margin-left:0em">'
+                '<span class="pstrut" style="height:3.05em"></span>'
+                '<span class="sizing reset-size6 size3 mtight">'
+                f'<span class="mord mtight">{upper}</span></span></span>'
+            )
+        rows.append(
+            '<span style="top:-3.05em">'
+            '<span class="pstrut" style="height:3.05em"></span>'
+            f'<span><span class="mop op-symbol large-op">{symbol}</span></span></span>'
+        )
+        if lower is not None:
+            rows.append(
+                '<span style="top:-1.87em;margin-left:0em">'
+                '<span class="pstrut" style="height:3.05em"></span>'
+                '<span class="sizing reset-size6 size3 mtight">'
+                f'<span class="mord mtight">{lower}</span></span></span>'
+            )
+        inner = "".join(rows)
+        return (
+            '<span class="mop op-limits"><span class="vlist-t vlist-t2">'
+            '<span class="vlist-r"><span class="vlist" style="height:1.8em">'
+            f'{inner}'
+            '</span></span></span></span>'
+        )
+
+    def _wrap(self, body: str) -> object:
+        soup = BeautifulSoup(
+            '<span class="katex"><span class="katex-html"><span class="base">'
+            f'{body}</span></span></span>',
+            "lxml",
+        )
+        node = soup.select_one(".katex")
+        assert node is not None
+        return node
+
+    def test_op_limits_sum_reconstructs_sub_and_super(self) -> None:
+        node = self._wrap(self._op_limits_span("∑", "i=0", "N−1"))
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success, result.unknown_nodes)
+        self.assertEqual(result.latex, r"\sum_{i=0}^{N-1}")
+
+    def test_op_limits_prod_and_int_map_symbols(self) -> None:
+        prod = formula_batch.parse_katex(self._wrap(self._op_limits_span("∏", "k=1", "n")))
+        self.assertTrue(prod.success)
+        self.assertEqual(prod.latex, r"\prod_{k=1}^{n}")
+        integ = formula_batch.parse_katex(self._wrap(self._op_limits_span("∫", "a", "b")))
+        self.assertTrue(integ.success)
+        self.assertEqual(integ.latex, r"\int_{a}^{b}")
+
+    def test_op_limits_lower_only(self) -> None:
+        node = self._wrap(self._op_limits_span("∑", "i=0", None))
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertEqual(result.latex, r"\sum_{i=0}")
+
+    def test_op_limits_real_fixture_full_formula(self) -> None:
+        # 真实 formula-0001:SMA_{N}(t) = \frac{1}{N}\sum_{i=0}^{N-1} P_{t-i}
+        fixture = Path(__file__).resolve().parent / "fixtures" / "katex_sum_op_limits.html"
+        soup = BeautifulSoup(fixture.read_text(), "lxml")
+        node = soup.select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success, result.unknown_nodes)
+        self.assertIn(r"\sum_{i=0}^{N-1}", result.latex)
+        self.assertIn(r"\frac{1}{N}", result.latex)
+
     # --- gap #20: 验证要模拟 GitHub 的 $…$ 内反转义 -----------------------------
     # GitHub GFM 会把 $…$ 内 CommonMark 可转义标点前的反斜杠剥掉再喂 KaTeX,所以
     # gap #18 的 \text{a\_b} 转义在 GitHub 上被还原成裸 _ → 渲染报错。validation
