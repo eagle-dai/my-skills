@@ -41,7 +41,12 @@
 │   ├── pipeline_utils.py
 │   ├── contracts.py
 │   ├── image_disposition.py
+│   ├── image_processing.py
+│   ├── watermark.py
 │   ├── markdown_fences.py
+│   ├── markdown_postprocess.py
+│   ├── requirements.txt     # skill 运行时依赖（图片处理需 numpy/pillow/opencv）
+│   ├── assets/              # katex.min.js（浏览器公式验证用）
 │   └── tests/              # skill 本地测试 + fixtures/（脚本入口，由 run_tests.py 逐个子进程运行）
 └── tests/                  # 仅仓库级/跨 skill 套件，unittest discover 收集
     ├── test_documentation_alignment.py   # 跨 skill 文档一致性
@@ -74,7 +79,12 @@
 - `pipeline_utils.py`：共享的确定性命名合同（目录、Markdown、资源目录和 ZIP 复用同一名字）、DOM 合同加载、JSON 写入和确定性 ZIP 工具。
 - `contracts.py`：selector、复杂度、DOM semantic identity/canonicalization 和 comment ledger 合同。
 - `image_disposition.py`：图片保留、删除或人工复核判定，以及 image ledger 守恒。
+- `image_processing.py`：图片解码、去水印、压缩和原尺寸验证（依赖 numpy/pillow/opencv）。
+- `watermark.py`：像素级去水印，缺 opencv 时跳过而非实心填充。
 - `markdown_fences.py`：按行扫描 fenced code block 做结构校验。
+- `markdown_postprocess.py`：Markdown 产物的后处理（题注、间距等收尾规范化）。
+- `requirements.txt`：skill 运行时依赖清单（图片处理链所需）。
+- `assets/`：`katex.min.js` 等浏览器公式验证所需的本地资源。
 - 其余 Markdown 文件：strict 工作流的图片、题注、Notebook、阻断条件、验收清单和维护规则。
 
 ## 默认转换入口
