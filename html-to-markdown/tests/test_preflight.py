@@ -222,6 +222,43 @@ class WeChatMmbizTests(unittest.TestCase):
         self.assertEqual(by_disp["block"].original_latex, "R_t = \\frac{P_t}{P_{t-1}} - 1")
         self.assertEqual(by_disp["inline"].original_latex, "n")
 
+    def test_inline_formula_under_block_formula_ancestor_stays_inline(self) -> None:
+        # 反例（PR review 发现）：块级 data-formula wrapper 若恰是某行内 data-formula
+        # 的祖先，display:block 判定必须只看行内节点自身，不能被块级祖先污染成 block。
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后构造一个块级公式 wrapper 内部嵌套一个行内公式的病态结构，"
+            "用来验证 display 判定只看节点自身、不被块级祖先污染。</p>"
+            "<section data-formula='A' style='text-align:center;display:block'>"
+            "<svg role='img'></svg>"
+            "<span data-formula='n'><svg role='img'></svg></span>"
+            "</section>"
+        )
+        result = preflight.build_preflight(html)
+        by_latex = {f.original_latex: f.display for f in result.formulas}
+        # 外层 section 自身 display:block → block；内层 span 自身无 display:block → inline
+        self.assertEqual(by_latex.get("A"), "block")
+        self.assertEqual(by_latex.get("n"), "inline")
+
+    def test_substantial_data_uri_ignores_base64_whitespace_and_padding(self) -> None:
+        # 反例（PR review 发现）：base64 payload 含换行/=padding 时，体量估算须先剥掉，
+        # 否则空白撑大估值让 <512B 的占位图误过门槛。构造一个解码 <512B 但含大量换行的
+        # data-URI + 真 data-src，期望仍判 lazy。
+        import base64
+
+        raw = base64.b64encode(b"\x89PNG" + b"x" * 200).decode()  # 解码 ~204B < 512
+        wrapped = "\n".join(raw[i : i + 4] for i in range(0, len(raw), 4))  # 每4字符插换行
+        tiny_but_whitespaced = "data:image/png;base64," + wrapped
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "图片 src 是含大量换行的小 data-URI（解码不足 512B），真图在 data-src。</p>"
+            f"<img src='{tiny_but_whitespaced}' "
+            "data-src='https://mmbiz.qpic.cn/real.png' alt='图片'>"
+        )
+        result = preflight.build_preflight(html)
+        self.assertEqual(result.assets[0].source_kind, "lazy:data-src")
+        self.assertTrue(result.assets[0].lazy)
+
     def test_plain_svg_without_data_formula_is_not_a_formula(self) -> None:
         # 反例：真插图 <svg>（无 data-formula wrapper）不该被当公式收集，
         # 交给 fast_converter 落到 unsupported <svg> → strict。

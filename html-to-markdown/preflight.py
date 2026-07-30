@@ -298,11 +298,15 @@ def _formula_display(node: Tag) -> str:
             return "block"
         # WeChat (mmbiz) MathJax-SVG 公式：块级公式 wrapper 是 <section>，其 style
         # 含 display:block；行内公式 wrapper 是 <span>，style 无 display:block。
-        # 只认 wrapper 节点**自身** style 的 display:block（收紧到 data-formula
-        # 节点，避免任意居中祖先把行内公式误判为块级）。
-        if current.has_attr("data-formula") and "display:block" in str(
-            current.attrs.get("style", "")
-        ).replace(" ", ""):
+        # 只认**传入的 formula 节点自身** (current is node) 的 display:block——不看
+        # 任何祖先，否则一个块级公式 wrapper 若恰是某行内公式的祖先，会把行内误判为
+        # 块级。祖先仍参与上面的 katex-display/block-katex 判定（那是 KaTeX 语义）。
+        if (
+            current is node
+            and current.has_attr("data-formula")
+            and "display:block"
+            in str(current.attrs.get("style", "")).replace(" ", "")
+        ):
             return "block"
         parent = current.parent
         current = parent if isinstance(parent, Tag) else None
@@ -340,6 +344,11 @@ def _substantial_data_uri(source: str) -> bool:
     header, payload = source.split(",", 1)
     if ";base64" in header:
         # 4 base64 chars encode 3 bytes; approximate decoded size without decoding.
+        # Strip whitespace (some encoders wrap every 76 chars) and trailing "="
+        # padding first, so newlines/padding are not miscounted as real data —
+        # otherwise a whitespace-heavy sub-512B payload could overcount past the
+        # floor and be wrongly trusted over a real data-src.
+        payload = "".join(payload.split()).rstrip("=")
         approx_bytes = len(payload) * 3 // 4
     else:
         approx_bytes = len(payload)
