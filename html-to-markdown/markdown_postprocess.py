@@ -66,6 +66,85 @@ def _space_cjk_inline_math_line(line: str) -> str:
     return _DOLLAR_BEFORE_CJK.sub(r"$ \1", line)
 
 
+# --- 数学段反斜杠加倍（gap #38，GitHub GFM strip 真机验证）-----------------
+# GitHub GFM 在 ``$…$`` / ``$$…$$`` 内会把 ``\`` + 一个 CommonMark ASCII 标点的反斜杠
+# **剥掉一层**，再把结果喂给 MathJax。剥离正则与 formula_batch.py 的
+# ``_GFM_MATH_UNESCAPE_RE`` 一致：``\\([!-/:-@\[-`{-~])``，全局左到右非重叠。对 k 个连续
+# 反斜杠，GFM 吐 ``floor(k/2)`` 个；``\`` + **字母**（命令 ``\sigma`` ``\frac``）不受影响。
+#
+# 后果（``gh api /markdown`` 实测，见 self-improvement.md gap #38 证据表）：
+# - 矩阵/cases 换行 ``\\``（k=2，后接空格）→ GitHub 吐 1 个 ``\`` → MathJax 收不到换行 →
+#   所有行塌成一行（用户在 6.5 协方差矩阵看到的 bug）。
+# - ``\,`` ``\;`` ``\%`` ``\{`` 等同样掉一层，间距/字面标点丢失。
+#
+# 修法：数学 span 内把该双写的反斜杠双写，让 GFM 剥一层后 MathJax 恰好收到转换器意图的
+# 字节。这是 gap #31（``formula_batch.py::_map_text`` 提取器侧已为字面下划线产出 ``\\_``）
+# 的**共享后处理侧对偶**——两条路径（fast/strict）都经过本门，且必须与 gap #31 的 ``\\_``
+# **幂等兼容**：``\\_`` 不能被再翻成 ``\\\\_``。
+#
+# transform（对每个极大反斜杠 run，run 长 k，follow = run 后紧接的字符 / EOL 时 None）：
+#   1. follow 是 ASCII 字母 且 k 为奇 → nk=k（``\`` 绑字母成命令 ``\sigma``，永不双写）。
+#   2. follow 是非反斜杠 ASCII 标点 → nk = 2k if k 奇 else k。
+#      （k=1 ``\,``→``\\,``；k=2 gap#31 ``\\_`` 保持。GFM 后都给 MathJax 1 个 ``\`` = 对；
+#       偶 run 是不动点。）
+#   3. 其它（follow 非字母：空格/EOL/CJK/数字，或换行后接文本的偶 run）→
+#      nk = 2k if (k 奇 or (k//2) 奇) else k。
+#      （换行 ``\\`` k=2：k//2=1 奇 → 翻到 4；GFM→``\\`` = 正确换行。再跑 k=4：k//2=2 偶 →
+#       不动 = 幂等。）
+# **follow 字符是区分「换行 ``\\`` 需双写」与「gap#31 ``\\_`` 不能动」的唯一依据**——两者都
+# 是 k=2，只是 follow 不同（空格 vs ``_``）。
+#
+# 已知边界（非 bug）：k≥3 且 follow 非字母的裸 run 在幂等下本质模糊（``\\\\`` 是原始双换行
+# 还是已处理的单换行？）。转换器从不产出堆叠 ``\\\\``（连续换行分行或 ``\\ \\`` 输出，均单
+# 层），实际不出现。``(k//2) 奇`` 使常见单换行精确且幂等。
+#
+# 规则见 conversion-rules.md「数学段反斜杠」；回归 tests/test_markdown_postprocess.py 规则9。
+#
+# CommonMark ASCII 标点集（GFM 剥离的字符类，**不含反斜杠**）；镜像 formula_batch.py 的
+# ``_GFM_MATH_UNESCAPE_RE`` 字符类，两者须锁步（不 import formula_batch，只镜像）。
+_MATH_PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~")
+# 行内 ``$…$``（排除 ``$$`` 展示定界符，镜像上面 CJK 规则 47-48 行的 lookaround）。
+_INLINE_MATH_SPAN = re.compile(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)")
+# 单行 ``$$…$$``（两定界符同一行）。
+_ONE_LINE_DISPLAY_MATH = re.compile(r"\$\$(.+?)\$\$")
+
+
+def _double_math_backslashes(segment: str) -> str:
+    """对数学 span **内部**文本施 gap #38 transform（绝不碰定界符）。
+
+    纯 ``while`` 扫描：parity 逻辑正则表达不清。见上方 transform 三条规则。
+    """
+    out: list[str] = []
+    i = 0
+    n = len(segment)
+    while i < n:
+        if segment[i] == "\\":
+            j = i
+            while j < n and segment[j] == "\\":
+                j += 1
+            k = j - i
+            follow = segment[j] if j < n else None
+            if follow is not None and follow.isascii() and follow.isalpha() and k % 2 == 1:
+                nk = k  # 规则1：命令 \letter
+            elif follow is not None and follow in _MATH_PUNCT:
+                nk = 2 * k if k % 2 == 1 else k  # 规则2：\+标点
+            else:
+                nk = 2 * k if (k % 2 == 1 or (k // 2) % 2 == 1) else k  # 规则3：换行/非字母
+            out.append("\\" * nk)
+            i = j
+        else:
+            out.append(segment[i])
+            i += 1
+    return "".join(out)
+
+
+def _double_math_backslashes_inline_line(line: str) -> str:
+    """对行内 ``$…$`` 的内文施 transform（只改 group(1)，定界符不动）。"""
+    return _INLINE_MATH_SPAN.sub(
+        lambda m: "$" + _double_math_backslashes(m.group(1)) + "$", line
+    )
+
+
 # --- 题注居中 + 统一加粗（多行块级形态）-----------------------------------
 # SingleFile 题注行的稳定形态：``图/表/代码/清单/公式 N`` 后紧跟一个全角空格 U+3000，
 # 再接标题，整行独立成段。正文里对图表的提及是 ``图 6-1 把…``（半角空格 + 动词），
@@ -209,6 +288,48 @@ def _is_caption_text(inner: str) -> bool:
     t = _STRONG_TAG.sub("", t)
     t = t.replace("**", "").lstrip()
     return bool(_CAPTION_LINE.match(t))
+
+
+def _double_math_backslashes_block(markdown: str, fenced: set[int]) -> str:
+    """块级状态机：处理跨行 ``$$…$$`` 与行内 ``$…$``（gap #38），跳过 fenced 行。
+
+    fast_converter 把块级公式输出为 ``$$\\n{latex}\\n$$``（定界符独占行，中间纯 latex）。
+    per-line 规则看不到块状态，所以这里单独用 ``block_math_open`` 游标：
+      - ``strip()=='$$'`` 的非 fenced 行 toggle 状态，定界符行原样 emit；
+      - open 中的非 fenced 行是纯 latex → 整行施 transform；
+      - closed 的非 fenced 行走行内 ``$…$`` + 单行 ``$$…$$``；
+      - fenced 行对 toggle 和改写都跳过（fence 里的 ``$$`` 既不能翻状态也不能改写）。
+    不改行数，可与 caption 归一前后独立运行。
+
+    **不平衡护栏（fail-closed）**：若扫完 ``block_math_open`` 仍为 True（``$$`` 定界符
+    奇数个/未闭合），说明从某个未配对 ``$$`` 起，本 pass 把后续正文都当成了块内 latex
+    并施了 transform——正文里的 ``\\*`` ``\\%`` 等 markdown 转义会被误双写、污染正文
+    （fail-open）。这种情况本 pass 的块状态判断整体不可信，**放弃改写、返回原文**，由结构
+    守恒/人工兜底（宁可漏修公式，也不污染正文）。
+    """
+    lines = markdown.split("\n")
+    out: list[str] = []
+    block_math_open = False
+    for index, line in enumerate(lines):
+        lineno = index + 1  # 1-based，与 fenced 对齐
+        if lineno in fenced:
+            out.append(line)  # fence 内：不 toggle、不改写
+            continue
+        if line.strip() == "$$":
+            block_math_open = not block_math_open
+            out.append(line)  # 定界符行原样
+            continue
+        if block_math_open:
+            out.append(_double_math_backslashes(line))  # 块内纯 latex
+            continue
+        # 块外：先处理单行 ``$$…$$``（内文施 transform），再处理行内 ``$…$``。
+        line = _ONE_LINE_DISPLAY_MATH.sub(
+            lambda m: "$$" + _double_math_backslashes(m.group(1)) + "$$", line
+        )
+        out.append(_double_math_backslashes_inline_line(line))
+    if block_math_open:
+        return markdown  # 不平衡 $$：放弃本 pass，不污染正文
+    return "\n".join(out)
 
 
 # --- **** concatenation fix -----------------------------------------------
@@ -440,6 +561,11 @@ def postprocess_markdown(markdown: str) -> str:
         line = _promote_standalone_formula_line(line)
         lines[index] = line
     markdown = "\n".join(lines)
+    # 数学段反斜杠加倍（gap #38）是**块级感知**（跨行 $$…$$ 状态），但不改行数，放在
+    # per-line 循环后单独跑。CJK 空格规则已先动 $ 边界，本 pass 只动 span 内部反斜杠
+    # （disjoint）；_promote_standalone_formula_line 已把独立 $…$ 升级成同行 $$…$$，本
+    # pass 的单行 $$…$$ 分支会接住。行号不变，复用上面的 inside。
+    markdown = _double_math_backslashes_block(markdown, inside)
     # 题注归一是**块级**（多行居中块，改变行数），放最后单独跑；重算 fenced 行号，
     # 因为上面的逐行规则不加减行、行号不变，但题注块级前必须用当前文本的 fenced。
     inside = _fenced_line_numbers(markdown)
@@ -450,7 +576,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Apply the path-independent Markdown rules (CJK↔inline-math spacing, "
-            "caption centering, **** seam fix) to a Markdown file, and fail-closed "
+            "caption centering, **** seam fix, math-span backslash doubling for "
+            "row breaks / thin spaces) to a Markdown file, and fail-closed "
             "on residual {{FORMULA:...}} placeholders. Strict-path sub-agents run "
             "this so their output obeys the same GitHub-rendering rules the fast "
             "path already enforces."
@@ -497,7 +624,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(
             f"{args.file}: not compliant — postprocessing would change it "
-            "(uncentered captions or CJK-adjacent inline math). "
+            "(uncentered captions, CJK-adjacent inline math, or un-doubled "
+            "math backslashes — row breaks / thin spaces). "
             "Run without --check to fix.",
             file=sys.stderr,
         )

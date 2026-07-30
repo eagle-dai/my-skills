@@ -190,6 +190,30 @@ DOM 稳定顺序，标题取 DOM 原文。
 
 ---
 
+## 数学段反斜杠加倍（缺陷 38，GitHub 平台，共享后处理侧，`markdown_postprocess.py`）
+
+判定项：GitHub GFM 在 `$…$` / `$$…$$` 内会把 `\`+一个 CommonMark ASCII 标点的反斜杠**剥掉一层**再喂 MathJax（剥离正则 `\\([!-/:-@\[-`{-~])`，与 `formula_batch.py::_GFM_MATH_UNESCAPE_RE` 同源，全局非重叠，`\`+字母不动）。所以 verbatim LaTeX（`data-formula`/结构，**绕过 gap #31 的 `_map_text`**）里的**矩阵/cases 换行 `\\`**、`\,` `\;` `\%` `\{` 等 `\`+标点，都被吃掉一层：换行 `\\`（k=2）→ GitHub 吐 1 个 `\` → MathJax 收不到换行 → **矩阵所有行塌成一行**（用户报的 6.5 协方差矩阵 bug）。
+
+这是 **gap #31 的共享后处理侧对偶**：gap #31 在提取器侧（`_map_text`）为字面下划线产出 `\\_`；本规则在 `markdown_postprocess.py::_double_math_backslashes` 覆盖**所有** `\`+标点（含换行 `\\`），fast/strict 两路径都经过，且与 gap #31 的 `\\_` **幂等兼容**（不把 `\\_` 翻成 `\\\\_`）。
+
+transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① follow 字母且 k 奇 → 不动（命令 `\sigma`）；② follow 非反斜杠标点 → k 奇翻倍/k 偶不动（`\,`→`\\,`；gap#31 `\\_` 保持）；③ 其它（换行/非字母/EOL）→ `2k if (k 奇 or k//2 奇) else k`（换行 `\\` k2→4；再跑 k4 不动=幂等）。**follow 字符区分「换行 `\\` 需双写」与「`\\_` 不能动」**（都 k=2，follow 不同）。块级用状态机（`$$`-only 行 toggle，块内整行施 transform，fence 跳过）。
+
+实证（`gh api /markdown`，`$$…$$`）：
+
+| 源 md 形态 | GitHub 剥离后喂 MathJax | 类别 | 理由 |
+|------|------|------|------|
+| 换行 `\\`（单层，转换器产出） | `\`（掉换行，矩阵塌一行） | 反例（bug 现状） | k=2 → floor(2/2)=1 |
+| 换行 `\\\\`（本规则修后） | `\\`（换行保住） | 正例 | k=4 → floor(4/2)=2 = MathJax 换行 |
+| `\,`（单）→ 修成 `\\,` | `\,`（thin space 保住） | 正例 | k=1→2，GFM 剥一层 |
+| `\%`（单）→ 修成 `\\%` | `\%` | 正例 | 同上 |
+| gap#31 `\\_`（双，follow=`_`） | `\_`（字面下划线） | 正例（不干扰） | k=2 follow 标点 → 不动，本规则不碰 |
+| `\sigma` `\frac`（`\`+字母） | `\sigma` `\frac` | 反例（不误伤命令） | follow 字母 → 不动 |
+| 数学 span 外 `C:\Users` `\*` | 原样 | 反例（不碰 prose） | 只作用于 span 内 |
+
+回归 `tests/test_markdown_postprocess.py` 规则9（`test_block_matrix_rowbreak_doubled`、`test_gap31_double_underscore_not_requadrupled`、`test_backslash_doubling_idempotent`、`test_backslash_before_letter_untouched`、`test_prose_backslash_untouched` 等）。真实用例：`02｜量化概率论基础` 的 6.5 协方差矩阵 pmatrix + 期望 cases 块（就地 `markdown_postprocess.py` 修 + 真机 GitHub 渲染验证换行保住）。
+
+---
+
 ## 微信公众号 (mmbiz) 页面支持（结构规则，非正则）
 
 判定项三处，都在 `preflight.py`，回归 `tests/test_preflight.py::WeChatMmbizTests` + `tests/test_pipeline.py::WeChatMmbizPipelineTests`：

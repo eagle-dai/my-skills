@@ -431,7 +431,10 @@ def test_clean_file_passes_check(tmp_path=None):
     import tempfile, os
     fd, path = tempfile.mkstemp(suffix=".md")
     try:
-        os.write(fd, "$$\nfield\\_coverage = \\frac{a}{b}\n$$\n".encode("utf-8"))
+        # 合规形态：字面下划线用**双**反斜杠 `\\_`（gap #31 提取器侧产出 / gap #38 后处理侧
+        # 幂等保持）。GitHub GFM 剥一层 → `\_` → MathJax 字面下划线 = 对。`\frac` 是命令
+        # （`\`+字母），两形态都保留。注意源串里 `\\\\_` 是 Python 字面两反斜杠 `\\_`。
+        os.write(fd, "$$\nfield\\\\_coverage = \\frac{a}{b}\n$$\n".encode("utf-8"))
         os.close(fd)
         assert mpp.main([path, "--check"]) == 0
     finally:
@@ -598,6 +601,119 @@ def test_fix_rewrites_file_in_place():
 
 def test_missing_file_exits_two():
     assert mpp.main(["/no/such/file.md", "--check"]) == 2
+
+
+# --- 规则9：数学段反斜杠加倍（gap #38，GitHub GFM strip 真机验证）----------
+# GitHub GFM 在 $…$ / $$…$$ 内剥掉 `\`+ASCII标点 一层再喂 MathJax：矩阵/cases 换行
+# `\\`、`\,` `\;` `\%` 等都掉一层。数学 span 内把该双写的双写；`\`+字母（命令
+# \sigma \frac）不动。与 gap #31（提取器侧 _map_text 已产出 `\\_`）幂等兼容——`\\_`
+# 不能被再翻成 `\\\\_`（follow 字符区分：换行 `\\` 后是空格→双写，`\\_` 后是 `_`→不动）。
+# 规则见 conversion-rules.md / self-improvement.md gap #38。
+
+
+def test_block_matrix_rowbreak_doubled():
+    # 正例：块级矩阵换行 `\\`（k=2，后接空格）→ `\\\\`，GitHub 剥一层后 MathJax 收 `\\`
+    text = "$$\n\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}\n$$\n"
+    out = pp(text)
+    assert "\\\\\\\\" in out                  # 换行翻成四反斜杠
+    assert "\\begin{pmatrix}" in out          # \begin 命令不动
+    assert out.count("$$") == 2               # 定界符完整
+
+
+def test_cases_block_rowbreak_doubled():
+    text = "$$\n\\begin{cases} x & a \\\\ y & b \\end{cases}\n$$\n"
+    out = pp(text)
+    assert "\\\\\\\\" in out
+    assert "\\begin{cases}" in out
+
+
+def test_inline_thin_space_doubled():
+    # 行内 `\,` thin space（k=1，后接空格）→ `\\,`。CJK 空格规则也会在 $ 边界补空格。
+    out = pp("见 $a \\, b$ 处\n")
+    assert "\\\\," in out                     # thin space 双写
+    assert "$a" in out and "b$" in out        # 公式内容在
+
+
+def test_inline_backslash_percent_doubled():
+    # 行内 `\%`（k=1，后接非反斜杠标点）→ `\\%`
+    out = pp("涨了 $50\\%$ 呢\n")
+    assert "\\\\%" in out
+
+
+def test_backslash_before_letter_untouched():
+    # 反例：`\`+字母 是命令，不动
+    text = "见 $\\sigma + \\alpha$ 处\n"
+    out = pp(text)
+    assert "\\sigma" in out and "\\alpha" in out
+    assert "\\\\sigma" not in out             # 没被误双写
+
+
+def test_frac_command_untouched():
+    text = "$$\n\\frac{a}{b}\n$$\n"
+    assert pp(text) == text                   # 纯命令，无 `\`+标点 → 完全不变
+
+
+def test_gap31_double_underscore_not_requadrupled():
+    # 关键非干扰：gap #31 已产出 `\\_`（k=2，后接 `_` 标点）→ 保持 `\\_`，不翻成 `\\\\_`
+    text = "$$\nfield\\\\_coverage = x\n$$\n"   # 源含 `\\_`（Python 里 \\\\ = 字面两反斜杠）
+    out = pp(text)
+    assert "field\\\\_coverage" in out         # 仍是两反斜杠
+    assert "\\\\\\\\_coverage" not in out       # 没变四反斜杠
+
+
+def test_backslash_doubling_idempotent():
+    # 幂等：矩阵块跑两次不再增长
+    text = "$$\n\\begin{pmatrix} a \\\\ b \\end{pmatrix}\n$$\n"
+    once = pp(text)
+    assert pp(once) == once
+    # gap #31 `\\_` 双跑也不增长
+    g31 = "$$\nfield\\\\_coverage\n$$\n"
+    once31 = pp(g31)
+    assert pp(once31) == once31
+
+
+def test_math_backslash_inside_fence_untouched():
+    # fence 内的 `$$ a \\ b $$` 既不翻块状态也不改写
+    text = "前言\n\n```python\n$$ a \\\\ b $$\n```\n"
+    out = pp(text)
+    assert "$$ a \\\\ b $$" in out            # 原样，换行没被双写
+    assert "\\\\\\\\" not in out
+
+
+def test_prose_backslash_untouched():
+    # 数学 span 外的反斜杠（Windows 路径、转义 markdown）绝不动
+    text = "路径 C:\\Users\\dy 和 \\*not italic\\* 文本\n"
+    assert pp(text) == text
+
+
+def test_display_dollar_block_toggle_and_double():
+    # 多行 $$ 块：`$$`-only 行正确 toggle，内部换行双写
+    text = "结论\n\n$$\na \\\\ b\n$$\n\n后文\n"
+    out = pp(text)
+    assert "a \\\\\\\\ b" in out              # 块内换行双写
+    assert "结论" in out and "后文" in out      # 块外文本不动
+
+
+def test_rowbreak_then_command_no_space_doubled():
+    # PR review finding 1：换行 `\\` 后紧跟命令（无空格）`\\alpha`（k=2+字母）——这是
+    # 「换行 + alpha 命令」，换行 `\\` 仍须双写成 `\\\\`（GitHub 剥一层 → `\\` 换行 +
+    # `\alpha` 命令）。不能因 follow 是字母就当命令保持 k=2（那样换行会丢）。
+    bs = "\\"
+    text = "$$\na " + bs * 2 + "alpha\n$$\n"   # 源含两反斜杠 + alpha
+    out = pp(text)
+    assert "a " + bs * 4 + "alpha" in out       # 换行双写成四反斜杠
+    assert pp(out) == out                        # 幂等
+
+
+def test_unbalanced_display_math_does_not_pollute_prose():
+    # PR review finding 2：未闭合 `$$`（奇数个定界符）不得让块状态泄漏到文件尾，
+    # 把后续正文的 `\*` `\%` 等 markdown 转义误双写。护栏=不平衡则放弃本 pass 返回原文。
+    bs = "\\"
+    text = "$$\nx=1\n\n正文 " + bs + "*斜体" + bs + "* 和 30" + bs + "% 折扣\n"
+    out = pp(text)
+    assert bs + "*斜体" + bs + "*" in out        # 正文转义星号不动
+    assert "30" + bs + "% 折扣" in out            # 正文转义百分号不动
+    assert bs * 2 + "*" not in out               # 没被误双写
 
 
 if __name__ == "__main__":
