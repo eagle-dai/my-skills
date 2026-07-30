@@ -341,7 +341,7 @@ For skills that I want to use across several projects, I prefer the personal Cla
 ~/.claude/skills/
 ```
 
-Claude Code loads a personal skill from `~/.claude/skills/<skill-name>/SKILL.md`, making it available in all projects for the same user. A project-specific skill can still live under `.claude/skills/`, but that is a better fit when the behavior belongs to one repository or should be reviewed together with that repository's code.
+[Claude Code loads a personal skill](https://code.claude.com/docs/en/skills#where-skills-live) from `~/.claude/skills/<skill-name>/SKILL.md`, making it available in all projects for the same user. A project-specific skill can still live under `.claude/skills/`, but that is a better fit when the behavior belongs to one repository or should be reviewed together with that repository's code.
 
 For the running example, I would keep a small personal skill library like this:
 
@@ -466,7 +466,7 @@ The acceptance file should describe effects, not implementation details:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Claude Code is only one place to use this structure. Its skills follow the open Agent Skills format, so keeping the package mostly standard makes future reuse easier. One caveat: the shared `_meta` file sits outside the individual skill package. If I distribute `html-to-markdown` by itself, I copy that rule into the skill's own `references/` directory or package the whole library, so the skill does not depend on a missing sibling file. SAP has publicly described Joule Work as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
+Claude Code is only one place to use this structure. Its [skills follow the open Agent Skills format](https://code.claude.com/docs/en/skills), so keeping the package mostly standard makes future reuse easier. One caveat: the shared `_meta` file sits outside the individual skill package. If I distribute `html-to-markdown` by itself, I copy that rule into the skill's own `references/` directory or package the whole library, so the skill does not depend on a missing sibling file. SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as adding computer and file access and support for open standards such as MCP and A2A. Public documentation does not yet confirm support for the same `SKILL.md` format. If Joule Work later adopts the Agent Skills specification, a Git-managed skill library like this should be much easier to reuse or migrate. Even before that happens, the same governance pattern remains useful anywhere capabilities are stored as files and evolve through reviewed versions.
 
 ## Practical checklist
 
