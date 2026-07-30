@@ -1,5 +1,7 @@
 # When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
+*A Practical Way to Add New Capabilities Without Breaking Old Ones*
+
 One of the most frustrating problems in skill development is not that a new feature fails. It is that the new feature works, while something old quietly stops working.
 
 This happens more often than expected. We add one rule, support one more input, or handle one more edge case. The new example passes. The change looks successful. Several days later, an older scenario produces a worse result, sometimes without any error message.
