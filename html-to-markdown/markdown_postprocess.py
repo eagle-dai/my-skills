@@ -300,6 +300,12 @@ def _double_math_backslashes_block(markdown: str, fenced: set[int]) -> str:
       - closed 的非 fenced 行走行内 ``$…$`` + 单行 ``$$…$$``；
       - fenced 行对 toggle 和改写都跳过（fence 里的 ``$$`` 既不能翻状态也不能改写）。
     不改行数，可与 caption 归一前后独立运行。
+
+    **不平衡护栏（fail-closed）**：若扫完 ``block_math_open`` 仍为 True（``$$`` 定界符
+    奇数个/未闭合），说明从某个未配对 ``$$`` 起，本 pass 把后续正文都当成了块内 latex
+    并施了 transform——正文里的 ``\\*`` ``\\%`` 等 markdown 转义会被误双写、污染正文
+    （fail-open）。这种情况本 pass 的块状态判断整体不可信，**放弃改写、返回原文**，由结构
+    守恒/人工兜底（宁可漏修公式，也不污染正文）。
     """
     lines = markdown.split("\n")
     out: list[str] = []
@@ -321,6 +327,8 @@ def _double_math_backslashes_block(markdown: str, fenced: set[int]) -> str:
             lambda m: "$$" + _double_math_backslashes(m.group(1)) + "$$", line
         )
         out.append(_double_math_backslashes_inline_line(line))
+    if block_math_open:
+        return markdown  # 不平衡 $$：放弃本 pass，不污染正文
     return "\n".join(out)
 
 

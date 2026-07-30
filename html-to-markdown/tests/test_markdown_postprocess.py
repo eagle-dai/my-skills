@@ -694,6 +694,28 @@ def test_display_dollar_block_toggle_and_double():
     assert "结论" in out and "后文" in out      # 块外文本不动
 
 
+def test_rowbreak_then_command_no_space_doubled():
+    # PR review finding 1：换行 `\\` 后紧跟命令（无空格）`\\alpha`（k=2+字母）——这是
+    # 「换行 + alpha 命令」，换行 `\\` 仍须双写成 `\\\\`（GitHub 剥一层 → `\\` 换行 +
+    # `\alpha` 命令）。不能因 follow 是字母就当命令保持 k=2（那样换行会丢）。
+    bs = "\\"
+    text = "$$\na " + bs * 2 + "alpha\n$$\n"   # 源含两反斜杠 + alpha
+    out = pp(text)
+    assert "a " + bs * 4 + "alpha" in out       # 换行双写成四反斜杠
+    assert pp(out) == out                        # 幂等
+
+
+def test_unbalanced_display_math_does_not_pollute_prose():
+    # PR review finding 2：未闭合 `$$`（奇数个定界符）不得让块状态泄漏到文件尾，
+    # 把后续正文的 `\*` `\%` 等 markdown 转义误双写。护栏=不平衡则放弃本 pass 返回原文。
+    bs = "\\"
+    text = "$$\nx=1\n\n正文 " + bs + "*斜体" + bs + "* 和 30" + bs + "% 折扣\n"
+    out = pp(text)
+    assert bs + "*斜体" + bs + "*" in out        # 正文转义星号不动
+    assert "30" + bs + "% 折扣" in out            # 正文转义百分号不动
+    assert bs * 2 + "*" not in out               # 没被误双写
+
+
 if __name__ == "__main__":
     import sys
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
