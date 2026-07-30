@@ -12,11 +12,11 @@ Technology Blog Posts by Members, or the closest AI/developer category available
 
 **Recommended title**
 
-How I Evolve AI Skills Without Breaking Existing Behavior
+When an AI Skill Learns Something New—and Forgets Something Old
 
 **Short description**
 
-AI skills can regress silently: a new case works while older behavior breaks. This post presents a practical six-step evolution loop for repeatable, contract-driven skills where failures can be reproduced and wrong outputs carry real cost, with a Git-managed Claude Code setup as a concrete example.
+A small improvement to an AI skill can quietly break behavior that used to work. This post shares the practical workflow I now use: reproduce the failure, define the boundary, add regression tests, keep the change small, and store the lesson for the next change.
 
 **Suggested SAP Managed Tags**
 
@@ -58,17 +58,13 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 ---
 
-# How I Evolve AI Skills Without Breaking Existing Behavior
+# When an AI Skill Learns Something New—and Forgets Something Old
 
-*A regression-safe workflow for file-based agent skills using acceptance cases, tests, and Git*
+*Some notes from maintaining file-based agent skills with tests and Git*
 
-AI skills are easy to improve in a demo and surprisingly hard to improve safely.
+I once made a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
-The failure mode that bothers me most is not a new feature that simply does not work. It is a new feature that works exactly as requested while an older capability quietly gets worse.
-
-I ran into this while improving a small HTML-to-Markdown skill. One request sounded harmless: remove unhelpful greetings from the beginning of an article.
-
-Consider this HTML:
+This was the input:
 
 ```html
 <p>
@@ -77,70 +73,65 @@ Consider this HTML:
 </p>
 ```
 
-The expected Markdown is:
+And this was the output I wanted:
 
 ```markdown
 **The migration must finish before Friday.**
 ```
 
-My first implementation checked whether a paragraph started with a greeting. If it did, the code removed the paragraph.
+My first solution checked whether a paragraph started with a greeting. When it did, I removed the paragraph.
 
-The greeting disappeared. So did the useful sentence and its bold formatting.
+The greeting was gone. Unfortunately, the useful sentence and its bold formatting were also gone.
 
-The new feature worked. The existing behavior did not.
+So the new feature worked, but the skill became worse.
 
-That small defect changed the way I maintain skills. I now treat a skill change much more like a software change: the request needs a boundary, the failure needs a reproducible example, and the fix needs evidence that it did not damage what was already working.
+This kind of problem is easy to miss. There may be no exception, no red log and no obviously broken output. The result can still look fluent. Only some information has quietly disappeared.
 
-In this post, I will show:
+After seeing several similar cases, I stopped treating a skill change as “just update the prompt”. I now handle it more like a software change, although not exactly the same. I want a reproducible failure, a clear boundary, a test for the new behavior, and some evidence that old behavior is still there.
 
-- why file-based skills can regress without obvious errors;
-- how I separate shared change rules from skill-specific lessons;
-- the six-step evolution loop I use;
-- a concrete Claude Code directory and Git setup;
-- why the same discipline is useful for SAP-oriented AI workflows and potentially for Joule Work in the future.
+In this article, “skill” means a file-based capability package containing instructions, references, scripts and tests. It does not mean a Joule Skill specifically.
 
-> **Scope:** This approach is designed for repeatable, contract-driven skills where failures can be reproduced and a plausible but wrong result has a real cost. It is not a rigid testing framework for every prompt, one-off creative task, or open-ended conversation. Those tasks usually need human review, rubrics, or comparison across several samples instead.
+Also, this approach is not useful for every AI task. It works best for repeatable behavior where we can describe what is correct and where a plausible but wrong answer has a real cost. For open-ended writing or creative tasks, human review and evaluation rubrics are usually more suitable.
 
-> **Terminology note:** In this article, “skill” means a file-based agent capability package containing instructions, references, scripts, and tests. It does not mean a Joule Skill specifically.
+## Why a skill can forget without telling us
 
-## Why skills can forget silently
+A file-based skill often has several sources of behavior:
 
-Normal software already has regression problems, but file-based skills add another layer: behavior is often defined by both text and code.
+- `SKILL.md` tells the agent what to do;
+- reference files contain rules and exceptions;
+- scripts handle deterministic work;
+- examples influence interpretation;
+- tests protect only the cases we remembered to write down;
+- the final renderer or tool may behave differently from our local environment.
 
-- Natural-language instructions tell the agent what to do.
-- Reference files describe rules and exceptions.
-- Python or another language handles deterministic steps.
-- Examples influence how a model interprets an instruction.
-- Tests cover only the cases somebody remembered to encode.
-- Tool and renderer behavior can vary across environments.
+Code normally complains when it is invalid. Natural-language instructions do not.
 
-The code may fail loudly. The text often does not.
+I can remove one sentence from `SKILL.md` and nothing will fail during compilation. I can rewrite a rule to make it shorter and accidentally remove an old exception. I can expand a regular expression for one new example and damage five old examples. I can also verify Markdown in VS Code and later find that GitHub renders it differently.
 
-Deleting a sentence from `SKILL.md` causes no compilation error. Rewriting an instruction can make it cleaner while dropping an old exception. A broader regular expression can fix one input and damage several others. A local Markdown preview can look correct while the target platform renders it differently.
+For me, the dangerous part is not that the output becomes nonsense. It often still looks reasonable.
 
-The output may still look fluent and complete. That is what makes the regression dangerous: a plausible result can already have lost information.
+The recurring causes I saw were quite ordinary:
 
-I repeatedly saw three causes:
+1. I generalized a rule from only one example.
+2. I changed a shared rule for one local problem.
+3. I documented a rule but did not protect it with a test.
+4. I tested the implementation but not the target environment.
 
-1. **A rule was generalized from one example.** It matched the surface pattern, not the underlying mechanism.
-2. **A shared rule was changed for one defect.** The new test passed, but another path regressed.
-3. **A rule existed only in documentation.** The document was later rewritten, and the rule disappeared without any CI failure.
+Adding more text to the prompt did not solve these problems. Sometimes it only made the prompt longer and harder to review.
 
-Adding more prose to the prompt did not solve this. I needed a repeatable change process.
+## Two kinds of memory
 
-## Keep two kinds of memory
+One change helped me a lot: I separated shared change rules from the lessons of one particular skill.
 
-The most useful structural decision was to separate two kinds of knowledge.
+The shared part answers:
 
-The first is shared across skills:
+> How should any skill be changed safely?
 
-> How are skills allowed to change?
+The skill-specific part answers:
 
-The second belongs to one particular skill:
+> What did this skill learn from its own failures?
 
-> What has this skill learned from its own failures?
-
-A minimal layout looks like this:
+A small structure can look like this:
 
 ```text
 _meta/
@@ -158,94 +149,86 @@ html-to-markdown/
     └── test_regressions.py
 ```
 
-The shared `_meta/skill-self-improvement.md` file does not explain HTML conversion. It defines how any skill should be changed: what must be checked before implementation, which shortcuts are forbidden, how trade-offs are resolved, and what must pass before release.
+`_meta/skill-self-improvement.md` is not about HTML conversion. It records the rules for changing skills: what to inspect before implementation, what shortcuts are not acceptable, and what should pass before the change is finished.
 
-The skill-specific `self-improvement.md` records concrete regression knowledge:
+The skill's own `self-improvement.md` keeps concrete knowledge from previous failures:
 
 - the failed input;
 - the expected result;
-- the mechanism behind the failure;
-- positive and negative examples;
+- why it failed;
+- examples that should match;
+- examples that must not match;
 - the target platform;
-- the test that protects the behavior.
+- the test that now protects this behavior.
 
-The acceptance file describes the visible behavior from the user's point of view. It should not require the reader to understand a selector, regular expression, or routing rule.
+I also keep acceptance cases in a form that a non-developer can understand. A user should not need to know a DOM selector or a regular expression to understand the promised behavior.
 
-The automated test is the machine-readable side of the same agreement.
+The test is the executable side of the same agreement.
 
-A skill therefore has two readers:
+This means the skill has two readers. A person needs to understand the intention, and a machine needs something it can check. Either side alone is not enough.
 
-- a person needs to understand the intended outcome;
-- a machine needs an executable contract.
+## The change loop I use now
 
-A readable rule without a test can drift. A test without readable intent becomes difficult to review.
+I call it a six-step loop, but it is not a formal framework. It is simply the sequence that has worked for me.
 
-## The six-step evolution loop
+### 1. Write down the purpose and the boundary
 
-### 1. State the purpose and limit the change
+Before changing code or instructions, I try to write the user-visible purpose in one sentence.
 
-A change should either create a visible improvement or fix a failure that actually occurred.
+For the greeting case, it was:
 
-For the greeting example, I wrote the purpose as one sentence:
+> Remove a standalone opening greeting, but keep meaningful content and supported formatting in the same container.
 
-> Remove a standalone opening greeting without deleting meaningful content or supported formatting in the same container.
+The second half is more important than it may look. It tells me what I am not allowed to break.
 
-This sentence also defines what the change is not. It is not a general refactoring of paragraph handling.
+I also ask a few basic questions:
 
-Before coding, I try to classify the failure:
+- Is the current rule too narrow or too broad?
+- Is the problem in a shared component?
+- Was the behavior only documented but never tested?
+- Does the failure appear only in the real target environment?
 
-- Was the rule too narrow?
-- Was it too broad?
-- Did a shared component affect another path?
-- Was the rule documented but never tested?
-- Did the target platform behave differently from the local environment?
-
-Without this step, it is easy to patch the symptom and preserve the root cause.
+Without this step, I often fix the visible symptom and leave the original mechanism unchanged.
 
 ### 2. Generalize before implementing
 
-Before I accept a proposed rule, I ask whether it can survive a different input.
+A rule based on one example is usually suspicious.
 
-I use five questions:
-
-1. **Are the examples varied enough?** Consider languages, numbers, punctuation, full-width and half-width characters, letter case, and different document structures.
-2. **Does the rule describe a mechanism?** A DOM relationship, renderer behavior, or format standard is stronger than “this string looked wrong.”
-3. **Are there negative examples?** Every detection rule should include cases that must not match.
-4. **Is the boundary precise?** Broad classes such as `.` or `\S` are warning signs unless the intended boundary is genuinely broad.
-5. **Is the target environment explicit?** GitHub, VS Code, KaTeX, MathJax, and local renderers may behave differently.
-
-For the greeting example, this rule is too broad:
+For example, this rule is too broad:
 
 > Remove a paragraph when its text starts with “Hello everyone”.
 
+The paragraph is only a storage container. It is not necessarily the unit that should be removed.
+
 A better rule is:
 
-> Remove only an independent greeting sentence. Do not remove its parent block when the block also contains meaningful text or supported inline structure.
+> Remove only an independent greeting sentence. Do not remove the parent block when it also contains meaningful text or supported inline structure.
 
-The important improvement is not a more complicated regular expression. It is choosing the correct unit of meaning.
+The main improvement is not a smarter regular expression. It is selecting the correct unit of meaning.
 
-Useful boundary cases include:
+Before implementation, I normally try several boundary cases:
 
 - a paragraph containing only a greeting should be removed;
-- a greeting followed by meaningful bold text should keep the meaningful text;
-- a sentence quoting “Hello everyone” should remain unchanged;
-- a title containing similar words should not be treated as a greeting.
+- a greeting followed by bold text should keep the bold text;
+- a sentence quoting “Hello everyone” should stay unchanged;
+- a heading containing similar words should not be treated as a greeting;
+- punctuation, letter case and full-width characters should not create accidental matches.
 
-The positive cases show that the rule works. The negative cases show where it must stop.
+Positive examples show where the rule works. Negative examples show where it must stop. In practice, the negative examples are often more valuable.
 
-### 3. Turn the rule into executable evidence
+### 3. Make the rule executable
 
-My second hard rule is:
+I use one fairly strict rule for repeatable skill behavior:
 
-> Any user-visible rule added to a skill must be backed by an automated test in the same change.
+> A user-visible rule added to a skill should have an automated test in the same change.
 
 A useful review question is:
 
-> If this rule disappeared tomorrow, which test would fail?
+> If this rule disappears next month, which test will fail?
 
-If there is no answer, the rule has not really become part of the skill.
+If I cannot answer, the rule is still only a hope.
 
-For the regression above, I first write a failing test:
+For the regression above, I first add a failing test:
 
 ```python
 def test_preserves_content_after_greeting() -> None:
@@ -261,7 +244,7 @@ def test_preserves_content_after_greeting() -> None:
     )
 ```
 
-Then I add the boundaries:
+Then I add some boundaries:
 
 ```python
 def test_removes_pure_greeting() -> None:
@@ -276,7 +259,7 @@ def test_keeps_quoted_greeting() -> None:
     )
 ```
 
-The corresponding acceptance case can remain understandable to a non-developer:
+The matching acceptance case can stay simple:
 
 ```markdown
 ### Greeting followed by meaningful content
@@ -287,29 +270,28 @@ The corresponding acceptance case can remain understandable to a non-developer:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-The acceptance case says what the user needs. The test ensures the implementation continues to respect it.
+After the new test passes, I run the full suite. Running only the new test proves that I fixed the reported case. It does not prove that I did not create another problem.
 
-After the new test passes, I run the full suite, not only the new test file. The new test proves that the reported defect was fixed. The full suite checks that the fix did not become the next defect.
+I normally keep old regression tests. When an old expectation is really wrong, I record why before changing it. Otherwise, deleting the test is also deleting part of the skill's memory.
 
-I normally keep old regression cases. If an old expectation is genuinely wrong, I record why before changing or deleting it. Otherwise, deleting a regression test is deleting part of the skill's memory.
+### 4. Do not negotiate with the test until it becomes green
 
-### 4. Do not manufacture a green result
+It is easy to produce a green result in the wrong way.
 
-Green CI is useful only when the tests still protect the original intent.
+I have seen, and sometimes used, these shortcuts:
 
-Common shortcuts include:
-
-- widening a regular expression only to include the latest failing input;
+- widening a regular expression only for the latest input;
 - weakening an assertion until the current output passes;
-- running only the new test;
-- deleting an old test because it became red;
+- running only the new test file;
+- deleting an old test because it became inconvenient;
 - updating documentation without an executable guard;
-- reporting success when validation is incomplete;
-- using timestamps or random values to hide nondeterministic behavior.
+- calling the result successful while validation is incomplete.
 
-For an HTML-to-Markdown pipeline, producing some Markdown is not enough. Meaningful content and supported structure must remain. Unresolved content must not disappear silently.
+A green CI result is useful only when the tests still represent the original intention.
 
-A small result model can make this explicit:
+For conversion skills, “some Markdown was produced” is not enough. Important content and supported structure must remain. Unknown content should not disappear silently.
+
+Sometimes I make the status explicit:
 
 ```python
 from dataclasses import dataclass
@@ -325,19 +307,19 @@ class ConversionResult:
     reasons: tuple[str, ...] = ()
 ```
 
-- `converted`: the output passed the required checks;
-- `strict_required`: the input exceeded the safe deterministic path;
-- `blocked`: a plausible output may exist, but it did not pass the contract and must not be delivered as success.
+The meanings are simple:
 
-“No exception was thrown” is not a useful definition of success. The output should have passed the checks that matter for the skill.
+- `converted`: the required checks passed;
+- `strict_required`: the fast deterministic path is not safe enough;
+- `blocked`: a plausible output may exist, but it did not pass the contract.
 
-### 5. Protect the boundary and make trade-offs explicit
+“No exception happened” is not my definition of success.
 
-A change should touch only what is needed for its stated purpose. This matters when a rule is shared across fast paths, strict paths, post-processing stages, or several skills.
+### 5. Keep the change inside its boundary
 
-A small regular-expression change can affect many behaviors. Duplicate copies of a selector or default rule can also drift apart.
+A small rule may be shared by several paths or even several skills. This makes local fixes more risky than they first appear.
 
-The trade-off order I use is:
+My current trade-off order is:
 
 ```text
 fail closed
@@ -347,75 +329,59 @@ fail closed
     > shorter implementation
 ```
 
-If an unknown document structure may cause information loss, I route it to a stricter path or block it. I do not guess and report success.
+This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input.
 
-If a deterministic path is too slow for every input, I separate fast and strict paths. I do not weaken correctness to gain speed.
+When an unknown structure may cause information loss, I send it to a stricter path or block it. I prefer an honest limitation to a confident but damaged result.
 
-If a new rule increases coverage but damages structural preservation, coverage loses.
+When the strict path is too expensive for every input, I separate fast and strict paths. I do not make the correctness rule weaker only to make the happy path faster.
 
-### 6. Verify and store the lesson
+### 6. Store what was learned
 
-After implementation, I:
+After implementation, I do the following:
 
 1. run the full test suite and CI;
-2. inspect semantic or visual behavior that code cannot judge reliably;
-3. search for duplicated selectors, regular expressions, or default rules;
-4. record the root cause, risk, verification method, and known gaps;
-5. save the lesson in the correct place.
+2. inspect visual or semantic behavior that code cannot judge well;
+3. search for duplicated selectors, regular expressions and default rules;
+4. record the cause, risk, verification method and remaining gaps;
+5. put the lesson in the correct place.
 
-A concrete failure belongs to the skill-specific regression record:
+A concrete failure belongs to the skill-specific record.
 
-- failed input;
-- expected outcome;
-- mechanism;
-- positive and negative boundaries;
-- protecting test.
+A repeated way of failing belongs to the shared change rules. Examples are:
 
-A recurring way of failing belongs to the shared change rules:
-
-- one-example rules are repeatedly too narrow;
+- rules based on one example are repeatedly too narrow;
 - broad character classes repeatedly create false positives;
-- local rendering repeatedly disagrees with the target platform;
+- local rendering repeatedly differs from the target platform;
 - contributors repeatedly run only the new tests;
 - documentation-only rules repeatedly disappear.
 
-The concrete case improves one skill. A recurring pattern should improve the way every skill is changed.
+One failure should improve one skill. A repeated pattern should improve how all skills are changed.
 
-## Test more than the main script
+## The main script is not the whole skill
 
-The converter is only one part of the skill. Instructions and reference files also affect behavior, so documentation is part of the executable surface.
+It is natural to test the converter or the main script. However, instructions and reference files also influence behavior. In this sense, documentation is part of the executable surface.
 
 Repository-level checks can verify that:
 
-- documentation does not claim support that the implementation still blocks;
-- unsupported structures produce `strict_required` or `blocked`;
-- naming and fallback rules remain consistent across text and code;
-- every acceptance case points to a real test;
-- multiple skills do not define contradictory contracts for shared behavior.
+- documentation does not promise behavior that the implementation still blocks;
+- unsupported inputs return `strict_required` or `blocked`;
+- naming and fallback rules are consistent across text and code;
+- each acceptance case points to a real test;
+- shared behavior is not defined differently in several skills.
 
-Test ownership should follow capability ownership. Tests for one skill's files belong to that skill. Cross-skill consistency tests belong at the library level.
+Test ownership should follow capability ownership. Tests for one skill belong with that skill. Cross-skill consistency tests belong at the library level.
 
-The target environment matters too. Markdown that looks correct in one local preview may fail on GitHub because its processing pipeline differs. Test the real target semantics, or reproduce them as closely as practical.
-
-A fixture should be small but faithful. The right fixture is the smallest example that preserves the real failure mechanism, not simply the smallest file.
-
-## Where this approach works well
-
-This approach is most useful when a skill performs repeatable work, has behavior that can be described clearly, and can be checked against reproducible evidence. It is especially valuable when a plausible but incorrect result would be costly or difficult to detect.
-
-It is less suitable as a strict test-driven framework for open-ended or highly creative tasks where many different outputs may be equally valid. In those cases, human review, rubrics, or evaluation across multiple samples are usually more appropriate.
-
-The principle is simple: use the heavier regression loop only when the behavior is stable enough to protect and the cost of silent regression justifies it.
+The target platform should also be part of the evidence. Markdown that looks correct in one preview may fail on GitHub because the rendering pipeline is different. The fixture should keep the real failure mechanism, not only be as small as possible.
 
 ## A concrete setup with Claude Code and Git
 
-For skills I use across several projects, I keep them in Claude Code's personal skill directory:
+For personal skills used across several projects, Claude Code supports this directory:
 
 ```text
 ~/.claude/skills/
 ```
 
-[Claude Code loads personal skills](https://code.claude.com/docs/en/skills#where-skills-live) from `~/.claude/skills/<skill-name>/SKILL.md`, making them available across the user's projects. A project-specific skill can instead live under `.claude/skills/` when its behavior belongs to one repository or should be reviewed together with that repository's code.
+[Claude Code loads personal skills](https://code.claude.com/docs/en/skills#where-skills-live) from `~/.claude/skills/<skill-name>/SKILL.md`. A project-specific skill can instead live under `.claude/skills/` inside the project repository.
 
 For the running example, I would use:
 
@@ -434,11 +400,11 @@ For the running example, I would use:
         └── test_acceptance.py
 ```
 
-The `html-to-markdown` directory is the actual skill. The `_meta` directory is a shared reference area for how skills should be changed; it is not another user-facing skill.
+The `html-to-markdown` directory is the skill. `_meta` is only a shared reference area; it is not another user-facing skill.
 
-### Put the personal skill library under Git
+### Put the skill library under Git
 
-The entire `~/.claude/skills/` directory can be a Git repository. This is useful even for one developer: every rule change has a diff, every regression case has a history, and the same skill library can be synchronized across machines.
+The whole `~/.claude/skills/` directory can be a Git repository. This may sound a little heavy for one developer, but I find it useful. Every rule change has a diff, old regression cases have history, and the same skill library can be synchronized across machines.
 
 A minimal setup is:
 
@@ -456,15 +422,15 @@ git remote add origin git@github.com:<your-account>/<your-skills-repo>.git
 git push -u origin main
 ```
 
-On another machine, clone into the same location only when the target directory does not already exist:
+On another machine, clone into the same location only when the directory does not already exist:
 
 ```bash
 git clone git@github.com:<your-account>/<your-skills-repo>.git ~/.claude/skills
 ```
 
-If the directory already contains local skills, do not clone over it. Back it up or reconcile the repositories deliberately.
+When the directory already contains local skills, do not clone over it. Back it up or reconcile the repositories deliberately.
 
-A small `.gitignore` is enough for many libraries:
+A small `.gitignore` is enough for many cases:
 
 ```gitignore
 .DS_Store
@@ -474,9 +440,9 @@ __pycache__/
 .env
 ```
 
-Do not commit credentials, tokens, customer data, machine-specific paths, or generated working files. Keep the repository focused on instructions, references, small fixtures, tests, and scripts that are safe to version.
+Do not commit credentials, tokens, customer data, generated working files or machine-specific secrets. The repository should mainly contain instructions, references, small fixtures, tests and scripts that are safe to version.
 
-For a team-owned skill tied to one application, use the project-level path:
+For a team-owned skill tied to one application, I use the project-level path:
 
 ```text
 <project>/.claude/skills/<skill-name>/SKILL.md
@@ -484,14 +450,14 @@ For a team-owned skill tied to one application, use the project-level path:
 
 The personal directory is a reusable toolbox. The project directory is behavior owned by one codebase.
 
-### Reference implementation: shared change rules
+### Example shared change rules
 
 A minimal `~/.claude/skills/_meta/skill-self-improvement.md` can be:
 
 ```markdown
 # Changing a skill safely
 
-Use this file when adding, removing, or changing behavior in an existing skill.
+Use this file when adding, removing or changing behavior in an existing skill.
 
 1. State the user-visible purpose in one sentence.
 2. Read the target skill's `self-improvement.md` and `acceptance/CASES.md`.
@@ -501,12 +467,10 @@ Use this file when adding, removing, or changing behavior in an existing skill.
 6. Make the smallest change that fixes the mechanism, not only the example.
 7. Run the full test suite. Do not weaken or delete old guards to make it green.
 8. Update the acceptance case and regression record with the test name.
-9. If the failure exposes a recurring mistake, update this shared file too.
+9. When the failure exposes a recurring mistake, update this shared file too.
 
-Stop with `blocked` or route to a stricter path when correctness cannot be established.
+Stop with `blocked` or use a stricter path when correctness cannot be established.
 ```
-
-### Reference implementation: the skill file
 
 The main `~/.claude/skills/html-to-markdown/SKILL.md` should stay focused on execution:
 
@@ -529,48 +493,50 @@ When changing this skill itself:
 5. Run the full test suite after the change.
 ```
 
-If I distribute `html-to-markdown` by itself, I copy the shared change rules into its own `references/` directory or package the whole library. The skill should not depend on a sibling file that is missing from the distributed package.
+When I distribute `html-to-markdown` alone, I copy the shared rules into its own `references/` directory or package the complete library. A skill should not depend on a sibling file that is absent from the distributed package.
 
-## Why I think this matters for SAP teams
+## Why this may matter for SAP teams
 
-The file package shown above is not a Joule Skill, and this post is not a Joule Studio tutorial.
+The files above are not a Joule Skill, and this article is not a Joule Studio tutorial.
 
-The lifecycle problem is still relevant to SAP teams. As AI-enabled capabilities become faster to create, they also become easier to change. In enterprise workflows, a fluent but wrong result can be more damaging than an obvious failure because it may pass through several downstream steps before somebody notices.
+Still, I think the lifecycle problem is relevant to SAP teams. AI-enabled capabilities can now be created and changed very quickly. This speed is useful, but it also means we can introduce a regression very quickly. In an enterprise workflow, a fluent but wrong result may be more dangerous than an obvious failure because several downstream steps may accept it before a person notices.
 
-SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as providing computer and file access and supporting open standards such as MCP and A2A. Public documentation does not currently confirm compatibility with the same `SKILL.md` or Agent Skills format used in the Claude Code example.
+SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as providing computer and file access and supporting open standards such as MCP and A2A. Public information does not currently confirm that it uses the same `SKILL.md` or Agent Skills format as Claude Code.
 
-If Joule Work adopts the Agent Skills specification in the future, a Git-managed skill library built from standard files should be easier to reuse or migrate. If it does not, the core engineering practices still transfer:
+So I would not claim direct compatibility.
+
+If Joule Work supports the Agent Skills specification in the future, a Git-managed library based on standard files may be easier to reuse or migrate. If it does not, most of the engineering habits still transfer:
 
 - version the capability definition;
-- keep user-readable acceptance criteria;
-- reproduce failures;
+- keep acceptance criteria readable by people;
+- reproduce real failures;
 - protect old behavior with tests;
-- use explicit fallback and release gates;
-- store lessons where future changes will find them.
+- make fallback and release gates explicit;
+- store lessons where the next change can find them.
 
-The file format may change. The need for controlled evolution will not.
+The file format may change. The lifecycle problem will remain.
 
-## Practical checklist
+## A checklist I actually use
 
-Before merging a skill change, I ask:
+Before merging a skill change, I check:
 
-- Can I state the user-visible purpose in one sentence?
-- Is the rule based on a mechanism rather than one example?
-- Are there varied positive cases and at least two negative cases?
-- Did I write a failing regression test before changing the implementation?
-- If the documented rule disappeared, would a test fail?
-- Did I run the full suite without weakening or deleting old guards?
-- Is the change limited to the required boundary?
-- Does uncertainty lead to `strict_required` or `blocked` rather than plausible success?
-- Are instructions, implementation, tests, and acceptance cases aligned?
-- Did I store the concrete failure in the skill's regression record?
-- Did I add any recurring failure pattern to the shared change rules?
-- Does this task have repeatable behavior worth protecting?
+- Can I explain the user-visible purpose in one sentence?
+- Is the rule based on a mechanism, not only one example?
+- Do I have positive and negative boundary cases?
+- Did I first reproduce the failure?
+- Which test will fail if the new rule disappears?
+- Did I run the full suite without weakening old guards?
+- Is the change limited to the necessary area?
+- Will uncertainty produce `strict_required` or `blocked` instead of plausible success?
+- Are the instructions, implementation, tests and acceptance cases still saying the same thing?
+- Did I store the concrete lesson and any repeated failure pattern?
+
+I do not always execute every item with the same weight. A small personal skill and a business-critical workflow are not the same. But when a wrong result can hide easily, I prefer to be more strict.
 
 ## Conclusion
 
-AI skills will keep changing. New models, tools, formats, and user expectations will keep arriving. The goal is not to freeze a skill once it works.
+AI skills will continue to change. New models, tools and formats will arrive, and users will ask for new behavior.
 
-My goal is simpler: every improvement should leave evidence, and every real failure should make the next change safer.
+I do not want to freeze a skill after it works once. I want each real failure to leave something useful behind: a better boundary, a regression case, or a change rule that prevents the same mistake next time.
 
-I am interested in how other SAP developers and architects handle this problem. Do you keep prompt and skill regressions as executable tests, evaluation datasets, review checklists, or something else?
+This is still evolving in my own work. I am interested in how other SAP developers and architects handle the same problem. Do you keep prompt and skill regressions as tests, evaluation datasets, review checklists, or in another form?
