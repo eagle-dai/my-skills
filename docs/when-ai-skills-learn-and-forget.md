@@ -63,7 +63,9 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
 
-I once made a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
+**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the skill's regression record or the library-level rules for future changes. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one skill, while a recurring failure pattern should improve how all skills are changed.
+
+That summary sounds more formal than the way the approach actually began. It started with a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
 This was the input:
 
