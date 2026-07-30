@@ -401,27 +401,11 @@ A fixture should be small but faithful. The right fixture is the smallest exampl
 
 ## Where this approach works well
 
-This method is most useful when four conditions are present:
+This approach is most useful when a skill performs repeatable work, has behavior that can be described clearly, and can be checked against reproducible evidence. It is especially valuable when a plausible but incorrect result would be costly or difficult to detect.
 
-1. the task is repeated rather than one-off;
-2. some behavior can be stated as a stable contract or invariant;
-3. a failure can be reproduced with a fixture or recorded execution;
-4. a plausible but wrong result has a real cost.
+It is less suitable as a strict test-driven framework for open-ended or highly creative tasks where many different outputs may be equally valid. In those cases, human review, rubrics, or evaluation across multiple samples are usually more appropriate.
 
-Examples include:
-
-- document conversion, parsing, extraction, normalization, and validation;
-- code or configuration generation with schemas and structural rules;
-- tool-based workflows with known inputs, outputs, states, or approvals;
-- enterprise tasks with stable business rules and versioned APIs;
-- skills with several execution paths or platform-specific behavior;
-- agent workflows where tool calls and intermediate states can be checked.
-
-For SAP teams, that can include skills that validate integration payloads, produce configuration files, transform business documents, guide repeatable developer workflows, or generate structured artifacts for CAP, SAPUI5, or other development environments. The point is not the specific technology. The point is that the output has contracts worth protecting.
-
-This method is less suitable as a strict test-driven framework for one-off creative writing, open brainstorming, or tasks where many very different outputs are equally correct. Human review, rubric-based evaluation, and comparison across several samples are usually more useful there.
-
-Some principles still apply widely: keep changes bounded, preserve known failures, record environment differences, and do not claim success without evidence. The heavier regression machinery is worthwhile only when repeatable behavior exists.
+The principle is simple: use the heavier regression loop only when the behavior is stable enough to protect and the cost of silent regression justifies it.
 
 ## A concrete setup with Claude Code and Git
 
