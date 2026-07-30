@@ -267,18 +267,17 @@ class UnsupportedSemanticStructuresTests(unittest.TestCase):
     本守卫会随之要求同步改动。
     """
 
-    EXPECTED = {"mtable", "accent", "op-limits", "munder", "mover"}
+    # gap #32：op-limits(\sum/\prod/\int 带上下限)已补真实现,从 fail-closed 集合移出。
+    EXPECTED = {"mtable", "accent", "munder", "mover"}
     # 每类一个最小 DOM 触发片段（带对应 CSS 类即命中 UNSUPPORTED_SEMANTIC）
     SAMPLES = {
         "mtable": '<span class="mtable"><span class="col-align-c"></span></span>',
         "accent": '<span class="accent"><span class="accent-body"></span></span>',
-        "op-limits": '<span class="mop op-limits"><span class="vlist"></span></span>',
         "munder": '<span class="munder"><span class="vlist"></span></span>',
         "mover": '<span class="mover"><span class="vlist"></span></span>',
     }
     # 文档里标注每类的行关键字（首格文案）
     DOC_ROW_KEYS = {
-        "op-limits": "运算符（op-limits）",
         "accent": "重音",
         "mtable": "矩阵/分段/cases",
         "munder": "下加标（munder）",
@@ -298,6 +297,28 @@ class UnsupportedSemanticStructuresTests(unittest.TestCase):
                     result.success,
                     f"'{kind}' 应 fail-closed（success=False），不得被静默解析",
                 )
+
+    def test_op_limits_now_reconstructs(self) -> None:
+        # gap #32：op-limits 已从 UNSUPPORTED_SEMANTIC 移出并真实现,
+        # \sum/\prod/\int 带上下限须成功重建为 \sum_{下}^{上}(不再 fail-close)。
+        inner = (
+            '<span class="mop op-limits"><span class="vlist-t vlist-t2">'
+            '<span class="vlist-r"><span class="vlist" style="height:1.8em">'
+            '<span style="top:-4.3em"><span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mtight">n</span></span></span>'
+            '<span style="top:-3.05em"><span class="pstrut"></span>'
+            '<span><span class="mop op-symbol large-op">∑</span></span></span>'
+            '<span style="top:-1.87em"><span class="pstrut"></span>'
+            '<span class="sizing reset-size6 size3 mtight">'
+            '<span class="mord mtight">i=0</span></span></span>'
+            '</span></span></span></span>'
+        )
+        node = _katex(inner).select_one(".katex")
+        assert node is not None
+        result = formula_batch.parse_katex(node)
+        self.assertTrue(result.success)
+        self.assertEqual(result.latex, r"\sum_{i=0}^{n}")
 
     def test_doc_marks_each_row_unimplemented(self) -> None:
         doc = (SKILL / "katex-html-parser.md").read_text(encoding="utf-8")

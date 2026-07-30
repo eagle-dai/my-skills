@@ -27,7 +27,7 @@ KaTeX 的 HTML 渲染层 CSS 类由 KaTeX 定义，与宿主网站无关，但�
 | 分式 | `.mfrac > .vlist` | top 最小 = 分子，top 最大 = 分母 |
 | 运算符（无 limits） | `.mop`（无 `.msupsub`） | textContent → `OPERATORS` |
 | 运算符（有 limits） | `.mop > .msupsub` | 先提取 op，再解析 supsub |
-| 运算符（op-limits）`[未实现-仅设计]` | `.mop.op-limits > .vlist` | 见 op-limits 结构 |
+| 运算符（op-limits） | `.mop.op-limits > .vlist` | 见 op-limits 结构（`\sum`/`\prod`/`\int` 带上下限,已实现） |
 | 根号 | `.msqrt` | `\sqrt{内容}` |
 | 重音 `[未实现-仅设计]` | `.accent > .accent-body + .mord` | `\hat` / `\tilde` / `\bar` / `\dot` / `\vec` |
 | 上划线 | `.overline` | `\overline{内容}` |
@@ -44,7 +44,7 @@ KaTeX 的 HTML 渲染层 CSS 类由 KaTeX 定义，与宿主网站无关，但�
 | 空格 | `.mspace` | 空格 |
 | 渲染辅助 | `.strut` / `.vlist-s` / `.frac-line` / `.rule` | 忽略 |
 
-**已实现 vs `[未实现-仅设计]`**：仓库解析器实现的是普通字符、上下标（msupsub/vlist）、分式（mfrac）、根号（msqrt）、上划线（overline）、无 limits 运算符、括号+上下标、mathbb/mathcal、text、mspace 及各忽略类。`op-limits`、`accent`（重音）、`mtable`（矩阵/cases/array）、`munder`、`mover` 在 `UNSUPPORTED_SEMANTIC` 里，**fail-closed**——下方 op-limits / mtable 小节是给自己补实现时的参考要点，不是仓库已有能力。
+**已实现 vs `[未实现-仅设计]`**：仓库解析器实现的是普通字符、上下标（msupsub/vlist）、分式（mfrac）、根号（msqrt）、上划线（overline）、无 limits 运算符、**带上下限运算符（op-limits：`\sum`/`\prod`/`\int`，gap #32）**、括号+上下标、mathbb/mathcal、text、mspace 及各忽略类。`accent`（重音）、`mtable`（矩阵/cases/array）、`munder`、`mover` 在 `UNSUPPORTED_SEMANTIC` 里，**fail-closed**——下方 mtable 小节是给自己补实现时的参考要点，不是仓库已有能力。
 
 ## text-mode 转义（`\text` / `\mathbb` / `\mathcal` 内）
 
@@ -102,18 +102,20 @@ CSS `top`：从 `style="top: -Xem"` 中提取数值。
 
 **仓库已有实现**：`html-to-markdown/formula_batch.py` 的 `_join()` 就是这条规则——前一 part `re.search(r"\\[A-Za-z]+$", result)`（控制字结尾）且后一 part `re.match(r"[A-Za-z\\]", part)`（**字母或反斜杠**开头）才插空格；`_merge()` 把它同时用于分式、上下标和 `.katex-html` 下多个 `.base` 的合并。自己写临时 parser 时照抄这一条，不要用 `''.join`。
 
-## op-limits 结构 `[未实现-仅设计]`
+## op-limits 结构（已实现，gap #32）
 
-> 仓库解析器对 `op-limits` / `munder` / `mover` **fail-closed**（在 `UNSUPPORTED_SEMANTIC`）。
-> 以下是自己补实现时的参考要点，不是已有能力。
+> `op-limits`（`\sum`/`\prod`/`\int` 带上下限）已实现,见 `formula_batch.py::_parse_op_limits`。
+> `munder` / `mover`（不带算符的 under/over）仍 **fail-closed**（在 `UNSUPPORTED_SEMANTIC`）。
 
 ```text
-.mop.op-limits 内的 .vlist：
-  3 个 span（按 top 排序）：上标、运算符本体、下标
-  2 个 span（按 top 排序）：运算符本体、下标
+.mop.op-limits 内的 .vlist（按 top 升序,更负 = 页面更高）：
+  含 .op-symbol 的 span = 运算符本体（锚点）
+  其上（top 更负）的 span → 上标 ^{...}
+  其下（top 更大）的 span → 下标 _{...}
+  装配 \sum_{下}^{上}；缺 vlist / 无 op-symbol / arity>3 fail-close
 ```
 
-解析结果可能已是 `\max` 等命令；先查 `SYMBOLS`/`OPERATORS`，无匹配则保留解析结果。
+运算符符号经 `SYMBOLS` 映射（∑→`\sum`、∏→`\prod`、∫→`\int`）；无匹配则保留解析结果。
 
 ## mtable 解析规则 `[未实现-仅设计]`
 
