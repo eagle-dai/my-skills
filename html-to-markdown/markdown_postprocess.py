@@ -263,40 +263,114 @@ _CLOSER_SUFFIXES = (
 )
 
 
-def _is_pure_opener(line: str) -> bool:
-    """该行是开场白（去掉可选 ** 加粗后匹配开头前缀，且不是反问句）。"""
-    text = line.strip().strip("*").strip()
+# 句子切分：以 。！？ 收尾切句，保留终止符。行首/末的开场白与结束语按**句**判定，
+# 只删纯寒暄句，保留同一行里带实质信息的句子——避免「正文。我们下节课再见！」这类
+# 单行混排被整行删掉丢正文（review 实证的静默丢失坑）。
+_SENTENCE_SPLIT = re.compile(r"[^。！？!?]*[。！？!?]+|[^。！？!?]+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """把一行切成句子（保留句末标点）；无终止符时整体作一句。"""
+    return _SENTENCE_SPLIT.findall(text)
+
+
+def _sentence_is_opener(sentence: str) -> bool:
+    """该句是开场白（去掉可选 ** 加粗后匹配开头前缀，且不是反问句）。"""
+    text = sentence.strip().strip("*").strip()
     if not text or _QUESTION_END.search(text):
         return False
     return any(p.match(text) for p in _OPENER_PREFIXES)
 
 
-def _is_pure_closer(line: str) -> bool:
-    """该行是结束语：以强道别短语收尾，且不含正文结构标记（#/列表/表格/代码/公式）。"""
-    text = line.strip()
-    if not text or text.startswith(("#", "-", "*", ">", "|", "```", "$$", "!")):
+def _sentence_is_closer(sentence: str) -> bool:
+    """该句是结束语：去掉可选 ** 加粗后以强道别短语收尾。"""
+    text = sentence.strip().strip("*").strip()
+    if not text:
         return False
     return any(p.search(text) for p in _CLOSER_SUFFIXES)
 
 
+# 行首正文结构标记 → 不做寒暄处理。列表项要求 marker + 空格（`- `/`* `/`+ `），
+# 否则 `**大家好！**`（加粗寒暄，行首是 `*`）会被误判成列表而跳过——它是寒暄，
+# 该按句剥离（_sentence_is_* 会 strip 掉 `**` 再匹配）。
+_STRUCTURE_MARKER = re.compile(r"(?:[#>|!]|```|\$\$|[-*+]\s)")
+
+
+def _has_structure_marker(line: str) -> bool:
+    """行首是正文结构标记（标题/列表/表格/代码/公式/图片）→ 不做寒暄处理。"""
+    return bool(_STRUCTURE_MARKER.match(line.strip()))
+
+
+# 整行被 ** 加粗包裹（`**寒暄整句**`）：先脱壳再切句，否则句切会把闭合 ``**`` 割成
+# 单独一段污染判定；剥离后若有幸存正文，重新包壳保持加粗。
+_BOLD_WRAP = re.compile(r"^\*\*(?P<inner>.+)\*\*$", re.DOTALL)
+
+
+def _unwrap_bold(line: str) -> tuple[str, bool]:
+    """整行 ``**…**`` → (内层, True)；否则 (原行, False)。内层不含裸 ``**`` 才脱壳。"""
+    stripped = line.strip()
+    m = _BOLD_WRAP.match(stripped)
+    if m and "**" not in m.group("inner"):
+        return m.group("inner"), True
+    return line, False
+
+
+def _strip_opener_from_line(line: str) -> str | None:
+    """删掉行首连续的开场白句，保留其后实质内容；整行皆开场白则返回 None（删整行）。"""
+    if _has_structure_marker(line):
+        return line
+    body, wrapped = _unwrap_bold(line)
+    sentences = _split_sentences(body)
+    idx = 0
+    while idx < len(sentences) and _sentence_is_opener(sentences[idx]):
+        idx += 1
+    if idx == 0:
+        return line  # 行首不是开场白，不动
+    remainder = "".join(sentences[idx:]).strip()
+    if not remainder:
+        return None
+    return f"**{remainder}**" if wrapped else remainder
+
+
+def _strip_closer_from_line(line: str) -> str | None:
+    """删掉行尾连续的结束语句，保留其前实质内容；整行皆结束语则返回 None（删整行）。"""
+    if _has_structure_marker(line):
+        return line
+    body, wrapped = _unwrap_bold(line)
+    sentences = _split_sentences(body)
+    idx = len(sentences)
+    while idx > 0 and _sentence_is_closer(sentences[idx - 1]):
+        idx -= 1
+    if idx == len(sentences):
+        return line  # 行尾不是结束语，不动
+    remainder = "".join(sentences[:idx]).strip()
+    if not remainder:
+        return None
+    return f"**{remainder}**" if wrapped else remainder
+
+
 def _strip_author_greetings(markdown: str) -> str:
-    """删除课程/专栏文章的首行开场白与末行结束语（保守，逐行判定，只删整行）。"""
+    """删除课程/专栏文章的首行开场白与末行结束语。
+
+    保守，按**句**判定：只删行首/行尾的纯寒暄句，保留同一行里带实质内容的句子
+    （单换行/单行混排常见），绝不因为一行以道别收尾就删掉整行的正文。
+    """
     had_trailing_nl = markdown.endswith("\n")
     lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
 
-    # 首个非空行：命中开场白则删该行
+    # 首个非空行：剥离行首开场白句
     i = 0
     while i < len(lines) and not lines[i].strip():
         i += 1
-    if i < len(lines) and _is_pure_opener(lines[i]):
-        lines[i] = None  # type: ignore[assignment]
+    if i < len(lines):
+        lines[i] = _strip_opener_from_line(lines[i])  # type: ignore[assignment]
 
-    # 末个非空行：命中结束语则删该行
+    # 末个非空行：剥离行尾结束语句
     j = len(lines) - 1
     while j >= 0 and not (lines[j] or "").strip():
         j -= 1
-    if j >= 0 and lines[j] is not None and _is_pure_closer(lines[j]):
-        lines[j] = None  # type: ignore[assignment]
+    if j >= 0 and lines[j] is not None:
+        lines[j] = _strip_closer_from_line(lines[j])  # type: ignore[assignment]
 
     kept = [ln for ln in lines if ln is not None]
     result = "\n".join(kept).strip("\n")
