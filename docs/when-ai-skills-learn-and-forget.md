@@ -602,5 +602,3 @@ Not every item needs the same weight for every task. A small personal skill and 
 AI skills and agents will continue to change as new models, tools, formats, and user expectations arrive. The goal is not to freeze a capability after it works once, but to ensure that each real failure leaves something useful behind: a clearer boundary, a regression guard or evaluation, or a better meta-rule for the next change.
 
 TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Deterministic code can remove repeated model work from the common path, improving both reliability and efficiency, while meta-rules allow one capability's failure to improve how every capability is changed.
-
-This approach is still evolving in practice. How do other SAP developers and architects handle the same problem? Are skill and agent regressions kept as tests, evaluation datasets, recorded traces, review checklists, meta-rules, or in another form?
