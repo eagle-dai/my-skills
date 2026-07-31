@@ -16,7 +16,7 @@ When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
 **Short description**
 
-AI skills and agent capabilities can regress silently: a new case works while older behavior breaks. This post presents a practical, TDD-inspired evolution loop using meta-rules, acceptance cases, regression tests, evaluations, and a Git-managed implementation example.
+AI skills and agent capabilities can regress silently: a new case works while older behavior breaks. This post presents a practical, TDD-inspired evolution loop using meta-rules, acceptance cases, regression tests, and evaluations—and shows how moving stable work into validated code can also reduce model calls, tokens, and latency.
 
 **Suggested SAP Managed Tags**
 
@@ -63,7 +63,7 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
 
-**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the capability's regression record or the shared rules for future changes. Although the running example uses a file-based skill, the same lifecycle applies to platform-specific skills and broader AI agents when their behavior can be versioned, reproduced, and evaluated. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one capability, while a recurring failure pattern should improve how all capabilities are changed.
+**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the capability's regression record or the shared rules for future changes. Moving stable, testable work from model-driven execution into deterministic code can also reduce repeated reasoning, model calls, token usage, and latency while preserving a stricter path for ambiguous cases. Although the running example uses a file-based skill, the same lifecycle applies to platform-specific skills and broader AI agents when their behavior can be versioned, reproduced, and evaluated. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one capability, while a recurring failure pattern should improve how all capabilities are changed.
 
 That summary sounds more formal than the way the approach actually began. It started with a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
@@ -407,6 +407,46 @@ The target platform should also be part of the evidence. Markdown that looks cor
 
 A second real failure made this point more clearly. A formula containing a code-like identifier passed local KaTeX validation but failed after publication because GitHub transformed the Markdown escapes before invoking its math renderer. The validator had tested the source representation rather than the representation used by the target platform. The durable fix was to reproduce GitHub's preprocessing inside the validation path. A green test is meaningful only when it models the environment that will actually execute or render the result.
 
+## A second benefit: less model work
+
+Regression protection was the original motivation for this approach, but the same separation can also improve runtime efficiency.
+
+When a behavior becomes stable, repeatable, and testable, the model should not need to rediscover or reimplement it on every invocation. That work can move into a deterministic script with explicit inputs, outputs, validation, and failure states. The model is then reserved for the parts that genuinely require interpretation, planning, or judgment.
+
+A useful execution shape is:
+
+```text
+known, testable case
+    -> deterministic fast path
+    -> mechanical validation
+    -> success
+
+ambiguous or unsupported case
+    -> strict model-driven path
+    -> evaluation or human review
+```
+
+This architecture can reduce:
+
+- repeated model calls for the same mechanical operation;
+- prompt and completion tokens spent restating or regenerating deterministic logic;
+- retries caused by small variations in model-generated code;
+- end-to-end latency for common inputs;
+- duplicated validation through caching and content-based deduplication.
+
+One real conversion workflow originally sent every page containing an image to a strict subagent. The subagent repeatedly generated image-processing code for backup, watermark removal, compression, and validation. A representative conversion took about 19 minutes. Once that stable contract was moved into a deterministic pixel-processing layer with fail-closed tests, supported images could be processed once in seconds, while uncertain cases still routed to the strict path.
+
+The time improvement was directly observed. Token savings follow from doing fewer model-driven steps, but they should still be measured rather than assumed. Useful metrics include:
+
+- wall-clock time by pipeline stage;
+- number of model or agent calls;
+- input and output tokens;
+- percentage of requests using the strict path;
+- cache-hit and deduplication rates;
+- retries and validation failures.
+
+This is not an argument for replacing semantic judgment with brittle code. Move a step into code only when its behavior is sufficiently stable, observable, and protected by tests. The efficiency gain comes from shrinking the model's responsibility to the part where model reasoning adds value.
+
 ## Where this method applies
 
 The running example uses a file-based skill, but the method is not tied to Claude Code, `SKILL.md`, or even to skills as the only unit of change. It applies whenever a capability has four properties:
@@ -587,6 +627,8 @@ Before merging a skill or agent-capability change, check:
 - Was the failure reproduced before implementation?
 - For deterministic behavior, did the new test fail before the implementation changed?
 - For model-dependent behavior, was the evaluation evidence defined before the change?
+- Can stable, deterministic work be moved out of the model-driven path?
+- If efficiency is a goal, were model calls, tokens, strict-path rate, cache hits, and latency measured?
 - Which guard will fail if the new rule disappears?
 - Did the full suite pass without weakening old guards?
 - Is the change limited to the necessary area?
@@ -603,6 +645,6 @@ AI skills and agents will continue to change. New models, tools, formats, and us
 
 The goal is for each real failure to leave something useful behind: a clearer boundary, a regression guard or evaluation, or a better meta-rule for the next change.
 
-TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Meta-rules add another layer: one capability's failure can improve how every capability is changed.
+TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Deterministic code can remove repeated model work from the common path, improving both reliability and efficiency. Meta-rules add another layer: one capability's failure can improve how every capability is changed.
 
 This approach is still evolving in practice. How do other SAP developers and architects handle the same problem? Are skill and agent regressions kept as tests, evaluation datasets, recorded traces, review checklists, meta-rules, or in another form?
