@@ -119,6 +119,18 @@ SingleFile/Slate 常在段落内嵌无语义 `<div>`（无 `data-slate-*`、纯�
 
 实现见 `fast_converter.py::inline`；回归 `test_inline_div_wrapper_is_transparent_on_fast_path`（穿透正例）+ `test_inline_div_with_block_child_still_routes_to_strict` / `test_unknown_inline_element_still_routes_to_strict`（两反例）。
 
+## mdnice/微信编辑器结构（`<p>`/`<li>` 内块 wrapper、游离嵌套 list、双层公式）
+
+mdnice 编辑器（微信公众号排版）产出的正文里，块级内容常被塞进本应只含行内的容器，或被多层透明 span 包装。这类结构历史上被整页 fail-close 挡住，属 fast path 支持范围内应确定性转换的：
+
+- **原生 `<p>` 尾部块 wrapper**：`<p><span>导语句</span><section data-tool="mdnice"><table>…</table></section></p>`——行内导语后跟被 section 包住的块级 table。规则：仅 `node.name == "p" and not slate` 时，若 p 含块 wrapper 且**块全在尾部**（最后一个块 wrapper 之后无非空白行内），拆成「前导行内 → 段落」+「尾部块 wrapper → 走 block 穿透」。块夹中间 / 块后有行内 / Slate 段落（`slate == "paragraph"`）/ 带 slate 属性的子 wrapper → 维持 `inline_children`，遇块子仍 fail-close 到 strict。前导段落 `.strip()` 空则跳过（不发孤立空段落）。实现 `fast_converter.py::block` 的 p 分支；回归 `test_p_with_tail_block_wrapper_converts_on_fast_path`、`test_p_with_multiple_tail_block_wrappers_converts`、`test_p_pure_block_wrapper_no_empty_paragraph`（正例）+ `test_p_with_block_wrapper_then_inline_still_strict`、`test_slate_paragraph_with_block_wrapper_still_strict`（fail-close 反例）。
+
+- **`<li>` 内 mdnice section 裹段落**：`<li><section data-tool="mdnice"><p>列表项文字</p></section></li>`——列表项文字被 section+p 包了一层。规则：li 内容遇「块 wrapper（section/div，无 slate，`has_block_child`）裹**单个可行内表达的段落**（`<p>`/`<div>`，且该段落无更深块子）」时，穿透取内层段落的 `inline_children` 并入列表项；裹 table/list/pre/多段落/更深块 → 维持原 `inline`，fail-close 到 strict（列表内嵌真块 GFM 表达受限）。实现 `fast_converter.py::_li_inline_passthrough_target`；回归 `test_li_with_mdnice_section_paragraph_converts`（正例）+ `test_li_with_section_wrapping_table_still_strict`（反例）。
+
+- **游离嵌套 list**：`<ol><li>…</li><ul>…</ul><li>…</li></ol>`——嵌套 `<ul>`/`<ol>` 直接挂在父 list 下而非 `<li>` 内（浏览器对非法 HTML 的解析结果）。`list_block` 旧实现 `find_all("li", recursive=False)` 只遍历 li，整块吞掉游离嵌套 list（连同其中的公式、列表项）。规则：遍历 list 的**所有直接子**——`<li>` 输出列表项并递增序号，游离 `<ul>`/`<ol>` 当嵌套列表递归（缩进 `level+1`）。实现 `fast_converter.py::list_block`；回归 `test_list_with_floating_nested_list_converts`。
+
+- **双层相同 data-formula span**：`<span data-formula='X' style='cursor:pointer'><span data-formula='X'><svg/></span></span>`——公式被两层携带**相同** LaTeX 的 span 包装（外层加点击效果）。`FORMULA_SELECTOR` 匹配两层但 `_matches_formula` 不认 `data-formula`，导致父子都判 top-level → `formula_total` 翻倍 → 下游守恒 blocked。规则：`_top_level_formula_nodes` 的 nested 检查补一条——祖先**自身** data 属性（`_own_attr_latex`，不搜后代）携带相同 LaTeX 时判 nested 去重；LaTeX 不同的祖先公式是合法嵌套（块级公式内嵌不同行内公式），不判 nested。实现 `preflight.py::_top_level_formula_nodes`；回归 `test_double_wrapped_same_latex_data_formula_counted_once`（去重）+ `test_inline_formula_under_block_formula_ancestor_stays_inline`（不同 LaTeX 保留）。
+
 ## 块级居中与题注
 
 原网页居中的公式块/图片/图表/图注/署名 → Markdown 也必须居中：

@@ -245,15 +245,39 @@ def formula_hash(node: Tag) -> str:
     return hashlib.sha256(canonical_dom(node).encode("utf-8")).hexdigest()
 
 
+_FORMULA_LATEX_ATTRS = ("data-tex", "data-latex", "data-math", "data-formula", "alttext")
+
+
+def _own_attr_latex(node: Tag) -> str:
+    """节点**自身** data 属性携带的 verbatim LaTeX（不搜后代）。
+
+    专供双层包装去重使用：``_formula_source`` 会用 ``select_one`` 后代搜索
+    annotation，对祖先节点会误命中其后代公式的 LaTeX，不能用于祖先比较。
+    """
+    for attribute in _FORMULA_LATEX_ATTRS:
+        value = str(node.attrs.get(attribute, "")).strip()
+        if value:
+            return value
+    return ""
+
+
 def _top_level_formula_nodes(root: Tag) -> list[Tag]:
     result: list[Tag] = []
     for node in root.select(FORMULA_SELECTOR):
         if not isinstance(node, Tag):
             continue
+        node_latex = _own_attr_latex(node)
         ancestor = node.parent
         nested = False
         while isinstance(ancestor, Tag) and ancestor is not root:
             if _matches_formula(ancestor):
+                nested = True
+                break
+            # mdnice/微信把公式包成两层相同 data-formula span（外层加 cursor:pointer
+            # 点击效果）。祖先自身 data 属性带**相同** LaTeX → 是同一公式的外包装，
+            # 本节点判 nested 去重。LaTeX 不同的祖先公式是合法嵌套（块级公式内嵌不同
+            # 的行内公式），不判 nested。只比祖先自身属性，不搜后代。
+            if node_latex and _own_attr_latex(ancestor) == node_latex:
                 nested = True
                 break
             ancestor = ancestor.parent
@@ -269,7 +293,7 @@ def _formula_source(node: Tag) -> tuple[str, str]:
 
     # ``data-formula`` 是微信公众号 (mmbiz) 里 MathJax-SVG 公式 wrapper 携带的原始
     # LaTeX（如 ``R_t = \frac{P_t}{P_{t-1}} - 1``）。verbatim 可用，无需 KaTeX HTML 重建。
-    for attribute in ("data-tex", "data-latex", "data-math", "data-formula", "alttext"):
+    for attribute in _FORMULA_LATEX_ATTRS:
         value = str(node.attrs.get(attribute, "")).strip()
         if value:
             return attribute, value

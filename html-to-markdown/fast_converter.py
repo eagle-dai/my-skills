@@ -282,6 +282,54 @@ class MarkdownConverter:
             level = int(node.name[1]) if re.fullmatch(r"h[1-6]", node.name or "") else 2
             return f"{'#' * level} {self.inline_children(node)}"
         if node.name == "p" or slate == "paragraph":
+            # 原生 <p>（无 slate）可能被 mdnice 等编辑器塞入「前导行内 + 尾部块
+            # wrapper（section/div 裹 table 等）」的混排。块全在尾部时拆成段落 + 块
+            # 穿透；块夹中间 / 块后有行内 / Slate 段落 → 维持 inline_children，
+            # 遇块子时仍 fail-close 到 strict（不猜混排布局）。
+            if node.name == "p" and not slate:
+                children = list(node.children)
+
+                def _is_block_wrapper(c: Any) -> bool:
+                    return (
+                        isinstance(c, Tag)
+                        and c.name in BLOCK_TRANSPARENT_TAGS
+                        and not str(c.attrs.get("data-slate-type", ""))
+                        and has_block_child(c)
+                    )
+
+                def _is_nonblank_inline(c: Any) -> bool:
+                    if isinstance(c, NavigableString):
+                        return bool(str(c).strip())
+                    return isinstance(c, Tag) and not _is_block_wrapper(c)
+
+                block_idx = [i for i, c in enumerate(children) if _is_block_wrapper(c)]
+                if block_idx:
+                    last_block = block_idx[-1]
+                    tail_clean = not any(
+                        _is_nonblank_inline(c) for c in children[last_block + 1 :]
+                    )
+                    if tail_clean:
+                        first_block = block_idx[0]
+                        result: list[str] = []
+                        lead = clean_inline(
+                            _join_inline(self.inline(c) for c in children[:first_block])
+                        )
+                        if lead.strip():
+                            result.append(lead)
+                        for c in children[first_block:]:
+                            if _is_block_wrapper(c):
+                                rendered = self.block(c)
+                                if isinstance(rendered, list):
+                                    result.extend(rendered)
+                                elif rendered:
+                                    result.append(rendered)
+                            else:
+                                # 块之间夹的行内内容作为独立段落发出（tail_clean 只
+                                # 保证最后一个块之后无行内）。
+                                between = clean_inline(_join_inline([self.inline(c)]))
+                                if between.strip():
+                                    result.append(between)
+                        return result
             return self.inline_children(node)
         if node.name in {"ul", "ol"}:
             return self.list_block(node, 0)
@@ -402,10 +450,55 @@ class MarkdownConverter:
         )
         return f"{{{{FORMULA:{record.source_id}}}}}"
 
+    @staticmethod
+    def _li_inline_passthrough_target(child: Any) -> Tag | None:
+        """li 内 mdnice 块 wrapper（section/div 无 slate）裹单个可行内段落时，
+        返回那个段落节点供取行内内容；否则 None（走原 inline，含 fail-close）。
+
+        WeChat/mdnice 把有序列表项包成 ``<li><section><p>文字</p></section></li>``。
+        section 是透明排版 wrapper，穿透后取内层 <p> 的行内内容即可。裹 table/
+        list/pre/多段落/更深块 → 返回 None，交给 self.inline() fail-close（列表内嵌
+        真块 GFM 表达受限，保守交 strict）。
+        """
+        if not isinstance(child, Tag):
+            return None
+        if child.name not in BLOCK_TRANSPARENT_TAGS:
+            return None
+        if str(child.attrs.get("data-slate-type", "")):
+            return None
+        block_children = [
+            c for c in child.children
+            if isinstance(c, Tag) and c.name in _HAS_BLOCK_NAMES
+        ]
+        if len(block_children) != 1:
+            return None
+        inner = block_children[0]
+        if inner.name not in {"p", "div"}:
+            return None  # 裹 table/list/pre 等真块 → 不穿透
+        if str(inner.attrs.get("data-slate-type", "")):
+            return None  # 带 slate 语义的段落交原路径处理
+        # 段落自身不能再藏块子
+        if any(isinstance(g, Tag) and g.name in _HAS_BLOCK_NAMES for g in inner.children):
+            return None
+        return inner
+
     def list_block(self, node: Tag, level: int) -> str:
         self.counts.lists += 1
         lines: list[str] = []
-        for index, item in enumerate(node.find_all("li", recursive=False), start=1):
+        index = 0
+        # 遍历所有直接子，而非只 li：WeChat/mdnice 会把嵌套 ul/ol 直接挂在
+        # 父 ol/ul 下（不在 li 内），只遍历 li 会整块吞掉这些游离嵌套列表。
+        # li → 输出列表项并递增序号；游离 ul/ol → 当嵌套列表递归（缩进 level+1）。
+        for node_child in node.children:
+            if not isinstance(node_child, Tag):
+                continue
+            if node_child.name in {"ul", "ol"}:
+                lines.extend(self.list_block(node_child, level + 1).splitlines())
+                continue
+            if node_child.name != "li":
+                continue
+            item = node_child
+            index += 1
             self.counts.list_items += 1
             nested: list[Tag] = []
             content: list[str] = []
@@ -413,7 +506,11 @@ class MarkdownConverter:
                 if isinstance(child, Tag) and child.name in {"ul", "ol"}:
                     nested.append(child)
                 else:
-                    content.append(self.inline(child))
+                    target = self._li_inline_passthrough_target(child)
+                    if target is not None:
+                        content.append(self.inline_children(target))
+                    else:
+                        content.append(self.inline(child))
             marker = f"{index}." if node.name == "ol" else "-"
             lines.append(f"{'  ' * level}{marker} {clean_inline(_join_inline(content))}".rstrip())
             for child in nested:
@@ -570,9 +667,14 @@ def top_level(node: Tag, names: set[str]) -> list[Tag]:
     return result
 
 
+_HAS_BLOCK_NAMES = {
+    "p", "div", "section", "article", "main", "h1", "h2", "h3", "h4",
+    "h5", "h6", "ul", "ol", "pre", "table", "blockquote", "figure",
+}
+
+
 def has_block_child(node: Tag) -> bool:
-    names = {
-        "p", "div", "section", "article", "main", "h1", "h2", "h3", "h4",
-        "h5", "h6", "ul", "ol", "pre", "table", "blockquote", "figure",
-    }
-    return any(isinstance(child, Tag) and child.name in names for child in node.children)
+    return any(
+        isinstance(child, Tag) and child.name in _HAS_BLOCK_NAMES
+        for child in node.children
+    )

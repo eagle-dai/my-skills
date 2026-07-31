@@ -228,12 +228,16 @@ transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① fo
 
 ## 微信公众号 (mmbiz) 页面支持（结构规则，非正则）
 
-判定项三处，都在 `preflight.py`，回归 `tests/test_preflight.py::WeChatMmbizTests` + `tests/test_pipeline.py::WeChatMmbizPipelineTests`：
+判定项分布在 `preflight.py`（1-3、8）与 `fast_converter.py`（4-7），回归 `tests/test_preflight.py::WeChatMmbizTests` + `tests/test_pipeline.py::WeChatMmbizPipelineTests`（结构穿透用例在 `PipelineTests`）：
 
 1. **正文 selector**：`BODY_SELECTORS` 追加 `#js_content` / `.rich_media_content`，排在语义 selector（`data-slate-editor`/`article`/`main`/`[role=main]`）之后。保持 `select_body` 的「首个有 substantial 命中的优先级必须唯一，否则 ambiguous 失败」语义。
 2. **MathJax-SVG 公式源**：`FORMULA_SELECTOR` 加 `[data-formula]`；`_formula_source` 在 `data-tex/data-latex/data-math/alttext` 循环里加 `data-formula`（verbatim LaTeX，无需 KaTeX HTML 重建）；`_formula_display` 认 `data-formula` 节点**自身** style 含 `display:block` → block（收紧到 wrapper 节点，避免任意居中祖先误判行内为块级）。`fast_converter.formula` 复用既有 `original_latex` 分支，无需改。
 3. **data-URI 图优先于残留 data-src**：`_asset_source` 在 lazy 检查**之前**加判——`_substantial_data_uri(src)`（data-URI 且解码 ≥512B）为真即 `data-uri`（authoritative），忽略 `data-src`。512B 门槛坐在 1px 占位（解码 <100B）和真内联图（观测最小 ~9KiB）之间；小于门槛的 data-URI + 不同 data-src 仍 fail-close 判 lazy。
 4. **块位置 `<span>` 透明穿透**：`fast_converter.py::block` 加分支——`<span>` 且 `not slate` 时，`has_block_child` 为真则 `self.blocks(node)`（等价 BLOCK_TRANSPARENT_TAGS），否则 `self.inline_children(node)`（作一段行内文本发出，内容保留）。微信用 `<span data-tool style="display:block"><section>…` 包裹块级内容，旧代码到 `block()` 落 `unsupported <span>` → strict。带 `data-slate-type` 的 span 走 `not slate` 守卫仍 fail-close（不当透明 wrapper）。
+5. **原生 `<p>` 尾部块 wrapper 拆分**：`fast_converter.py::block` 的 p 分支——仅 `node.name == "p" and not slate` 时，若 p 含块 wrapper（`section/div` 无 slate 且 `has_block_child`）且**块全在尾部**（最后块之后无非空白行内），拆成「前导行内→段落」+「尾部块 wrapper→`self.block` 穿透」（返回 `list[str]`）。前导 `.strip()` 空则跳过。mdnice 把「导语句 + 表格」塞进一个 p：`<p><span>导语</span><section><table>…</table></section></p>`。块夹中间 / 块后有行内 / Slate 段落 / 带 slate 属性子 wrapper → 维持 `inline_children`，遇块子 fail-close。
+6. **`<li>` 内 section 裹段落穿透**：`fast_converter.py::_li_inline_passthrough_target`——li 内容遇「块 wrapper（`section/div`，无 slate，`has_block_child`）裹单个可行内段落（`<p>`/`<div>` 无更深块子）」时穿透取内层段落的 `inline_children`；裹 table/list/pre/多段落/更深块 → 维持 `self.inline`，fail-close。mdnice 把有序列表项包成 `<li><section><p>提出假设</p></section></li>`。
+7. **游离嵌套 list 不吞**：`fast_converter.py::list_block` 遍历所有直接子而非只 `find_all("li")`——`<li>` 输出项并递增序号，游离 `<ul>`/`<ol>`（直接挂父 list 下，非 li 内）当嵌套递归缩进 `level+1`。微信产出 `<ol><li>…</li><ul>…</ul><li>…</li></ol>`，旧代码整块吞掉游离 ul（连同其中公式、列表项）。
+8. **双层相同 data-formula 去重**：`preflight.py::_top_level_formula_nodes` 的 nested 检查补——祖先**自身** data 属性（`_own_attr_latex`，不搜后代）带相同 LaTeX 时判 nested。mdnice 把公式包成两层相同 `data-formula` span（外层 `cursor:pointer`）；`FORMULA_SELECTOR` 匹配两层但 `_matches_formula` 不认 `data-formula` → 父子都 top-level → `formula_total` 翻倍 → 守恒 blocked。LaTeX 不同的祖先公式是合法嵌套（块内嵌行内），不判 nested。**关键**：比较必须用 `_own_attr_latex`（只读自身属性），不能用 `_formula_source`（`select_one` 后代搜 annotation，对祖先会误命中后代 LaTeX，误杀相邻/嵌套 katex 公式——已被回归测试烧到）。
 
 **为什么这么定**（真机诊断）：微信公众号 SingleFile 页无 `article`/`main` 语义，正文固定 `#js_content.rich_media_content`；公式是 MathJax→SVG，原始 LaTeX 存 `<section|span data-formula="...">`（块级 section 带 `display:block`，行内 span 无）；图片 `src` 已内联为完整 webp/png data-URI，`data-src` 只是残留 CDN 地址（图其实完整存在，非 lazy）。无 `data-formula` 的 `<svg>` 是真插图，不当公式，到 `fast_converter.block()` 落 `unsupported <svg>` → strict（用 Playwright 截图，cairosvg 渲 CJK 出豆腐块不可用）。
 
@@ -252,6 +256,14 @@ transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① fo
 | `<span data-tool style='display:block'><section><p>…</p><h2>…</h2></section></span>` | converted，穿透出正文 + 标题 | 正例 | 块位置 span 含块子=透明 wrapper |
 | `<span data-slate-type='mystery-block'><section>…</section></span>` | strict_required | 反例 | `not slate` 守卫，slate span 不当透明 wrapper |
 | 无 block 子的块位置 span（纯文本/inline） | 作行内文本发出，内容保留 | 反例 | 不 fail-close，也不吞内容 |
+| `<p><span>导语</span><section><table>…</table></section></p>` | converted，导语段落 + 表格 | 正例 | 原生 p 尾部块 wrapper 拆分 |
+| `<p><span>lead</span><section><table></section><span>trailing</span></p>` | strict_required | 反例 | 块后有行内，非尾部，fail-close |
+| `<div data-slate-type='paragraph'>lead<section><table></section></div>` | strict_required | 反例 | Slate 段落不进拆分 |
+| `<li><section data-tool><p>提出假设</p></section></li>` | converted，普通列表项 | 正例 | li 内 section 裹段落穿透 |
+| `<li><section><table></section></li>` | strict_required | 反例 | li 裹真块，GFM 表达受限，fail-close |
+| `<ol><li>a</li><ul><li>b</li></ul><li>c</li></ol>` | converted，嵌套项缩进不吞 | 正例 | 游离嵌套 list 遍历所有直接子 |
+| `<span data-formula='X' style='cursor:pointer'><span data-formula='X'>…</span></span>` | 计 1 个公式 | 正例 | 双层相同 LaTeX 去重 |
+| `<section data-formula='A'><span data-formula='n'>…</span></section>` | 计 2 个公式（A block、n inline） | 反例 | 不同 LaTeX 是合法嵌套，不去重 |
 
 ---
 
