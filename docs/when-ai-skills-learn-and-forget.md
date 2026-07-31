@@ -437,7 +437,7 @@ For both systems, the loop maps directly:
 
 SAP [Joule Studio](https://help.sap.com/docs/Joule_Studio/45f9d2b8914b4f0ba731570ff9a85313/7d6dc3e0d59d43e48f4d7ece55e4c2a3.html?locale=en-US) distinguishes tailored, deterministic Joule Skills from interactive Joule Agents for complex or multi-step work, and supports managing and deploying updated versions of both. This makes the same evolution loop useful even though the implementation artifacts are different.
 
-For a deterministic Joule Skill, the strongest guards are usually input/output contracts, API mocks, business-rule tests, permission checks, and deployment-environment validation. For a Joule Agent, the evidence often needs to include scenario evaluations, tool-call traces, routing decisions, approval boundaries, fallback behavior, and checks on intermediate state—not only the final answer.
+For a deterministic Joule Skill, the strongest guards are usually input/output contracts, API mocks, business-rule tests, permission checks, and deployment-environment validation. SAP describes [Joule Agents](https://www.sap.com/products/artificial-intelligence/ai-agents.html) differently: they support non-deterministic workflows and can dynamically choose among Joule skills, other agents, and third-party applications. For regression protection, the practical consequence is that an update may legitimately change the intermediate plan without losing the capability's intended behavior. Tests and evaluations should therefore protect the stable contract—required outcomes, forbidden actions, authorization or approval boundaries, and valid business-state transitions—without treating every different execution trace as a failure.
 
 The same lifecycle can be used when these capabilities are surfaced through Joule experiences such as [Joule Work](https://help.sap.com/docs/joule-work-mobile?locale=en-US). This is a transfer of engineering method, not a claim that Joule uses Claude Code's directory layout or file format.
 
@@ -592,6 +592,7 @@ The ideas above can be reduced to a compact review gate. Before merging a skill 
 - Is the change limited to the necessary area?
 - Will uncertainty produce `strict_required` or `blocked` instead of plausible success?
 - Are the instructions, implementation, tests, evaluations, and acceptance cases still saying the same thing?
+- For agentic capabilities, does the regression evidence preserve required outcomes and business boundaries without assuming one exact valid execution path?
 - Was the concrete lesson recorded?
 - If the failure pattern is recurring, were the meta-rules updated?
 
