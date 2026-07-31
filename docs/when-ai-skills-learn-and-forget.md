@@ -63,7 +63,13 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
 
-**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the capability's regression record or the shared rules for future changes. Moving stable, testable work from model-driven execution into deterministic code can also reduce repeated reasoning, model calls, token usage, and latency while preserving a stricter path for ambiguous cases. Although the running example uses a file-based skill, the same lifecycle applies to platform-specific skills and broader AI agents when their behavior can be versioned, reproduced, and evaluated. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one capability, while a recurring failure pattern should improve how all capabilities are changed.
+**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics.
+
+Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the capability's regression record or the shared rules for future changes. Moving stable, testable work from model-driven execution into deterministic code can also reduce repeated reasoning, model calls, token usage, and latency while preserving a stricter path for ambiguous cases.
+
+Although the running example uses a file-based skill, the same lifecycle applies to platform-specific skills and broader AI agents when their behavior can be versioned, reproduced, and evaluated. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one capability, while a recurring failure pattern should improve how all capabilities are changed.
+
+To keep the discussion practical, the article follows a simple progression. It begins with the challenge of silent regression, introduces two levels of memory and a six-step evolution loop, and then expands the method to the complete capability surface. It also examines the efficiency benefit of deterministic code, maps the approach across Claude Code, Codex, SAP Joule, and broader AI agents, and closes with a concrete Git setup and review checklist.
 
 That summary sounds more formal than the way the approach actually began. It started with a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
@@ -100,7 +106,9 @@ In this article, “skill” means a file-based capability package containing in
 
 This approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.
 
-## Why skills can regress silently
+## The challenge: why skills can regress silently
+
+The first challenge is visibility: a regression in an AI skill often looks like an acceptable result rather than an obvious failure.
 
 A file-based skill normally has several sources of behavior:
 
@@ -127,9 +135,9 @@ The recurring causes are quite ordinary:
 
 Adding more prose to the prompt does not solve these problems. Sometimes it only makes the prompt longer and harder to review.
 
-## Two levels of memory: meta-rules and skill-specific lessons
+## The foundation: two levels of memory
 
-The most useful structural decision is to separate two kinds of knowledge.
+The most useful structural decision is to separate two kinds of knowledge: shared meta-rules and skill-specific lessons.
 
 The first kind is shared across skills. These are **meta-rules**:
 
@@ -185,7 +193,9 @@ The test is the executable side of the same agreement.
 
 A skill therefore has two readers. A person needs to understand the intended outcome, and a machine needs something it can check. A readable rule without a guard can drift. A test without readable intent becomes difficult to review.
 
-## The six-step evolution loop
+## The method: a six-step evolution loop
+
+With those two memory layers in place, the evolution process can be made explicit.
 
 The loop below is TDD-inspired, but it extends beyond ordinary unit tests. It combines test-first development with acceptance criteria, target-environment checks, and a small memory system for lessons learned.
 
@@ -386,7 +396,9 @@ One failure should improve one skill. A repeated pattern should improve how all 
 
 This promotion step is what makes the process self-improving. The skill learns from a concrete defect, while the skill library learns from the type of defect.
 
-## The main script is not the whole capability
+## The complete capability surface
+
+The evolution loop is effective only when the complete capability—not just its most visible script—is treated as changeable behavior.
 
 It is natural to test the converter or the main orchestration code. However, instructions, reference files, tool definitions, routing rules, permissions, memory behavior, and model configuration can all influence the result. The complete capability definition is therefore part of the executable surface.
 
@@ -407,9 +419,9 @@ The target platform should also be part of the evidence. Markdown that looks cor
 
 A second real failure made this point more clearly. A formula containing a code-like identifier passed local KaTeX validation but failed after publication because GitHub transformed the Markdown escapes before invoking its math renderer. The validator had tested the source representation rather than the representation used by the target platform. The durable fix was to reproduce GitHub's preprocessing inside the validation path. A green test is meaningful only when it models the environment that will actually execute or render the result.
 
-## A second benefit: less model work
+## An additional benefit: less model work
 
-Regression protection was the original motivation for this approach, but the same separation can also improve runtime efficiency.
+Regression protection was the original motivation for this approach, but separating deterministic from model-dependent work can also improve runtime efficiency.
 
 When a behavior becomes stable, repeatable, and testable, the model should not need to rediscover or reimplement it on every invocation. That work can move into a deterministic script with explicit inputs, outputs, validation, and failure states. The model is then reserved for the parts that genuinely require interpretation, planning, or judgment.
 
@@ -447,7 +459,9 @@ The time improvement was directly observed. Token savings follow from doing fewe
 
 This is not an argument for replacing semantic judgment with brittle code. Move a step into code only when its behavior is sufficiently stable, observable, and protected by tests. The efficiency gain comes from shrinking the model's responsibility to the part where model reasoning adds value.
 
-## Where this method applies
+## Applying the method across skills and agents
+
+Because this is a lifecycle method rather than a file-format convention, it can be transferred across platforms.
 
 The running example uses a file-based skill, but the method is not tied to Claude Code, `SKILL.md`, or even to skills as the only unit of change. It applies whenever a capability has four properties:
 
@@ -494,7 +508,9 @@ The six-step loop can therefore operate at the agent level:
 
 The unit of evolution may be a skill, plugin, tool, subagent, routing policy, or complete agent. The governing principle remains the same: evidence should precede confidence, and repeated failures should improve the process used for the next change.
 
-## A concrete setup with Claude Code and Git
+## A practical implementation with Claude Code and Git
+
+The following setup shows one concrete implementation of the method. It is an example, not a platform requirement.
 
 For personal skills used across several projects, Claude Code supports this directory:
 
@@ -618,6 +634,8 @@ When changing this skill itself:
 When `html-to-markdown` is distributed alone, copy the shared meta-rules into its own `references/` directory or package the complete library. A skill should not depend on a sibling file that is absent from the distributed package.
 
 ## Practical review checklist
+
+The ideas above can be reduced to a compact review gate.
 
 Before merging a skill or agent-capability change, check:
 
