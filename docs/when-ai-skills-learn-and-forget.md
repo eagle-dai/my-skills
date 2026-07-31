@@ -437,11 +437,7 @@ For both systems, the loop maps directly:
 
 SAP [Joule Studio](https://help.sap.com/docs/Joule_Studio/45f9d2b8914b4f0ba731570ff9a85313/7d6dc3e0d59d43e48f4d7ece55e4c2a3.html?locale=en-US) distinguishes tailored, deterministic Joule Skills from interactive Joule Agents for complex or multi-step work, and supports managing and deploying updated versions of both. This makes the same evolution loop useful even though the implementation artifacts are different.
 
-For a deterministic Joule Skill, the strongest guards are usually input/output contracts, API mocks, business-rule tests, permission checks, and deployment-environment validation.
-
-[SAP describes Joule Agents](https://www.sap.com/products/artificial-intelligence/ai-agents.html) as supporting non-deterministic workflows: they may choose among Joule skills, other agents, and third-party applications to carry out a plan, then reflect on the results. This distinction changes what a regression guard should assert. A test that requires one exact sequence of tool calls may reject a different but still valid plan; checking only the final answer is too weak. The durable contract should focus on invariants: the allowed tool and action set, the business objects that may be read or changed, required approval points, acceptable state transitions, and the final business outcome.
-
-[SAP's governance model for Joule Agents](https://www.sap.com/documents/2026/06/526001c1-567f-0010-bca6-c68f7e60039b.html) makes several of those invariants concrete. A Joule Agent acts through a provisioned identity, cannot exceed the delegating user's authorization scope, and remains inside the same role-based authorizations, approval workflows, and audit controls as human activity. For evolution testing, a “correct” result is therefore not enough if it was produced under the wrong identity, bypassed an approval, or left an unauditable state change. These checks fit naturally into the article's existing acceptance cases and regression record: store the role and process context with the fixture, evaluate the variable reasoning path, and assert the governed business postconditions.
+For a deterministic Joule Skill, the strongest guards are usually input/output contracts, API mocks, business-rule tests, permission checks, and deployment-environment validation. SAP describes [Joule Agents](https://www.sap.com/products/artificial-intelligence/ai-agents.html) differently: they support non-deterministic workflows and can dynamically choose among Joule skills, other agents, and third-party applications. The regression lesson is that a capability update may legitimately change the intermediate plan without losing its intended behavior. Tests and evaluations should therefore protect the stable contract—required outcomes, forbidden actions, authorization or approval boundaries, and valid business-state transitions—without treating every different execution trace as a failure.
 
 The same lifecycle can be used when these capabilities are surfaced through Joule experiences such as [Joule Work](https://help.sap.com/docs/joule-work-mobile?locale=en-US). This is a transfer of engineering method, not a claim that Joule uses Claude Code's directory layout or file format.
 
@@ -596,8 +592,7 @@ The ideas above can be reduced to a compact review gate. Before merging a skill 
 - Is the change limited to the necessary area?
 - Will uncertainty produce `strict_required` or `blocked` instead of plausible success?
 - Are the instructions, implementation, tests, evaluations, and acceptance cases still saying the same thing?
-- For non-deterministic agents, does the evidence protect business invariants without requiring one exact valid tool sequence?
-- For governed enterprise actions, does it verify the acting identity, delegated authorization scope, required approvals, auditable trace, and postconditions in the system of record?
+- For agentic capabilities, does the regression evidence preserve required outcomes and business boundaries without assuming one exact valid execution path?
 - Was the concrete lesson recorded?
 - If the failure pattern is recurring, were the meta-rules updated?
 
