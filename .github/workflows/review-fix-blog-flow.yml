@@ -1,0 +1,66 @@
+name: Apply reviewed blog paragraph fixes
+
+on:
+  push:
+    branches:
+      - agent/improve-blog-paragraph-flow
+    paths:
+      - .github/workflows/review-fix-blog-flow.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/improve-blog-paragraph-flow
+
+      - name: Apply targeted editorial fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('docs/when-ai-skills-learn-and-forget.md')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  "This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests, while others need acceptance cases, evaluation datasets, rubrics, or human review. In this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests; it does not mean a Joule Skill specifically. The approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.",
+                  "This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests, while others need acceptance cases, evaluation datasets, rubrics, or human review.\n\nIn this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests; it does not mean a Joule Skill specifically. The approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation."
+              ),
+              (
+                  "Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises, while the test provides the executable side of the same agreement. A skill therefore has two readers: a person who needs to understand the intended outcome, and a machine that needs something it can check. A readable rule without a guard can drift; a test without readable intent becomes difficult to review.",
+                  "Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises, while the test provides the executable side of the same agreement.\n\nA skill therefore has two readers: a person who needs to understand the intended outcome, and a machine that needs something it can check. A readable rule without a guard can drift; a test without readable intent becomes difficult to review."
+              ),
+              (
+                  "A useful review question is: *If this rule disappears next month, which test will fail?* If there is no answer, the rule may still be only a hope.",
+                  "A useful review question is:\n\n> If this rule disappears next month, which test will fail?\n\nIf there is no answer, the rule may still be only a hope."
+              ),
+              (
+                  "Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green; that is the **Refactor** step. For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point remains the same: define the evidence before declaring success.",
+                  "Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green; that is the **Refactor** step.\n\nFor AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point remains the same: define the evidence before declaring success."
+              ),
+              (
+                  "This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input. When an unknown structure may cause information loss, route it to a stricter path or block it; prefer an honest limitation to a confident but damaged result. When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule only to make the happy path faster.",
+                  "This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input.\n\nWhen an unknown structure may cause information loss, route it to a stricter path or block it; prefer an honest limitation to a confident but damaged result. When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule only to make the happy path faster."
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected exactly one match, found {count}: {old[:80]}')
+              text = text.replace(old, new)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/when-ai-skills-learn-and-forget.md
+          git commit -m 'Refine paragraph balance after review'
+          git push origin HEAD:agent/improve-blog-paragraph-flow
