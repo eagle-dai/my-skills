@@ -16,7 +16,7 @@ When AI Skills Learn—and Forget: Engineering a Safe Evolution Loop
 
 **Short description**
 
-AI skills can regress silently: a new case works while older behavior breaks. This post shares a practical, TDD-inspired evolution loop for repeatable file-based skills, together with meta-rules, acceptance cases, regression tests, and a Git-managed Claude Code setup.
+AI skills and agent capabilities can regress silently: a new case works while older behavior breaks. This post presents a practical, TDD-inspired evolution loop using meta-rules, acceptance cases, regression tests, evaluations, and a Git-managed implementation example.
 
 **Suggested SAP Managed Tags**
 
@@ -63,7 +63,7 @@ A simple 600 × 420 image showing a skill gaining a new capability while a prote
 
 *A Practical Way to Evolve AI Skills Without Breaking What Already Works*
 
-**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the skill's regression record or the library-level rules for future changes. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one skill, while a recurring failure pattern should improve how all skills are changed.
+**Abstract.** File-based AI skills can regress silently: a change may satisfy a new request while weakening behavior that previously worked, often without compilation errors or visibly broken output. This article presents a controlled evolution loop for repeatable, contract-driven skills. The approach combines skill-specific failure memory with shared meta-rules, and uses a Test-Driven Development (TDD)-inspired, test-first approach where behavior can be checked deterministically. For model-dependent behavior, exact assertions are complemented or replaced by evaluation cases, structural validators, target-platform fixtures, or human-reviewed rubrics. Each proposed change begins with a bounded purpose and a reproduced failure, is protected by evidence, and is fed back into either the capability's regression record or the shared rules for future changes. Although the running example uses a file-based skill, the same lifecycle applies to platform-specific skills and broader AI agents when their behavior can be versioned, reproduced, and evaluated. The goal is not autonomous self-modification, but safer cumulative improvement: a concrete failure should improve one capability, while a recurring failure pattern should improve how all capabilities are changed.
 
 That summary sounds more formal than the way the approach actually began. It started with a very small improvement to an HTML-to-Markdown skill. The request was simple: remove greetings such as “Hello everyone” from the beginning of an article.
 
@@ -123,15 +123,15 @@ The recurring causes are quite ordinary:
 2. A shared rule is changed for one local defect.
 3. A rule is documented but not protected by a test.
 4. The implementation is tested, but the target environment is not.
-5. One failure is fixed without recording what future changes must not do.
+5. One failure is fixed without recording what future changes must preserve.
 
-Adding more prose to the prompt did not solve these problems. Sometimes it only made the prompt longer and harder to review.
+Adding more prose to the prompt does not solve these problems. Sometimes it only makes the prompt longer and harder to review.
 
 ## Two levels of memory: meta-rules and skill-specific lessons
 
-A useful structural decision is to separate two kinds of knowledge.
+The most useful structural decision is to separate two kinds of knowledge.
 
-The first kind is shared across skills. These are the **meta-rules**:
+The first kind is shared across skills. These are **meta-rules**:
 
 > How is any skill allowed to change?
 
@@ -179,7 +179,7 @@ The skill-specific `self-improvement.md` keeps concrete regression knowledge:
 - the target platform;
 - the test that now protects this behavior.
 
-Acceptance cases should also remain understandable to non-developers. A user should not need to understand a DOM selector or regular expression to know what the skill promises.
+Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises.
 
 The test is the executable side of the same agreement.
 
@@ -193,13 +193,13 @@ The loop below is TDD-inspired, but it extends beyond ordinary unit tests. It co
 
 Before changing code or instructions, state the user-visible purpose in one sentence.
 
-For the greeting case, it was:
+For the greeting case:
 
 > Remove a standalone opening greeting without deleting meaningful content or supported formatting in the same container.
 
-The second half is important because it defines what the change must not break.
+The second half is important. It defines what the change is not allowed to break.
 
-A few basic questions help define the boundary:
+Ask a few basic questions:
 
 - Is the current rule too narrow or too broad?
 - Is the problem in a shared component?
@@ -225,7 +225,7 @@ A better rule is:
 
 The main improvement is not a smarter regular expression. It is selecting the correct unit of meaning.
 
-Before implementation, consider several boundary cases:
+Before implementation, try several boundary cases:
 
 - a paragraph containing only a greeting should be removed;
 - a greeting followed by bold text should keep the bold text;
@@ -289,19 +289,19 @@ The matching acceptance case can stay simple:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Then make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green. That is the **Refactor** step.
+Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green. That is the **Refactor** step.
 
 For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point is still the same: define the evidence before declaring success.
 
 After the new case passes, run the full suite. Running only the new test proves that the reported case was fixed. It does not prove that another problem was not introduced.
 
-Old regression tests should normally remain. When an old expectation is genuinely wrong, record the reason before changing it. Otherwise, deleting the test also deletes part of the skill's memory.
+Keep old regression tests by default. When an old expectation is genuinely wrong, record why before changing it. Otherwise, deleting the test is also deleting part of the skill's memory.
 
 ### 4. Do not manufacture a green result
 
 It is easy to produce a green result in the wrong way.
 
-These shortcuts can produce a misleading green result:
+Common shortcuts include:
 
 - widening a regular expression only for the latest input;
 - weakening an assertion until the current output passes;
@@ -315,7 +315,7 @@ A green CI result is useful only when the tests still represent the original int
 
 For conversion skills, “some Markdown was produced” is not enough. Important content and supported structure must remain. Unknown content should not disappear silently.
 
-The status can be made explicit:
+Sometimes an explicit status model helps:
 
 ```python
 from dataclasses import dataclass
@@ -355,15 +355,15 @@ fail closed
 
 This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input.
 
-When an unknown structure may cause information loss, it should be sent to a stricter path or blocked. In this type of workflow, an honest limitation is preferable to a confident but damaged result.
+When an unknown structure may cause information loss, route it to a stricter path or block it. Prefer an honest limitation to a confident but damaged result.
 
-When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule to make the happy path faster.
+When the strict path is too expensive for every input, separate fast and strict paths. Do not weaken the correctness rule only to make the happy path faster.
 
 This trade-off order belongs in the meta-rules. Otherwise, different contributors may make different local choices and slowly pull the skill library in conflicting directions.
 
 ### 6. Store the lesson, and promote repeated lessons to meta-rules
 
-After implementation, the change should go through the following checks:
+After implementation:
 
 1. run the full test suite and CI;
 2. inspect visual or semantic behavior that code cannot judge well;
@@ -386,22 +386,73 @@ One failure should improve one skill. A repeated pattern should improve how all 
 
 This promotion step is what makes the process self-improving. The skill learns from a concrete defect, while the skill library learns from the type of defect.
 
-## The main script is not the whole skill
+## The main script is not the whole capability
 
-It is natural to test the converter or the main script. However, instructions and reference files also influence behavior. In this sense, documentation is part of the executable surface.
+It is natural to test the converter or the main orchestration code. However, instructions, reference files, tool definitions, routing rules, permissions, memory behavior, and model configuration can all influence the result. The complete capability definition is therefore part of the executable surface.
 
 Repository-level checks can verify that:
 
 - documentation does not promise behavior that the implementation still blocks;
 - unsupported inputs return `strict_required` or `blocked`;
 - naming and fallback rules are consistent across text and code;
-- each acceptance case points to a real test;
-- shared behavior is not defined differently in several skills;
-- meta-rules are referenced by the skills that are expected to follow them.
+- each acceptance case points to a real test or evaluation;
+- tool schemas, permissions, and approval boundaries match the stated contract;
+- routing and fallback behavior remain consistent across execution paths;
+- shared behavior is not defined differently in several skills or agents;
+- meta-rules are referenced by the capabilities that are expected to follow them.
 
-Test ownership should follow capability ownership. Tests for one skill belong with that skill. Cross-skill consistency tests belong at the library level.
+Test ownership should follow capability ownership. Tests for one skill or agent belong with that capability. Cross-capability consistency tests belong at the library or platform level.
 
 The target platform should also be part of the evidence. Markdown that looks correct in one preview may fail on GitHub because the rendering pipeline is different. A fixture should keep the real failure mechanism, not only be as small as possible.
+
+A second real failure made this point more clearly. A formula containing a code-like identifier passed local KaTeX validation but failed after publication because GitHub transformed the Markdown escapes before invoking its math renderer. The validator had tested the source representation rather than the representation used by the target platform. The durable fix was to reproduce GitHub's preprocessing inside the validation path. A green test is meaningful only when it models the environment that will actually execute or render the result.
+
+## Where this method applies
+
+The running example uses a file-based skill, but the method is not tied to Claude Code, `SKILL.md`, or even to skills as the only unit of change. It applies whenever a capability has four properties:
+
+1. its behavior is defined by versioned artifacts such as instructions, code, tools, policies, or configuration;
+2. failures can be reproduced through fixtures, traces, scenarios, or recorded executions;
+3. at least part of the expected behavior can be expressed as a contract, invariant, or evaluation criterion;
+4. changes can be reviewed and promoted through a controlled release process.
+
+### Claude Code and Codex skills
+
+Claude Code provides a direct file-based example, so the meta-rules, acceptance cases, scripts, and tests can live together in one skill directory.
+
+OpenAI similarly describes [Skills](https://help.openai.com/en/articles/20001066) as reusable workflows containing instructions, examples, and code, with support in Codex. Codex [plugins](https://help.openai.com/en/articles/20001256-plugins-in-codex/) can package skills together with apps and workflow capabilities. The packaging and permission model differ from Claude Code, but the evolution problem is the same: a change to instructions, examples, scripts, or connected actions can improve one scenario while regressing another.
+
+For both systems, the loop maps directly:
+
+- keep the capability definition under version control;
+- reproduce failures as fixtures or task scenarios;
+- use deterministic tests for scripts, transformations, and tool contracts;
+- use evaluations for model-dependent interpretation and planning;
+- run the broader regression suite before publishing a new version;
+- promote repeated failure patterns into shared change rules.
+
+### SAP Joule Skills, Joule Agents, and Joule Work
+
+SAP [Joule Studio](https://help.sap.com/docs/Joule_Studio/45f9d2b8914b4f0ba731570ff9a85313/7d6dc3e0d59d43e48f4d7ece55e4c2a3.html?locale=en-US) distinguishes tailored, deterministic Joule Skills from interactive Joule Agents for complex or multi-step work, and supports managing and deploying updated versions of both. This makes the same evolution loop useful even though the implementation artifacts are different.
+
+For a deterministic Joule Skill, the strongest guards are usually input/output contracts, API mocks, business-rule tests, permission checks, and deployment-environment validation. For a Joule Agent, the evidence often needs to include scenario evaluations, tool-call traces, routing decisions, approval boundaries, fallback behavior, and checks on intermediate state—not only the final answer.
+
+The same lifecycle can be used when these capabilities are surfaced through Joule experiences such as [Joule Work](https://help.sap.com/docs/joule-work-mobile?locale=en-US). This is a transfer of engineering method, not a claim that Joule uses Claude Code's directory layout or file format.
+
+### Beyond skills: AI agent development
+
+The method also applies when there is no named skill artifact at all. An AI agent may be defined by a system prompt, tool set, routing graph, memory policy, model configuration, approval workflow, and runtime environment. Any one of these can change the agent's behavior and create a regression.
+
+The six-step loop can therefore operate at the agent level:
+
+- reproduce the failure with a recorded trace or scenario;
+- define the intended invariant and the boundary of the change;
+- add unit and contract tests for deterministic tools;
+- define evaluation cases before changing model-dependent behavior;
+- verify end-to-end orchestration, permissions, state transitions, and fallbacks;
+- store the concrete lesson locally and promote recurring patterns into shared agent-development meta-rules.
+
+The unit of evolution may be a skill, plugin, tool, subagent, routing policy, or complete agent. The governing principle remains the same: evidence should precede confidence, and repeated failures should improve the process used for the next change.
 
 ## A concrete setup with Claude Code and Git
 
@@ -526,35 +577,9 @@ When changing this skill itself:
 
 When `html-to-markdown` is distributed alone, copy the shared meta-rules into its own `references/` directory or package the complete library. A skill should not depend on a sibling file that is absent from the distributed package.
 
-## Why this may matter for SAP teams
-
-The files above are not a Joule Skill, and this article is not a Joule Studio tutorial.
-
-Still, the lifecycle problem is relevant to SAP teams. AI-enabled capabilities can now be created and changed very quickly. This speed is useful, but it also means a regression can be introduced very quickly.
-
-In an enterprise workflow, a fluent but wrong result may be more dangerous than an obvious failure because several downstream steps may accept it before a person notices.
-
-SAP has [publicly described Joule Work](https://news.sap.com/2026/05/sap-sapphire-keynote-business-ai-platform-power-autonomous-enterprise/) as providing computer and file access and supporting open standards such as MCP and A2A. Public information does not currently confirm that it uses the same `SKILL.md` or Agent Skills format as Claude Code.
-
-That does not establish direct compatibility.
-
-If Joule Work supports the Agent Skills specification in the future, a Git-managed library based on standard files may be easier to reuse or migrate. If it does not, most of the engineering habits still transfer:
-
-- version the capability definition;
-- keep acceptance criteria readable by people;
-- apply test-first thinking where behavior is deterministic;
-- define evaluations before changing model-dependent behavior;
-- reproduce real failures;
-- protect old behavior with regression guards;
-- make fallback and release gates explicit;
-- maintain shared meta-rules for how capabilities are allowed to evolve;
-- store lessons where the next change can find them.
-
-The file format may change. The lifecycle problem will remain.
-
 ## Practical review checklist
 
-Before merging a skill change, check:
+Before merging a skill or agent-capability change, check:
 
 - Is the user-visible purpose and boundary clear in one sentence?
 - Is the rule based on a mechanism, not only one example?
@@ -574,10 +599,10 @@ Not every item needs the same weight for every task. A small personal skill and 
 
 ## Conclusion
 
-AI skills will continue to change. New models, tools, formats, and user expectations will keep arriving. The goal is not to freeze a skill after it works once.
+AI skills and agents will continue to change. New models, tools, formats, and user expectations will keep arriving. The goal is not to freeze a capability after it works once.
 
-The goal is for each real failure to leave something useful behind: a clearer boundary, a regression guard, or a better meta-rule for the next change.
+The goal is for each real failure to leave something useful behind: a clearer boundary, a regression guard or evaluation, or a better meta-rule for the next change.
 
-TDD contributes an important discipline here: evidence before confidence. Meta-rules add another layer: one skill's failure can improve how every skill is changed.
+TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Meta-rules add another layer: one capability's failure can improve how every capability is changed.
 
-This approach is still evolving in practice. How do other SAP developers and architects handle the same problem? Are prompt and skill regressions kept as tests, evaluation datasets, review checklists, meta-rules, or in another form?
+This approach is still evolving in practice. How do other SAP developers and architects handle the same problem? Are skill and agent regressions kept as tests, evaluation datasets, recorded traces, review checklists, meta-rules, or in another form?
