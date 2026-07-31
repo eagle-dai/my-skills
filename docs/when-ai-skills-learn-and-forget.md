@@ -443,7 +443,9 @@ The same lifecycle can be used when these capabilities are surfaced through Joul
 
 ### Beyond skills: AI agent development
 
-The method also applies when there is no named skill artifact at all. An AI agent may be defined by a system prompt, tool set, routing graph, memory policy, model configuration, approval workflow, and runtime environment; any one of these can change the agent's behavior and create a regression. The six-step loop can therefore operate at the agent level:
+The method also applies when there is no named skill artifact at all. An AI agent may be defined by a system prompt, tool set, routing graph, memory policy, model configuration, approval workflow, and runtime environment; any one of these can change the agent's behavior and create a regression.
+
+For an enterprise agent, that surface is wider: identity and tenant context, authorization policies, data classification, approval requirements, audit evidence, and side effects in systems of record may matter as much as the final response. A regression may therefore be a wrong action, an action taken under the wrong role, or an action that cannot be reconstructed later—not only a lower-quality answer. The six-step loop can therefore operate at the agent level:
 
 - reproduce the failure with a recorded trace or scenario;
 - define the intended invariant and the boundary of the change;
@@ -592,6 +594,7 @@ The ideas above can be reduced to a compact review gate. Before merging a skill 
 - Is the change limited to the necessary area?
 - Will uncertainty produce `strict_required` or `blocked` instead of plausible success?
 - Are the instructions, implementation, tests, evaluations, and acceptance cases still saying the same thing?
+- For enterprise agents, are identity, tenant, data-access, approval, audit, and side-effect boundaries covered?
 - Was the concrete lesson recorded?
 - If the failure pattern is recurring, were the meta-rules updated?
 
