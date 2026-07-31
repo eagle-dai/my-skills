@@ -502,6 +502,211 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "strict_required")
             self.assertEqual(outcome.report["recommended_mode"], "strict")
 
+    def test_p_with_tail_block_wrapper_converts_on_fast_path(self) -> None:
+        """mdnice: <p><span>导语</span><section><table></section></p> 拆成段落+表格。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a mdnice-style paragraph wrapping a table.</p>
+          <p><span>一个好的估计量应具备以下性质：</span><section data-tool="mdnice"><table><thead><tr><th>性质</th><th>定义</th></tr></thead><tbody><tr><td>无偏性</td><td>期望等于真值</td></tr></tbody></table></section></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "mdnice-tail.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("一个好的估计量应具备以下性质：", markdown)
+            self.assertIn("| 性质 | 定义 |", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["tables"], 1)
+
+    def test_p_with_multiple_tail_block_wrappers_converts(self) -> None:
+        """前导行内 + 两个尾部 section 块 → converted，两块都在。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a paragraph wrapping two tables.</p>
+          <p><strong>两张表：</strong><section><table><tr><td>a</td></tr></table></section><section><table><tr><td>b</td></tr></table></section></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "mdnice-multi.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            self.assertEqual(outcome.report["emitted_counts"]["tables"], 2)
+
+    def test_p_with_block_wrapper_then_inline_still_strict(self) -> None:
+        """块后还有行内文字（混排非尾部）→ 维持 fail-close strict。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a paragraph mixing a block then trailing inline text.</p>
+          <p><span>lead</span><section><table><tr><td>x</td></tr></table></section><span>trailing text after block</span></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "mdnice-midblock.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
+    def test_slate_paragraph_with_block_wrapper_still_strict(self) -> None:
+        """Slate 段落含块 wrapper 不进新拆分逻辑 → 维持 strict。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a Slate paragraph hiding a section-wrapped table.</p>
+          <div data-slate-type="paragraph">lead <section><table><tr><td>x</td></tr></table></section></div>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "slate-block.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
+    def test_p_pure_block_wrapper_no_empty_paragraph(self) -> None:
+        """无前导行内的纯块 wrapper → converted，无孤立空段落。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a paragraph wrapping only a table, no leading text.</p>
+          <p><section><table><thead><tr><th>col</th></tr></thead><tbody><tr><td>val</td></tr></tbody></table></section></p>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "pure-block.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertNotIn("\n\n\n\n", markdown)  # 无孤立空段落
+            self.assertEqual(outcome.report["emitted_counts"]["tables"], 1)
+
+    def test_li_with_mdnice_section_paragraph_converts(self) -> None:
+        """mdnice: <li><section><p>文字</p></section></li> → 普通列表项。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with an ordered list whose items are mdnice-wrapped.</p>
+          <ol>
+            <li><section data-tool="mdnice"><p>提出假设</p></section></li>
+            <li><section data-tool="mdnice"><p>选择检验统计量</p></section></li>
+          </ol>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "li-mdnice.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("1. 提出假设", markdown)
+            self.assertIn("2. 选择检验统计量", markdown)
+            self.assertEqual(outcome.report["emitted_counts"]["list_items"], 2)
+
+    def test_li_with_section_wrapping_table_still_strict(self) -> None:
+        """li 里 section 裹真块（table）→ 维持 fail-close strict。"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a list item hiding a real table inside a section.</p>
+          <ul>
+            <li><section><table><tr><td>x</td></tr></table></section></li>
+          </ul>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "li-table.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
+    def test_li_with_section_stray_text_before_paragraph_still_strict(self) -> None:
+        """li 里 section 除单个段落外还有块外裸文本 → 不穿透（否则静默丢裸文本），
+        fail-close strict。（PR #77 review 发现）"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a list item whose section has stray text beside a p.</p>
+          <ul>
+            <li><section data-tool="mdnice">重要散文不能丢<p>提出假设</p></section></li>
+          </ul>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "li-stray.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
+    def test_list_with_floating_nested_list_converts(self) -> None:
+        """<ol> 直接含游离 <ul>（非 li 内）→ 嵌套项不被吞，公式守恒。
+
+        WeChat/mdnice 会产出 <ol><li>..</li><ul><li>..</li></ul><li>..</li></ol>，
+        嵌套 ul 直接挂在 ol 下而非 li 内。list_block 若只遍历 li 会整块吞掉该 ul。
+        """
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with an ordered list carrying a floating nested list.</p>
+          <ol>
+            <li>first</li>
+            <ul><li>nested item with <span class="katex"><span class="katex-mathml"><math><annotation encoding="application/x-tex">x=1</annotation></math></span></span></li></ul>
+            <li>second</li>
+          </ol>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "floating-list.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "converted")
+            assert outcome.markdown_path is not None
+            markdown = outcome.markdown_path.read_text(encoding="utf-8")
+            self.assertIn("1. first", markdown)
+            self.assertIn("2. second", markdown)
+            self.assertIn("nested item with $x=1$", markdown)
+            # 3 list items (first, nested, second), formula preserved
+            self.assertEqual(outcome.report["emitted_counts"]["list_items"], 3)
+            self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 1)
+
     def test_image_originals_backed_up_outside_delivery_zip(self) -> None:
         """Original-image backups are auditable but must not ship in the ZIP.
 

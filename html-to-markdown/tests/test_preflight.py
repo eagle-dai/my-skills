@@ -240,6 +240,23 @@ class WeChatMmbizTests(unittest.TestCase):
         self.assertEqual(by_latex.get("A"), "block")
         self.assertEqual(by_latex.get("n"), "inline")
 
+    def test_double_wrapped_same_latex_data_formula_counted_once(self) -> None:
+        # mdnice/微信把公式包成两层相同 data-formula span（外层加 cursor:pointer
+        # 点击效果）。两层 LaTeX 相同 → 是同一个公式，只应计一次，否则 formula_total
+        # 虚高、下游守恒必然 blocked。区别于上面「父子不同 LaTeX」的合法嵌套。
+        html = self._wechat(
+            "<p>这是一篇足够长的微信公众号正文，用来越过 body 选择的最小文本阈值，"
+            "随后构造一个被双层相同 data-formula span 包装的行内公式，"
+            "验证 preflight 只把它计为一个公式而非两个。</p>"
+            "<span data-formula='\\hat{\\sigma}^2' style='cursor:pointer'>"
+            "<span data-formula='\\hat{\\sigma}^2'><svg role='img'></svg></span>"
+            "</span>"
+        )
+        result = preflight.build_preflight(html)
+        latexes = [f.original_latex for f in result.formulas]
+        self.assertEqual(latexes, ["\\hat{\\sigma}^2"])
+        self.assertEqual(result.manifest["counts"]["formula_total"], 1)
+
     def test_substantial_data_uri_ignores_base64_whitespace_and_padding(self) -> None:
         # 反例（PR review 发现）：base64 payload 含换行/=padding 时，体量估算须先剥掉，
         # 否则空白撑大估值让 <512B 的占位图误过门槛。构造一个解码 <512B 但含大量换行的

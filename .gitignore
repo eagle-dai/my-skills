@@ -7,3 +7,5 @@ __pycache__/
 # Local-only design docs (not shipped)
 docs/*.md
 docs/superpowers/
+# superpowers spec/plan drafts under any skill subdir (not shipped)
+**/docs/superpowers/
