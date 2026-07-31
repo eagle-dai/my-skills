@@ -88,29 +88,19 @@ And this was the output I wanted:
 **The migration must finish before Friday.**
 ```
 
-My first solution checked whether a paragraph started with a greeting. When it did, I removed the paragraph.
+My first solution checked whether a paragraph started with a greeting and removed the whole paragraph when it did. The greeting was gone, but so were the useful sentence and its bold formatting. The new feature worked, yet the skill had become worse.
 
-The greeting was gone. Unfortunately, the useful sentence and its bold formatting were also gone.
+This kind of regression is easy to miss because there may be no exception, no red log, and no obviously broken output. The result may still look fluent while some information has quietly disappeared.
 
-So the new feature worked, but the skill became worse.
+After seeing several cases like this, I stopped treating a skill change as “just update the prompt”. I now handle it more like a software change: reproduce the failure, define the boundary, write the guard, make the smallest useful change, and then check that older behavior is still there. This workflow is strongly influenced by Test-Driven Development (TDD): create a failing test, make it pass with the smallest reasonable change, and then improve the implementation under regression protection.
 
-This kind of regression is easy to miss. There may be no exception, no red log, and no obviously broken output. The result may still look fluent. Only some information has quietly disappeared.
+This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests, while others need acceptance cases, evaluation datasets, rubrics, or human review.
 
-After seeing several cases like this, I stopped treating a skill change as “just update the prompt”. I now handle it more like a software change: reproduce the failure, define the boundary, write the guard, make the smallest useful change, and then check that older behavior is still there.
-
-That workflow is strongly influenced by Test-Driven Development (TDD). The basic rhythm is familiar: create a failing test, make it pass with the smallest reasonable change, and then improve the implementation under regression protection.
-
-This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests. Others need acceptance cases, evaluation datasets, rubrics, or human review.
-
-In this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests. It does not mean a Joule Skill specifically.
-
-This approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.
+In this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests; it does not mean a Joule Skill specifically. The approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.
 
 ## The challenge: why skills can regress silently
 
-The first challenge is visibility: a regression in an AI skill often looks like an acceptable result rather than an obvious failure.
-
-A file-based skill normally has several sources of behavior:
+The first challenge is visibility: a regression in an AI skill often looks like an acceptable result rather than an obvious failure. A file-based skill normally has several sources of behavior:
 
 - `SKILL.md` tells the agent what to do;
 - reference files describe rules and exceptions;
@@ -119,11 +109,7 @@ A file-based skill normally has several sources of behavior:
 - tests protect only the cases that have been encoded;
 - the final tool or renderer may behave differently from the local environment.
 
-Code usually complains when it is invalid. Natural-language instructions do not.
-
-Removing one sentence from `SKILL.md` causes no compilation failure. Shortening a rule can accidentally remove an old exception. Broadening a regular expression for one new example can damage several older cases. Markdown may also look correct in VS Code and render differently on GitHub.
-
-The dangerous result is not always nonsense. Very often it still looks reasonable.
+Code usually complains when it is invalid; natural-language instructions do not. Removing one sentence from `SKILL.md` causes no compilation failure. Shortening a rule can accidentally remove an old exception, broadening a regular expression for one new example can damage several older cases, and Markdown may look correct in VS Code while rendering differently on GitHub. The dangerous result is not always nonsense—it often still looks reasonable.
 
 The recurring causes are quite ordinary:
 
@@ -137,9 +123,7 @@ Adding more prose to the prompt does not solve these problems. Sometimes it only
 
 ## The foundation: two levels of memory
 
-The most useful structural decision is to separate two kinds of knowledge: shared meta-rules and skill-specific lessons.
-
-The first kind is shared across skills. These are **meta-rules**:
+The most useful structural decision is to separate two kinds of knowledge: shared meta-rules and skill-specific lessons. The first kind is shared across skills. These are **meta-rules**:
 
 > How is any skill allowed to change?
 
@@ -147,7 +131,7 @@ The second kind belongs to one particular skill:
 
 > What did this skill learn from its own failures?
 
-A small structure can look like this:
+A small structure can make the separation explicit:
 
 ```text
 _meta/
@@ -187,29 +171,21 @@ The skill-specific `self-improvement.md` keeps concrete regression knowledge:
 - the target platform;
 - the test that now protects this behavior.
 
-Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises.
+Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises, while the test provides the executable side of the same agreement.
 
-The test is the executable side of the same agreement.
-
-A skill therefore has two readers. A person needs to understand the intended outcome, and a machine needs something it can check. A readable rule without a guard can drift. A test without readable intent becomes difficult to review.
+A skill therefore has two readers: a person who needs to understand the intended outcome, and a machine that needs something it can check. A readable rule without a guard can drift; a test without readable intent becomes difficult to review.
 
 ## The method: a six-step evolution loop
 
-With those two memory layers in place, the evolution process can be made explicit.
-
-The loop below is TDD-inspired, but it extends beyond ordinary unit tests. It combines test-first development with acceptance criteria, target-environment checks, and a small memory system for lessons learned.
+With those two memory layers in place, the evolution process can be made explicit. The loop below is TDD-inspired, but it extends beyond ordinary unit tests by combining test-first development with acceptance criteria, target-environment checks, and a small memory system for lessons learned.
 
 ### 1. State the purpose and limit the change
 
-Before changing code or instructions, state the user-visible purpose in one sentence.
-
-For the greeting case:
+Before changing code or instructions, state the user-visible purpose in one sentence. For the greeting case:
 
 > Remove a standalone opening greeting without deleting meaningful content or supported formatting in the same container.
 
-The second half is important. It defines what the change is not allowed to break.
-
-Ask a few basic questions:
+The second half is important because it defines what the change is not allowed to break. Ask a few basic questions:
 
 - Is the current rule too narrow or too broad?
 - Is the problem in a shared component?
@@ -221,21 +197,15 @@ Without this step, it is easy to fix the visible symptom and leave the original 
 
 ### 2. Generalize before implementing
 
-A rule based on one example is usually suspicious.
-
-For example, this rule is too broad:
+A rule based on one example is usually suspicious. For example, this rule is too broad:
 
 > Remove a paragraph when its text starts with “Hello everyone”.
 
-The paragraph is a structural container. It is not necessarily the semantic unit that should be removed.
-
-A better rule is:
+The paragraph is a structural container, not necessarily the semantic unit that should be removed. A better rule is:
 
 > Remove only an independent greeting sentence. Do not remove its parent block when the block also contains meaningful text or supported inline structure.
 
-The main improvement is not a smarter regular expression. It is selecting the correct unit of meaning.
-
-Before implementation, try several boundary cases:
+The main improvement is not a smarter regular expression; it is selecting the correct unit of meaning. Before implementation, try several boundary cases:
 
 - a paragraph containing only a greeting should be removed;
 - a greeting followed by bold text should keep the bold text;
@@ -299,19 +269,15 @@ The matching acceptance case can stay simple:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green. That is the **Refactor** step.
+Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green; that is the **Refactor** step.
 
-For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point is still the same: define the evidence before declaring success.
+For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point remains the same: define the evidence before declaring success.
 
-After the new case passes, run the full suite. Running only the new test proves that the reported case was fixed. It does not prove that another problem was not introduced.
-
-Keep old regression tests by default. When an old expectation is genuinely wrong, record why before changing it. Otherwise, deleting the test is also deleting part of the skill's memory.
+After the new case passes, run the full suite. Running only the new test proves that the reported case was fixed, not that another problem was not introduced. Keep old regression tests by default. When an old expectation is genuinely wrong, record why before changing it; otherwise, deleting the test also deletes part of the skill's memory.
 
 ### 4. Do not manufacture a green result
 
-It is easy to produce a green result in the wrong way.
-
-Common shortcuts include:
+It is easy to produce a green result in the wrong way. Common shortcuts include:
 
 - widening a regular expression only for the latest input;
 - weakening an assertion until the current output passes;
@@ -321,11 +287,7 @@ Common shortcuts include:
 - calling the result successful while validation is incomplete;
 - changing random values or timestamps until a nondeterministic case happens to pass.
 
-A green CI result is useful only when the tests still represent the original intention.
-
-For conversion skills, “some Markdown was produced” is not enough. Important content and supported structure must remain. Unknown content should not disappear silently.
-
-Sometimes an explicit status model helps:
+A green CI result is useful only when the tests still represent the original intention. For conversion skills, “some Markdown was produced” is not enough: important content and supported structure must remain, and unknown content should not disappear silently. Sometimes an explicit status model helps:
 
 ```python
 from dataclasses import dataclass
@@ -351,9 +313,7 @@ The meanings are simple:
 
 ### 5. Protect the boundary and make trade-offs explicit
 
-A small rule may be shared by several paths or even several skills. This makes local fixes more risky than they first appear.
-
-My current trade-off order is:
+A small rule may be shared by several paths or even several skills, which makes local fixes more risky than they first appear. My current trade-off order is:
 
 ```text
 fail closed
@@ -365,9 +325,7 @@ fail closed
 
 This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input.
 
-When an unknown structure may cause information loss, route it to a stricter path or block it. Prefer an honest limitation to a confident but damaged result.
-
-When the strict path is too expensive for every input, separate fast and strict paths. Do not weaken the correctness rule only to make the happy path faster.
+When an unknown structure may cause information loss, route it to a stricter path or block it; prefer an honest limitation to a confident but damaged result. When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule only to make the happy path faster.
 
 This trade-off order belongs in the meta-rules. Otherwise, different contributors may make different local choices and slowly pull the skill library in conflicting directions.
 
@@ -381,9 +339,7 @@ After implementation:
 4. record the cause, risk, verification method, and remaining gaps;
 5. put the lesson in the correct place.
 
-A concrete failure belongs to the skill-specific record.
-
-A repeated way of failing belongs to the shared meta-rules. Examples are:
+A concrete failure belongs to the skill-specific record, while a repeated way of failing belongs to the shared meta-rules. Examples are:
 
 - rules based on one example are repeatedly too narrow;
 - broad character classes repeatedly create false positives;
@@ -392,15 +348,11 @@ A repeated way of failing belongs to the shared meta-rules. Examples are:
 - documentation-only rules repeatedly disappear;
 - model-dependent checks are repeatedly treated as deterministic.
 
-One failure should improve one skill. A repeated pattern should improve how all skills are changed.
-
-This promotion step is what makes the process self-improving. The skill learns from a concrete defect, while the skill library learns from the type of defect.
+One failure should improve one skill, while a repeated pattern should improve how all skills are changed. This promotion step is what makes the process self-improving: the skill learns from a concrete defect, and the skill library learns from the type of defect.
 
 ## The complete capability surface
 
-The evolution loop is effective only when the complete capability—not just its most visible script—is treated as changeable behavior.
-
-It is natural to test the converter or the main orchestration code. However, instructions, reference files, tool definitions, routing rules, permissions, memory behavior, and model configuration can all influence the result. The complete capability definition is therefore part of the executable surface.
+The evolution loop is effective only when the complete capability—not just its most visible script—is treated as changeable behavior. It is natural to test the converter or the main orchestration code, but instructions, reference files, tool definitions, routing rules, permissions, memory behavior, and model configuration can all influence the result. The complete capability definition is therefore part of the executable surface.
 
 Repository-level checks can verify that:
 
@@ -421,9 +373,7 @@ A second real failure made this point more clearly. A formula containing a code-
 
 ## An additional benefit: less model work
 
-Regression protection was the original motivation for this approach, but separating deterministic from model-dependent work can also improve runtime efficiency.
-
-When a behavior becomes stable, repeatable, and testable, the model should not need to rediscover or reimplement it on every invocation. That work can move into a deterministic script with explicit inputs, outputs, validation, and failure states. The model is then reserved for the parts that genuinely require interpretation, planning, or judgment.
+Regression protection was the original motivation for this approach, but separating deterministic from model-dependent work can also improve runtime efficiency. When a behavior becomes stable, repeatable, and testable, the model should not need to rediscover or reimplement it on every invocation. That work can move into a deterministic script with explicit inputs, outputs, validation, and failure states, leaving the model for the parts that genuinely require interpretation, planning, or judgment.
 
 A useful execution shape is:
 
@@ -461,9 +411,7 @@ This is not an argument for replacing semantic judgment with brittle code. Move 
 
 ## Applying the method across skills and agents
 
-Because this is a lifecycle method rather than a file-format convention, it can be transferred across platforms.
-
-The running example uses a file-based skill, but the method is not tied to Claude Code, `SKILL.md`, or even to skills as the only unit of change. It applies whenever a capability has four properties:
+Because this is a lifecycle method rather than a file-format convention, it can be transferred across platforms. The running example uses a file-based skill, but the method is not tied to Claude Code, `SKILL.md`, or even to skills as the only unit of change. It applies whenever a capability has four properties:
 
 1. its behavior is defined by versioned artifacts such as instructions, code, tools, policies, or configuration;
 2. failures can be reproduced through fixtures, traces, scenarios, or recorded executions;
@@ -495,9 +443,7 @@ The same lifecycle can be used when these capabilities are surfaced through Joul
 
 ### Beyond skills: AI agent development
 
-The method also applies when there is no named skill artifact at all. An AI agent may be defined by a system prompt, tool set, routing graph, memory policy, model configuration, approval workflow, and runtime environment. Any one of these can change the agent's behavior and create a regression.
-
-The six-step loop can therefore operate at the agent level:
+The method also applies when there is no named skill artifact at all. An AI agent may be defined by a system prompt, tool set, routing graph, memory policy, model configuration, approval workflow, and runtime environment; any one of these can change the agent's behavior and create a regression. The six-step loop can therefore operate at the agent level:
 
 - reproduce the failure with a recorded trace or scenario;
 - define the intended invariant and the boundary of the change;
@@ -510,9 +456,7 @@ The unit of evolution may be a skill, plugin, tool, subagent, routing policy, or
 
 ## A practical implementation with Claude Code and Git
 
-The following setup shows one concrete implementation of the method. It is an example, not a platform requirement.
-
-For personal skills used across several projects, Claude Code supports this directory:
+The following setup shows one concrete implementation of the method. It is an example, not a platform requirement. For personal skills used across several projects, Claude Code supports this directory:
 
 ```text
 ~/.claude/skills/
@@ -541,9 +485,7 @@ The `html-to-markdown` directory is the skill. `_meta` is the shared policy laye
 
 ### Put the skill library under Git
 
-The whole `~/.claude/skills/` directory can be a Git repository. This may sound a little heavy for one developer, but it gives every rule change a diff, preserves the history of regression cases, and allows the same skill library to be synchronized across machines.
-
-A minimal setup is:
+The whole `~/.claude/skills/` directory can be a Git repository. This may sound a little heavy for one developer, but it gives every rule change a diff, preserves the history of regression cases, and allows the same skill library to be synchronized across machines. A minimal setup is:
 
 ```bash
 mkdir -p ~/.claude/skills
@@ -635,9 +577,7 @@ When `html-to-markdown` is distributed alone, copy the shared meta-rules into it
 
 ## Practical review checklist
 
-The ideas above can be reduced to a compact review gate.
-
-Before merging a skill or agent-capability change, check:
+The ideas above can be reduced to a compact review gate. Before merging a skill or agent-capability change, check:
 
 - Is the user-visible purpose and boundary clear in one sentence?
 - Is the rule based on a mechanism, not only one example?
@@ -659,10 +599,8 @@ Not every item needs the same weight for every task. A small personal skill and 
 
 ## Conclusion
 
-AI skills and agents will continue to change. New models, tools, formats, and user expectations will keep arriving. The goal is not to freeze a capability after it works once.
+AI skills and agents will continue to change as new models, tools, formats, and user expectations arrive. The goal is not to freeze a capability after it works once, but to ensure that each real failure leaves something useful behind: a clearer boundary, a regression guard or evaluation, or a better meta-rule for the next change.
 
-The goal is for each real failure to leave something useful behind: a clearer boundary, a regression guard or evaluation, or a better meta-rule for the next change.
-
-TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Deterministic code can remove repeated model work from the common path, improving both reliability and efficiency. Meta-rules add another layer: one capability's failure can improve how every capability is changed.
+TDD contributes an important discipline here: evidence before confidence. Evaluations extend that discipline to model-dependent behavior. Deterministic code can remove repeated model work from the common path, improving both reliability and efficiency, while meta-rules allow one capability's failure to improve how every capability is changed.
 
 This approach is still evolving in practice. How do other SAP developers and architects handle the same problem? Are skill and agent regressions kept as tests, evaluation datasets, recorded traces, review checklists, meta-rules, or in another form?
