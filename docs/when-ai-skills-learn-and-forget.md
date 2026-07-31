@@ -94,7 +94,9 @@ This kind of regression is easy to miss because there may be no exception, no re
 
 After seeing several cases like this, I stopped treating a skill change as “just update the prompt”. I now handle it more like a software change: reproduce the failure, define the boundary, write the guard, make the smallest useful change, and then check that older behavior is still there. This workflow is strongly influenced by Test-Driven Development (TDD): create a failing test, make it pass with the smallest reasonable change, and then improve the implementation under regression protection.
 
-This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests, while others need acceptance cases, evaluation datasets, rubrics, or human review. In this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests; it does not mean a Joule Skill specifically. The approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.
+This is not pure TDD, however. A file-based AI skill may contain natural-language instructions, examples, scripts, model-dependent behavior, and target-platform differences. Some of these can be protected by deterministic tests, while others need acceptance cases, evaluation datasets, rubrics, or human review.
+
+In this article, “skill” means a file-based capability package containing instructions, references, scripts, and tests; it does not mean a Joule Skill specifically. The approach is most useful for repeatable behavior where correctness can be described and a plausible but wrong output has a real cost. It is less suitable as a rigid test framework for open-ended writing or creative conversation.
 
 ## The challenge: why skills can regress silently
 
@@ -169,7 +171,9 @@ The skill-specific `self-improvement.md` keeps concrete regression knowledge:
 - the target platform;
 - the test that now protects this behavior.
 
-Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises, while the test provides the executable side of the same agreement. A skill therefore has two readers: a person who needs to understand the intended outcome, and a machine that needs something it can check. A readable rule without a guard can drift; a test without readable intent becomes difficult to review.
+Acceptance cases should also remain understandable to a non-developer. A user should not need to understand a DOM selector or regular expression to know what the skill promises, while the test provides the executable side of the same agreement.
+
+A skill therefore has two readers: a person who needs to understand the intended outcome, and a machine that needs something it can check. A readable rule without a guard can drift; a test without readable intent becomes difficult to review.
 
 ## The method: a six-step evolution loop
 
@@ -217,7 +221,11 @@ For repeatable skill behavior, one rule is particularly important:
 
 > A user-visible rule added to a skill should have an automated guard in the same change whenever the behavior can be checked deterministically.
 
-A useful review question is: *If this rule disappears next month, which test will fail?* If there is no answer, the rule may still be only a hope.
+A useful review question is:
+
+> If this rule disappears next month, which test will fail?
+
+If there is no answer, the rule may still be only a hope.
 
 For the regression above, first add a failing test. This is the **Red** step in TDD:
 
@@ -261,7 +269,9 @@ The matching acceptance case can stay simple:
 - Guard: `test_preserves_content_after_greeting`
 ```
 
-Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green; that is the **Refactor** step. For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point remains the same: define the evidence before declaring success.
+Next, make the smallest change that fixes the mechanism. This is the **Green** step. If the implementation becomes messy, clean it up while the tests are green; that is the **Refactor** step.
+
+For AI skills, the loop does not always end with a unit test. If behavior depends on a model or renderer, the guard may instead be an evaluation case, a target-platform fixture, a structural validator, or a human-reviewed rubric. The important point remains the same: define the evidence before declaring success.
 
 After the new case passes, run the full suite. Running only the new test proves that the reported case was fixed, not that another problem was not introduced. Keep old regression tests by default. When an old expectation is genuinely wrong, record why before changing it; otherwise, deleting the test also deletes part of the skill's memory.
 
@@ -313,7 +323,9 @@ fail closed
     > shorter implementation
 ```
 
-This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input. When an unknown structure may cause information loss, route it to a stricter path or block it; prefer an honest limitation to a confident but damaged result. When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule only to make the happy path faster.
+This order is not universal. It comes from conversion and enterprise-oriented use cases where losing information is worse than refusing one difficult input.
+
+When an unknown structure may cause information loss, route it to a stricter path or block it; prefer an honest limitation to a confident but damaged result. When the strict path is too expensive for every input, separate fast and strict paths rather than weakening the correctness rule only to make the happy path faster.
 
 This trade-off order belongs in the meta-rules. Otherwise, different contributors may make different local choices and slowly pull the skill library in conflicting directions.
 
