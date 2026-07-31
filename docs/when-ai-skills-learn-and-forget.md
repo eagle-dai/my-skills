@@ -137,9 +137,7 @@ Adding more prose to the prompt does not solve these problems. Sometimes it only
 
 ## The foundation: two levels of memory
 
-Preventing this class of regression requires memory at two different levels.
-
-The most useful structural decision is to separate two kinds of knowledge.
+The most useful structural decision is to separate two kinds of knowledge: shared meta-rules and skill-specific lessons.
 
 The first kind is shared across skills. These are **meta-rules**:
 
@@ -423,9 +421,7 @@ A second real failure made this point more clearly. A formula containing a code-
 
 ## An additional benefit: less model work
 
-The same separation between deterministic and model-dependent work creates another practical benefit: efficiency.
-
-Regression protection was the original motivation for this approach, but the same separation can also improve runtime efficiency.
+Regression protection was the original motivation for this approach, but separating deterministic from model-dependent work can also improve runtime efficiency.
 
 When a behavior becomes stable, repeatable, and testable, the model should not need to rediscover or reimplement it on every invocation. That work can move into a deterministic script with explicit inputs, outputs, validation, and failure states. The model is then reserved for the parts that genuinely require interpretation, planning, or judgment.
 
