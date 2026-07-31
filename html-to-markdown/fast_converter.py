@@ -472,6 +472,13 @@ class MarkdownConverter:
         ]
         if len(block_children) != 1:
             return None
+        # wrapper 内块之外的裸文本（如 <section>散文<p>foo</p></section>）穿透后会被
+        # inline_children(inner) 静默丢弃 → fail-close 交 self.inline，不吞内容。
+        if any(
+            isinstance(c, NavigableString) and str(c).strip()
+            for c in child.children
+        ):
+            return None
         inner = block_children[0]
         if inner.name not in {"p", "div"}:
             return None  # 裹 table/list/pre 等真块 → 不穿透

@@ -651,6 +651,28 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "strict_required")
             self.assertEqual(outcome.report["recommended_mode"], "strict")
 
+    def test_li_with_section_stray_text_before_paragraph_still_strict(self) -> None:
+        """li 里 section 除单个段落外还有块外裸文本 → 不穿透（否则静默丢裸文本），
+        fail-close strict。（PR #77 review 发现）"""
+
+        html = """
+        <html><body><article>
+          <p>This article body is sufficiently long for deterministic selection
+          and ends with a list item whose section has stray text beside a p.</p>
+          <ul>
+            <li><section data-tool="mdnice">重要散文不能丢<p>提出假设</p></section></li>
+          </ul>
+        </article></body></html>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "li-stray.html"
+            source.write_text(html, encoding="utf-8")
+            outcome = pipeline.run_pipeline(source, root / "out", mode="fast")
+
+            self.assertEqual(outcome.status, "strict_required")
+            self.assertEqual(outcome.report["recommended_mode"], "strict")
+
     def test_list_with_floating_nested_list_converts(self) -> None:
         """<ol> 直接含游离 <ul>（非 li 内）→ 嵌套项不被吞，公式守恒。
 
