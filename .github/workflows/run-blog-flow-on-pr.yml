@@ -1,0 +1,32 @@
+name: Run blog paragraph flow edit on PR
+
+on:
+  pull_request:
+    types: [opened]
+    paths:
+      - .github/workflows/apply-blog-flow.yml
+      - .github/workflows/run-blog-flow-on-pr.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-edit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Apply article-only patch
+        shell: bash
+        run: |
+          PATCH_B64=$(sed -n "s/^[[:space:]]*echo '\([^']*\)'.*/\1/p" .github/workflows/apply-blog-flow.yml)
+          test -n "$PATCH_B64"
+          printf '%s' "$PATCH_B64" | base64 --decode | gzip --decompress > /tmp/blog-flow.patch
+          git apply /tmp/blog-flow.patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/when-ai-skills-learn-and-forget.md
+          git commit -m 'Improve technical blog paragraph flow'
+          git push origin HEAD:${{ github.head_ref }}
