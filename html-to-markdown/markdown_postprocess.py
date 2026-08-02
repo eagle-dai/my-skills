@@ -138,6 +138,13 @@ def _double_math_backslashes(segment: str) -> str:
             follow = segment[j] if j < n else None
             if follow is not None and follow.isascii() and follow.isalpha() and k % 2 == 1:
                 nk = k  # 规则1：命令 \letter
+            elif follow == "_":
+                # 规则2 特例（gap #39）：``_`` 在本系统里从不是「须双写的 thin-space 类转义」。
+                # 单 ``\_`` = 下标转义（gap #39 产出，GFM 剥一层 → MathJax 裸 ``_`` = 下标），
+                # 双 ``\\_`` = 字面下划线（gap #31）。二者都必须**原样**：绝不把单 ``\_`` 翻成
+                # ``\\_``（那会把下标语义变成字面下划线，且破坏跨 pass 幂等）。所以对 ``_``
+                # 一律不动 run 长度，让 gap #39 的下划线转义成为 ``_`` 的唯一权威。
+                nk = k
             elif follow is not None and follow in _MATH_PUNCT:
                 nk = 2 * k if k % 2 == 1 else k  # 规则2：\+标点
             else:
@@ -150,10 +157,61 @@ def _double_math_backslashes(segment: str) -> str:
     return "".join(out)
 
 
+# --- 行内 ``$…$`` 内裸下划线转义（gap #39，GitHub emphasis 真机验证）---------
+# GitHub GFM 在**数学提取之前**先跑 CommonMark emphasis：行内 ``$…$`` span 内未转义的
+# ``_`` 会被当成 emphasis 标记，两两配对成 ``<em>``，破坏 ``$…$`` 定界符配对 → 该公式
+# 不渲染，字面显示 ``$…$``（``gh api /markdown`` 实测）：
+#   - ``$\hat{u}_{t-1} = Y_{t-1}$``（同一公式内两个 ``_``）→ **失败**，配成 ``<em>``；
+#   - ``$\mathbf{w}_{\text{A}}$ 和 $\mathbf{w}_{\text{B}}$``（两公式各含 ``_``）→ **失败**，
+#     跨公式 ``_`` 配对；
+#   - ``$x_t$``（单下标）本来渲染 OK，但全部转义**无副作用**（真机验证）。
+#
+# 修法：行内 span 内扫描，遇裸 ``_``（前一字符不是 ``\``）→ ``\_``。GFM 剥一层 →
+# MathJax 收裸 ``_`` = 下标语义（04 ``\hat{u}_{t-1}`` 的 ``_`` 是下标，必须收裸 ``_``）。
+#
+# **与 gap #38 反斜杠加倍的顺序（陷阱）**：反斜杠加倍规则2对 ``\``+标点（``_`` 是标点）：
+# k=1 ``\_``→``\\_``。若**先**转义（裸 ``_``→``\_``）**再**加倍，``\_`` 会被翻成 ``\\_`` →
+# GFM 剥一层 → MathJax 收 ``\_`` = **字面下划线**，丢下标语义！所以下划线转义必须
+# **在反斜杠加倍之后**做，且它产出的 ``\_`` 不再经过加倍步骤（本 pass 只转义、不加倍）。
+# 行内 span 依次经过：反斜杠加倍 → 下划线转义。
+#
+# **与 gap #31 ``\\_``（字面下划线）幂等兼容**：``\\_`` 里的 ``_`` 前是 ``\`` → 跳过，
+# 保持 ``\\_``（GFM 剥一层 → ``\_`` = 字面下划线，对）。已转义的 ``\_``（单）里的 ``_``
+# 前也是 ``\`` → 跳过，保持 ``\_``（下标）。规则「``_`` 前一字符是 ``\`` 就跳过」天然覆盖
+# 两种，且使本 pass 幂等。
+#
+# **块级 ``$$…$$`` 不适用**：块级公式独占行/块，GitHub 不在里面跑 emphasis（``$$`` 内的
+# ``_`` 不触发 ``<em>``，真机 25/44 块级全渲染正常）。所以只加到**行内**路径，不动块内
+# 纯 latex 分支、不动单行 ``$$…$$`` 分支。
+#
+# 规则见 conversion-rules.md「数学段反斜杠 / 行内下划线」；回归 tests 规则10。
+def _escape_inline_math_underscores(segment: str) -> str:
+    """行内数学 span **内部**文本：裸 ``_``（前非 ``\\``）→ ``\\_``。定界符不传入本函数。
+
+    幂等：``_`` 前是 ``\\`` 就跳过，所以 ``\\_``（单，下标）/ ``\\\\_``（gap #31 双，字面
+    下划线）都保持不变，已转义的输入再跑一遍也不二次加反斜杠。
+    """
+    out: list[str] = []
+    for idx, ch in enumerate(segment):
+        if ch == "_" and (idx == 0 or segment[idx - 1] != "\\"):
+            out.append("\\_")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _double_math_backslashes_inline_line(line: str) -> str:
-    """对行内 ``$…$`` 的内文施 transform（只改 group(1)，定界符不动）。"""
+    """对行内 ``$…$`` 的内文依次施：反斜杠加倍（gap #38）→ 下划线转义（gap #39）。
+
+    只改 group(1)，定界符不动。**顺序关键**：下划线转义在反斜杠加倍之后，否则转义产出的
+    ``\\_`` 会被加倍步骤翻成 ``\\\\_``，丢下标语义（见 ``_escape_inline_math_underscores``
+    的顺序说明）。块级纯 latex 分支只做加倍、不做下划线转义（块级不触发 emphasis）。
+    """
     return _INLINE_MATH_SPAN.sub(
-        lambda m: "$" + _double_math_backslashes(m.group(1)) + "$", line
+        lambda m: "$"
+        + _escape_inline_math_underscores(_double_math_backslashes(m.group(1)))
+        + "$",
+        line,
     )
 
 

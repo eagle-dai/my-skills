@@ -172,8 +172,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "converted")
             assert outcome.markdown_path is not None
             markdown = outcome.markdown_path.read_text(encoding="utf-8")
-            self.assertIn("$D_t=1$ $T_t=2$", markdown)
-            self.assertNotIn("$D_t=1$$T_t=2$", markdown)
+            # 相邻行内公式插空格分隔（不 `$$` 碰撞）；行内下标 `_`→`\_`（gap #39）。
+            self.assertIn("$D\\_t=1$ $T\\_t=2$", markdown)
+            self.assertNotIn("$D\\_t=1$$T\\_t=2$", markdown)
             self.assertNotIn("$$", markdown)
             self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)
@@ -202,8 +203,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "converted")
             assert outcome.markdown_path is not None
             markdown = outcome.markdown_path.read_text(encoding="utf-8")
-            self.assertIn("$D_t=1$ $T_t=2$", markdown)
-            self.assertNotIn("$D_t=1$$T_t=2$", markdown)
+            # 相邻行内公式插空格分隔（不 `$$` 碰撞）；行内下标 `_`→`\_`（gap #39）。
+            self.assertIn("$D\\_t=1$ $T\\_t=2$", markdown)
+            self.assertNotIn("$D\\_t=1$$T\\_t=2$", markdown)
             self.assertNotIn("$$", markdown)
             self.assertEqual(outcome.report["emitted_counts"]["formula_inline"], 2)
             self.assertEqual(outcome.report["emitted_counts"]["formula_block"], 0)

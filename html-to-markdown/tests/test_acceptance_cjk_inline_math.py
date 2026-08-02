@@ -56,8 +56,9 @@ class CjkInlineMathAcceptance(unittest.TestCase):
         </article></body></html>
         """
         markdown = _convert(html)
-        self.assertIn("收益率 $r_t$ 表示", markdown)
-        self.assertNotIn("收益率$r_t$", markdown)
+        # 行内下标 `_` 按 gap #39 转义成 `\_`；CJK 两侧仍各补一个空格。
+        self.assertIn("收益率 $r\\_t$ 表示", markdown)
+        self.assertNotIn("收益率$r", markdown)
 
     def test_fullwidth_punctuation_touching_dollar_gets_a_space(self) -> None:
         """正例：全角括号紧贴 $，同样插空格。"""
@@ -69,7 +70,8 @@ class CjkInlineMathAcceptance(unittest.TestCase):
         </article></body></html>
         """
         markdown = _convert(html)
-        self.assertIn("（ $w_t$ ）", markdown)
+        # 全角括号两侧补空格；行内下标 `_`→`\_`（gap #39）。
+        self.assertIn("（ $w\\_t$ ）", markdown)
 
     def test_ascii_spaced_formula_is_left_alone(self) -> None:
         """反例：已经用 ASCII 空格隔开的公式，不重复插空格。"""
@@ -81,8 +83,9 @@ class CjkInlineMathAcceptance(unittest.TestCase):
         </article></body></html>
         """
         markdown = _convert(html)
-        self.assertIn("see $r_t$ formula", markdown)
-        self.assertNotIn("  $r_t$", markdown)
+        # 已有 ASCII 空格不重复插；行内下标 `_`→`\_`（gap #39）。
+        self.assertIn("see $r\\_t$ formula", markdown)
+        self.assertNotIn("  $r", markdown)
 
     def test_dollar_inside_code_fence_is_untouched(self) -> None:
         """反例：代码块里的 $ 紧贴中文，不许被动（fence 内零改动）。"""

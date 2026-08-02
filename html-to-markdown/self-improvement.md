@@ -226,6 +226,38 @@ transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① fo
 
 ---
 
+## 行内公式下划线转义（缺陷 39，GitHub 平台，共享后处理侧，`markdown_postprocess.py`）
+
+判定项（根因）：GitHub 在**数学提取之前**先跑 CommonMark emphasis。**行内** `$…$` span 内未转义的 `_` 被 emphasis 消费——两两配对成 `<em>`（斜体标记），破坏 `$…$` 定界符配对 → 该公式不渲染、字面显示 `$…$`。`_` 可在**同一公式内**配对（`$\hat{u}_{t-1} = Y_{t-1}$` 两个 `_`），也可**跨公式**配对（`$\mathbf{w}_{\text{A}}$ 和 $\mathbf{w}_{\text{B}}$` 各含一个 `_`，两 `_` 隔着中间正文配成一对 `<em>`）。
+
+修法：**行内** span 内裸 `_`（前一字符不是 `\`）→ `\_`。GFM 剥一层 → MathJax 收裸 `_` = **下标语义**（04 `\hat{u}_{t-1}` 的 `_` 是下标，必须收裸 `_`；这与 `formula_batch.py` v5 注释里「单 `\_` 经 GFM 剥离 → MathJax 当下标」一致）。由 `markdown_postprocess.py::_escape_inline_math_underscores` 机械执行，fast/strict 两路径都经过。全部转义（连本来渲染 OK 的 `$x_t$` 也转）真机验证**无副作用**：MathJax 收到内容与原意一致。
+
+**只作用于行内 `$…$`**：块级 `$$…$$` 独占行/块，GitHub 不在里面跑 emphasis（真机 25/44 块级全渲染正常），块内 `_` 原样不转义。所以新规则只加到**行内**路径（`_double_math_backslashes_inline_line`），不动块内纯 latex 分支、不动单行 `$$…$$` 分支。
+
+**与 gap #38 反斜杠加倍的顺序（陷阱）+ `_` 剔除**：反斜杠加倍规则2对 `\`+标点会双写（`\,`→`\\,`）。若先转义（`_`→`\_`）再加倍，`\_`（k=1）会被翻成 `\\_` → GFM 剥一层 → MathJax 收 `\_` = **字面下划线**，丢下标语义！所以：① 下划线转义在反斜杠加倍**之后**做；② 更关键——把 `_` **从加倍规则里彻底剔除**（`_double_math_backslashes` 新增 `follow == "_"` 特例：run 长不动）。本系统里 `_` 从不是「须双写的 thin-space 类转义」：单 `\_` = 下标（gap #39），双 `\\_` = 字面下划线（gap #31），二者都必须原样。剔除后 gap #39 的转义成为 `_` 的**唯一权威**，且跨 `pp()` 调用幂等（第二遍加倍不再动已存在的 `\_`）。
+
+**与 gap #31 `\\_`（字面下划线）幂等兼容**：规则「`_` 前一字符是 `\` 就跳过」天然覆盖 `\\_`（保持双）和已转义 `\_`（保持单），本 pass 幂等。
+
+实证（`gh api /markdown`，GFM 行内 `$…$`）：
+
+| 源 md 形态 | GitHub 行为 | 类别 | 理由 |
+|------|------|------|------|
+| `$x_t$`（单下标，裸 `_`） | 渲染成功 | 现状 OK | 单 `_` 无第二个配对，未坏 |
+| `$Y_{t-1} - X_{t-1}$`（多下标） | 渲染成功 | 现状 OK | `_` 个数偶但被 `{}` 隔开未坏 |
+| `$\hat{u}_{t-1} = Y_{t-1}$`（同公式两 `_`） | **失败**，`_` 配 `<em>` | 反例（bug 现状） | 两 `_` 配对破坏 `$…$` |
+| `$\mathbf{w}_{\text{A}}$ 和 $\mathbf{w}_{\text{B}}$`（跨公式） | **失败**，跨公式配 `<em>` | 反例（bug 现状） | 两公式各一 `_` 隔正文配对 |
+| 修后 `$x\_t$` / `$\hat{u}\_{t-1}$`（`_`→`\_`） | GFM 剥 → `$x_t$` 下标 | 正例 | MathJax 收裸 `_` = 下标 |
+| gap#31 `\\_`（双，follow=`_`） | 保持 `\\_`（字面下划线） | 正例（不干扰） | `_` 前是 `\` → 跳过 |
+| 已转义 `\_`（单，follow=`_`） | 保持 `\_`（下标） | 正例（幂等） | `_` 前是 `\` → 跳过；加倍也剔除 `_` |
+| 块级 `$$…$$` 内 `_` | 原样，不转义 | 反例（不碰块级） | 块级不触发 emphasis |
+| span 外正文 `_斜体_` | 原样 | 反例（不碰 prose） | 只作用于行内 span 内 |
+
+**与 gap #31 / #38 的关系**：三者同治「math-mode 下划线/反斜杠在 GitHub 上的还原」。gap #31（提取器侧 `_map_text`）为**字面下划线**产出 `\\_`；gap #38（后处理侧 `_double_math_backslashes`）双写换行/thin-space 类 `\`+标点；gap #39（后处理侧 `_escape_inline_math_underscores`）为**行内下标**转义裸 `_`→`\_`，并把 `_` 从 gap #38 的加倍中剔除，让三者对 `_` 的处理不冲突（`\\_` 字面 / `\_` 下标 / 裸 `_`→`\_`）。
+
+回归 `tests/test_markdown_postprocess.py` 规则10（`test_inline_math_underscore_escaped`、`test_inline_math_cross_formula_underscore_escaped`、`test_inline_math_underscore_escape_idempotent`、`test_inline_math_gap31_double_underscore_preserved`、`test_prose_underscore_not_escaped`、`test_block_math_underscore_not_escaped`、`test_inline_math_rowbreak_and_underscore_coexist` 等）。真实用例：`04｜时间序列分析` 的 `\hat{u}_{t-1}`、`05｜多因子模型` 的 `\mathbf{w}_{\text{A}}` / `\mathbf{w}_{\text{B}}`（`gh api /markdown` 真机验证 emphasis 消费 `_` → 转义后渲染）。
+
+---
+
 ## 微信公众号 (mmbiz) 页面支持（结构规则，非正则）
 
 判定项分布在 `preflight.py`（1-3、8）与 `fast_converter.py`（4-7），回归 `tests/test_preflight.py::WeChatMmbizTests` + `tests/test_pipeline.py::WeChatMmbizPipelineTests`（结构穿透用例在 `PipelineTests`）：

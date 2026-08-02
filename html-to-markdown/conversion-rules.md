@@ -107,6 +107,10 @@ assert_valid_comment_ledger(entries, source_ids=source_ids)
 
 GitHub GFM 在 `$…$` / `$$…$$` 内会把 `\`+ASCII标点的反斜杠**剥掉一层**再喂 MathJax，所以矩阵/cases 换行 `\\`、`\,` `\;` `\%` 等在源 md 里必须**双写**（`\\`→`\\\\`）才能在 GitHub 上渲染正确；`\`+字母（`\sigma` `\frac` 命令）不受影响，不动。这条规则由共享后处理门 `markdown_postprocess.py::_double_math_backslashes` 机械执行（fast/strict 两路径都经过），与 `formula-extraction` skill gap #31 的提取器侧 `\\_` 产出幂等兼容。完整机制、transform 三分支与实证表见 self-improvement.md「数学段反斜杠加倍（缺陷 38）」。
 
+## 行内公式下划线转义（GitHub emphasis，`markdown_postprocess.py`）
+
+GitHub 在**数学提取之前**先跑 CommonMark emphasis：**行内** `$…$` span 内未转义的 `_` 会被当成 emphasis 标记两两配对成 `<em>`，破坏 `$…$` 定界符配对 → 该公式不渲染、字面显示 `$…$`（`$\hat{u}_{t-1} = Y_{t-1}$` 同一公式内两 `_`、两个各含 `_` 的相邻公式跨公式 `_` 都会被配掉，`gh api /markdown` 实测）。修法：**行内** span 内裸 `_`（前一字符不是 `\`）→ `\_`，GFM 剥一层后 MathJax 收裸 `_` = 下标语义。由共享后处理门 `markdown_postprocess.py::_escape_inline_math_underscores` 机械执行（fast/strict 两路径都经过）。**只作用于行内 `$…$`**——块级 `$$…$$` 独占行/块，GitHub 不在里面跑 emphasis，块内 `_` 原样不转义。**顺序**：在数学段反斜杠加倍（gap #38）**之后**做，且 `_` 已从加倍规则里剔除（`\_` 单反斜杠 = 下标须原样，绝不翻成 `\\_` 字面下划线）。与 gap #31 `\\_`（字面下划线）区分：`_` 前是 `\` 就跳过，`\\_` 保持、`\_` 保持。完整机制与实证表见 self-improvement.md「行内公式下划线转义（缺陷 39）」。
+
 ## 无语义 wrapper 穿透（inline 上下文）
 
 SingleFile/Slate 常在段落内嵌无语义 `<div>`（无 `data-slate-*`、纯排版包裹）。fast path 的 **block** 上下文对 `div/section/article/main` 已按 `has_block_child` 穿透（有块子→当块，无块子→当内联），但 **inline** 上下文旧实现遇 `<div>` 一律 `FastPathUnsupported` → 整页被迫 strict（~19min），两处不对称即 bug。
