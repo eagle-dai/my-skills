@@ -159,16 +159,16 @@ def test_standalone_formula_with_greek():
 
 
 def test_inline_formula_in_prose_untouched():
-    # $ 开头但不以 $ 结尾（后有中文）→ 不改
+    # $ 开头但不以 $ 结尾（后有中文）→ 不升级成块级。行内下标 `_` 按 gap #39 转义成 `\_`。
     line = "- 时间类变量： $t_{obs}$ 为数据观测时间。"
-    assert pp(line) == line
+    assert pp(line) == "- 时间类变量： $t\\_{obs}$ 为数据观测时间。"
 
 
 def test_multi_formula_line_untouched():
-    # $s_{i}$ 开头但整行不是单个公式 → 不改
+    # $s_{i}$ 开头但整行不是单个公式 → 不升级成块级。行内下标 `_` 按 gap #39 转义。
     line = "$s_{i}$ 、 $e_{i}$ 分别代表第 i 类数据源观测窗口起止时间："
-    # 该行以中文结尾，非 $ 结尾；即便首尾都是 $ 也因中间夹文字排除
-    assert pp(line) == line
+    # 该行以中文结尾，非 $ 结尾；即便首尾都是 $ 也因中间夹文字排除块级升级
+    assert pp(line) == "$s\\_{i}$ 、 $e\\_{i}$ 分别代表第 i 类数据源观测窗口起止时间："
 
 
 def test_already_block_formula_untouched():
@@ -447,15 +447,17 @@ def test_clean_file_passes_check(tmp_path=None):
 
 
 def test_cjk_both_sides_get_space():
-    assert pp("收益率$r_t$表示\n") == "收益率 $r_t$ 表示\n"
+    # CJK 补空格 + 行内下标 `_`→`\_`（gap #39）
+    assert pp("收益率$r_t$表示\n") == "收益率 $r\\_t$ 表示\n"
 
 
 def test_fullwidth_paren_gets_space():
-    assert pp("（$w_t$）\n") == "（ $w_t$ ）\n"
+    assert pp("（$w_t$）\n") == "（ $w\\_t$ ）\n"
 
 
 def test_ascii_spaced_is_left_alone():
-    assert pp("see $r_t$ here\n") == "see $r_t$ here\n"
+    # ASCII 空格不动；行内下标 `_` 仍按 gap #39 转义
+    assert pp("see $r_t$ here\n") == "see $r\\_t$ here\n"
 
 
 def test_display_dollar_pair_untouched():
@@ -618,7 +620,7 @@ def test_fix_rewrites_file_in_place():
     assert mpp.main([str(path)]) == 0
     fixed = path.read_text(encoding="utf-8")
     assert '<div align="center">\n\n**表 6-1　标题**\n\n</div>' in fixed
-    assert "收益率 $r_t$ 表示" in fixed
+    assert "收益率 $r\\_t$ 表示" in fixed  # CJK 补空格 + gap #39 下标转义
 
 
 def test_missing_file_exits_two():
@@ -736,6 +738,99 @@ def test_unbalanced_display_math_does_not_pollute_prose():
     assert bs + "*斜体" + bs + "*" in out        # 正文转义星号不动
     assert "30" + bs + "% 折扣" in out            # 正文转义百分号不动
     assert bs * 2 + "*" not in out               # 没被误双写
+
+
+# --- 规则10：行内 $…$ 内裸下划线转义 `_`→`\_`（gap #39，GitHub emphasis 真机验证）
+# GitHub GFM 在**数学提取之前**跑 emphasis：行内 `$…$` span 内未转义的 `_` 会被当成
+# emphasis 标记两两配对成 `<em>`，破坏 `$…$` 配对 → 公式字面显示不渲染。修法：行内
+# span 内裸 `_`（前一字符不是 `\`）→ `\_`，GFM 剥一层 → MathJax 收裸 `_` = 下标语义。
+# 与反斜杠加倍（gap #38）协同：转义**在反斜杠加倍之后**做，产出的 `\_` 不再被加倍
+# （否则 `\_` k=1 会翻 `\\_` → MathJax 收字面下划线，丢下标语义 = 陷阱）。块级 `$$…$$`
+# 不触发 emphasis（`$$` 独占行），块内不转义。与 gap #31 `\\_`（字面下划线）区分：
+# `_` 前是 `\` 就跳过，`\\_` 保持 `\\_`、`\_` 保持 `\_`。真机 gh api /markdown 验证。
+
+
+def test_inline_math_underscore_escaped():
+    # 04 真实用例：`$\hat{u}_{t-1} = Y_{t-1}$` 两个下标 `_` 都变 `\_`（否则跨 `_` 配 <em>）
+    out = pp("式 $\\hat{u}_{t-1} = Y_{t-1}$ 结束")
+    assert "\\hat{u}\\_{t-1} = Y\\_{t-1}" in out
+    # 定界符与两侧正文不动
+    assert out.startswith("式 $") and out.endswith("$ 结束")
+
+
+def test_inline_math_cross_formula_underscore_escaped():
+    # 05 真实用例：两个行内公式各含 `_`，跨公式 `_` 会配成 <em>；每个 `_` 都要转义
+    out = pp("向量 $\\mathbf{w}_{\\text{A}}$ 和 $\\mathbf{w}_{\\text{B}}$ 比较")
+    assert "\\mathbf{w}\\_{\\text{A}}" in out
+    assert "\\mathbf{w}\\_{\\text{B}}" in out
+
+
+def test_inline_math_simple_subscript_escaped():
+    # 本来就渲染 OK 的单下标也一律转义（真机验证无副作用）
+    out = pp("变量 $x_t$ 记法")
+    assert "$x\\_t$" in out
+
+
+def test_inline_math_multi_subscript_escaped():
+    out = pp("差分 $Y_{t-1} - X_{t-1}$ 定义")
+    assert "$Y\\_{t-1} - X\\_{t-1}$" in out
+
+
+def test_inline_math_underscore_escape_idempotent():
+    # 幂等：已含 `\_`（单反斜杠 = 下标语义）再跑一次不被二次转义成 `\\_`
+    once = pp("式 $x\\_t$ 结束")
+    assert "$x\\_t$" in once          # 保持单反斜杠
+    assert "$x\\\\_t$" not in once    # 没被翻成双反斜杠
+    assert pp(once) == once            # 二跑不变
+
+
+def test_inline_math_gap31_double_underscore_preserved():
+    # 与 gap #31 区分：`\\_`（双反斜杠 = 字面下划线）里的 `_` 前是 `\` → 跳过，保持 `\\_`
+    # 语义差异：`\_`（单）= 下标；`\\_`（双）= 字面下划线。两者都不被本规则再动。
+    out = pp("式 $a\\\\_b$ 结束")      # 源含两反斜杠（Python \\\\ = 字面两反斜杠）
+    assert "$a\\\\_b$" in out          # 保持两反斜杠
+    assert "$a\\\\\\_b$" not in out    # 没变三反斜杠
+
+
+def test_prose_underscore_not_escaped():
+    # span 外正文的 `_` 是合法 emphasis，绝不能动
+    line = "普通文字 _斜体_ 测试"
+    assert pp(line) == line
+
+
+def test_block_math_underscore_not_escaped():
+    # 块级 $$…$$ 不触发 emphasis，块内 `_` 原样（不加转义）
+    text = "$$\n\\hat{u}_{t-1} = Y_{t-1}\n$$\n"
+    out = pp(text)
+    assert "\\hat{u}_{t-1} = Y_{t-1}" in out   # 块内下标裸 `_` 保持
+    assert "\\_" not in out                     # 块内没被加转义
+
+
+def test_oneline_display_math_underscore_not_escaped():
+    # 单行 $$…$$（展示块）同样不触发 emphasis，块内 `_` 不转义
+    out = pp("$$x_t = y_t$$")
+    assert out == "$$x_t = y_t$$"
+
+
+def test_inline_math_underscore_escape_inside_fence_untouched():
+    # fence 内长得像行内公式的 `$x_t$` 不碰
+    text = "说明\n\n```\n$x_t$\n```\n"
+    assert pp(text) == text
+
+
+def test_inline_math_rowbreak_and_underscore_coexist():
+    # 与 gap #38 反斜杠加倍不冲突：行内公式同含换行 `\\`（k=2）和下标 `_`。
+    # 换行仍双写成四反斜杠、下标 `_` 转义成 `\_`（单）、互不干扰。
+    out = pp("矩阵 $a_1 \\\\ b_2$ 处")
+    assert "a\\_1" in out and "b\\_2" in out    # 下标转义（单反斜杠 + _）
+    assert "\\\\\\\\" in out                     # 换行双写成四反斜杠
+    assert "$a" in out                           # 定界符在
+
+
+def test_inline_math_underscore_then_backslash_doubling_idempotent():
+    # 端到端幂等：含下标 + 换行的行内公式跑两次不再变化
+    once = pp("矩阵 $a_1 \\\\ b_2$ 处")
+    assert pp(once) == once
 
 
 if __name__ == "__main__":
