@@ -298,6 +298,26 @@ transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① fo
 | `<span data-formula='X' style='cursor:pointer'><span data-formula='X'>…</span></span>` | 计 1 个公式 | 正例 | 双层相同 LaTeX 去重 |
 | `<section data-formula='A'><span data-formula='n'>…</span></section>` | 计 2 个公式（A block、n inline） | 反例 | 不同 LaTeX 是合法嵌套，不去重 |
 
+## 代码块缩进保留（缺陷 40，结构规则，非正则，courses-md 极客时间真机发现）
+
+Slate 代码块把行缩进存成**独立的纯空白 `data-slate-string` 文本节点**（如 `<span data-slate-string=true>            </span>` 12 空格）。BS4/浏览器按 HTML 标准折叠连续空白，该缩进在 `BeautifulSoup(html, "lxml")` **解析瞬间**塌成 1 空格 → Python 等缩进敏感代码不可运行（`IndentationError`）。所有 parser（lxml/html.parser/html5lib）都折叠，非 parser 差异。缩进+首词同节点的行（`    merged = `）靠 BS4 内部前导空格保留侥幸存活，独立纯空白缩进节点必丢——**同块内两种混存**，产出缩进 4/8/12 与 1 空格混杂。
+
+**修复**（`preflight.py::_protect_code_indent`）：解析前把 **≥2 空格**的纯空白 slate-string 节点空格转 NBSP（`\xa0`）。BS4 不折叠 NBSP，缩进原样穿过解析/序列化/二次解析；`fast_converter._code_text` 的 `.replace("\xa0", " ")` 还原。≥2 空格约束排除正文单空格节点（实证：典型页面 ≥2 空格纯空白节点 100% 落在 code-line 内，误伤为零）。`build_preflight` 里 signals 与 input_bytes 用**原始** html（NBSP 是内部机制，不进 strict marker 检测和字节统计）。
+
+**守恒门**（`fast_converter.py::_assert_indent_intact`）：产出代码块「同块内既有 1 空格缩进行、又有 ≥2 空格缩进行」= 折叠损坏指纹（正常代码不用 1 空格作缩进单位）→ fail-close 到 strict。防 NBSP 保护漏行静默交付坏缩进。
+
+真机验证：本文件代码 11-1/11-2/11-5 修前 1 空格塌陷（`ast.parse` SyntaxError），修后 4/8/12 空格全恢复，3 个纯 Python 块 `ast.parse` 全过。（代码 11-4 是 PowerShell heredoc 混排被误标 python，属语言标注问题，非本缺陷。）
+
+| 输入 | 期望 | 类别 | 理由 |
+|------|:---:|------|------|
+| `<span data-slate-string=true>            </span>`（12空格独立节点） | 转 12 NBSP，解析后还原 12 空格 | 正例 | 独立纯空白缩进节点,BS4 会折叠,必须保护 |
+| `<span data-slate-string="true">    </span>`（带引号属性） | 转 4 NBSP | 正例 | 属性有无引号都命中 |
+| `<span data-slate-string=true> </span>`（单空格） | 原样不动 | 反例 | 正文正常空格,非缩进,免误伤 |
+| `<span data-slate-string=true>    merged = </span>`（缩进+代码同节点） | 原样不动 | 反例 | 末尾非纯空格不匹配,靠 BS4 内部保留 |
+| 守恒门:`def f():\n    x=1\n    return x`（纯 4 空格） | 通过 | 反例 | 正常缩进不触发 |
+| 守恒门:`def f():\n  x=1\n  return x`（2 空格单位） | 通过 | 反例 | 2 空格是合法惯例,全 ≥2 不混用 |
+| 守恒门:`def f():\n    x=1\n if c:\n return y`（1 与 4 混用） | fail-close FastPathUnsupported | 正例 | 折叠损坏指纹 |
+
 ---
 
 新增规则请按同样格式加小节 + 用例（≥1 正例 + ≥2 反例）。用例是本 skill 的回归测试套件，价值随行数增长。

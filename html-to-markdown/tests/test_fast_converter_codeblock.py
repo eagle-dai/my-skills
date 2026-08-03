@@ -88,6 +88,42 @@ def test_code_block_no_blank_after_opening_fence():
     assert lines[-2] == "Test-Path src/y.py", lines
 
 
+# --- 缩进守恒门(缺陷 39):检测 BS4 空白折叠损坏 ------------------------------
+
+_assert_indent = fc._assert_indent_intact
+FastPathUnsupported = fc.FastPathUnsupported
+
+
+def test_indent_gate_passes_normal_4space():
+    # 正常 4/8 空格缩进,不该触发
+    _assert_indent("def f():\n    x = 1\n    if x:\n        return x")
+
+
+def test_indent_gate_passes_no_indent():
+    # 全顶格,无缩进,不该触发
+    _assert_indent("a = 1\nb = 2\nc = 3")
+
+
+def test_indent_gate_passes_2space_unit():
+    # 2 空格缩进单位(合法惯例),全 ≥2,不触发
+    _assert_indent("def f():\n  x = 1\n  return x")
+
+
+def test_indent_gate_fires_on_collapsed():
+    # 折叠损坏指纹:1 空格与 ≥2 空格混用(如本缺陷的坏产出)
+    collapsed = "def f():\n    x = 1\n if cond:\n return y"
+    try:
+        _assert_indent(collapsed)
+        raise AssertionError("守恒门应触发 FastPathUnsupported")
+    except FastPathUnsupported:
+        pass
+
+
+def test_indent_gate_ignores_blank_lines():
+    # 空行不参与判断
+    _assert_indent("def f():\n\n    return 1")
+
+
 if __name__ == "__main__":
     import sys
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

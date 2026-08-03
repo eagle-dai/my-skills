@@ -81,6 +81,32 @@ def _strip_blank_edges(text: str) -> str:
     return "\n".join(lines)
 
 
+def _assert_indent_intact(code: str) -> None:
+    """守恒门:检测代码块缩进是否被 BS4 空白折叠损坏。
+
+    Slate 缩进靠 preflight._protect_code_indent 的 NBSP 保护穿过解析。若某行缩进
+    漏保护,会塌成单空格。正常源代码不会用「1 空格」作缩进单位(惯例 2/4/tab)。
+    因此「同一块内既有恰好 1 空格缩进的行,又有 ≥2 空格缩进的行」是折叠损坏的指纹
+    ——fail-close 到 strict,不交付坏缩进。
+    """
+
+    has_single = False
+    has_multi = False
+    for line in code.split("\n"):
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 1:
+            has_single = True
+        elif indent >= 2:
+            has_multi = True
+    if has_single and has_multi:
+        raise FastPathUnsupported(
+            "code block indentation looks collapsed (mixed 1-space and "
+            "multi-space indent); requires strict handling"
+        )
+
+
 # gap #23: highlight.js pages carry no `language-xxx` class on <pre>/<code>
 # (only inner hljs-* spans), so class-based detection falls back to `text` and
 # loses the language. Infer from content, but only when confident — a wrong tag
@@ -540,6 +566,7 @@ class MarkdownConverter:
         code_node = node.find("code") if node.name == "pre" else None
         target = code_node if isinstance(code_node, Tag) else node
         code = _strip_blank_edges(self._code_text(target).replace("\xa0", " "))
+        _assert_indent_intact(code)
         language = ""
         for name in list(target.get("class", ())) + list(node.get("class", ())):
             match = re.search(r"(?:language|lang)-([A-Za-z0-9_+-]+)", name)
