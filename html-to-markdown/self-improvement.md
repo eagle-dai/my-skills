@@ -302,7 +302,7 @@ transform（极大反斜杠 run，长 k，follow=run 后紧接字符）：① fo
 
 Slate 代码块把行缩进存成**独立的纯空白 `data-slate-string` 文本节点**（如 `<span data-slate-string=true>            </span>` 12 空格）。BS4/浏览器按 HTML 标准折叠连续空白，该缩进在 `BeautifulSoup(html, "lxml")` **解析瞬间**塌成 1 空格 → Python 等缩进敏感代码不可运行（`IndentationError`）。所有 parser（lxml/html.parser/html5lib）都折叠，非 parser 差异。缩进+首词同节点的行（`    merged = `）靠 BS4 内部前导空格保留侥幸存活，独立纯空白缩进节点必丢——**同块内两种混存**，产出缩进 4/8/12 与 1 空格混杂。
 
-**修复**（`preflight.py::_protect_code_indent`）：解析前把 **≥2 空格**的纯空白 slate-string 节点空格转 NBSP（`\xa0`）。BS4 不折叠 NBSP，缩进原样穿过解析/序列化/二次解析；`fast_converter._code_text` 的 `.replace("\xa0", " ")` 还原。≥2 空格约束排除正文单空格节点（实证：典型页面 ≥2 空格纯空白节点 100% 落在 code-line 内，误伤为零）。`build_preflight` 里 signals 与 input_bytes 用**原始** html（NBSP 是内部机制，不进 strict marker 检测和字节统计）。
+**修复**（`preflight.py::_protect_code_indent`）：解析前**只在 `data-slate-type=code-line` 段内**把 **≥2 空格**的纯空白 slate-string 节点空格转 NBSP（`\xa0`）。BS4 不折叠 NBSP，缩进原样穿过解析/序列化/二次解析；`fast_converter._code_text` 的 `.replace("\xa0", " ")` 还原。两层约束：① code-line 作用域（`_CODE_LINE_RE` 先切块，只在块内替换）——不误伤正文里恰好 ≥2 空格的纯空白节点（预排版对齐等）；② ≥2 空格排除正文单空格。属性值三形态（裸 `true`/双引号/单引号）都认，漏一种即漏保护退回折叠（review PR#81 finding）。`build_preflight` 里 signals 与 input_bytes 用**原始** html（NBSP 是内部机制，不进 strict marker 检测和字节统计）。
 
 **守恒门**（`fast_converter.py::_assert_indent_intact`）：产出代码块「同块内既有 1 空格缩进行、又有 ≥2 空格缩进行」= 折叠损坏指纹（正常代码不用 1 空格作缩进单位）→ fail-close 到 strict。防 NBSP 保护漏行静默交付坏缩进。
 

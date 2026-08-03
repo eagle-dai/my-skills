@@ -342,34 +342,65 @@ class WeChatMmbizTests(unittest.TestCase):
 
 
 class ProtectCodeIndentTests(unittest.TestCase):
-    """缺陷 39:Slate 代码缩进(独立纯空白 slate-string 节点)被 BS4 折叠。
-    解析前转 NBSP 保护。"""
+    """缺陷 40:Slate 代码缩进(独立纯空白 slate-string 节点)被 BS4 折叠。
+    解析前在 code-line 段内转 NBSP 保护。"""
+
+    @staticmethod
+    def _code_line(inner: str) -> str:
+        # 把节点包进真实 code-line 块,保护只在此块内生效
+        return f'<div data-slate-type=code-line>{inner}</div>'
 
     def test_multi_space_pure_node_becomes_nbsp(self) -> None:
         # ≥2 空格纯空白缩进节点 → NBSP(不折叠)
-        html = 'x<span data-slate-string=true>            </span>y'
+        html = self._code_line('<span data-slate-string=true>            </span>y')
         out = preflight._protect_code_indent(html)
         self.assertIn("\xa0" * 12, out)
         self.assertNotIn("            ", out)
 
     def test_quoted_attr_variant(self) -> None:
-        # 带引号属性形态也命中
-        html = 'x<span data-slate-string="true">    </span>y'
+        # 双引号属性形态也命中
+        html = self._code_line('<span data-slate-string="true">    </span>y')
+        out = preflight._protect_code_indent(html)
+        self.assertIn("\xa0\xa0\xa0\xa0", out)
+
+    def test_single_quoted_attr_variant(self) -> None:
+        # 单引号属性形态也命中(review finding:漏此形态则缩进漏保护退回折叠)
+        html = self._code_line("<span data-slate-string='true'>    </span>y")
         out = preflight._protect_code_indent(html)
         self.assertIn("\xa0\xa0\xa0\xa0", out)
 
     def test_single_space_untouched(self) -> None:
-        # 单空格是正文正常空格,不是缩进 → 不动,免误伤正文
-        html = 'a<span data-slate-string=true> </span>b'
+        # 单空格是正文正常空格,不是缩进 → 不动,免误伤
+        html = self._code_line('<span data-slate-string=true> </span>b')
         out = preflight._protect_code_indent(html)
         self.assertEqual(out, html)
 
     def test_node_with_code_untouched(self) -> None:
         # 含代码字符的节点(缩进+首词同节点)末尾非纯空格 → 不匹配,靠 BS4 内部
         # 前导空格保留机制,本函数不动它
-        html = '<span data-slate-string=true>    merged = </span>'
+        html = self._code_line('<span data-slate-string=true>    merged = </span>')
         out = preflight._protect_code_indent(html)
         self.assertEqual(out, html)
+
+    def test_prose_multispace_node_untouched(self) -> None:
+        # review finding:code-line 外正文里恰好 ≥2 空格的纯空白节点不该被碰
+        # (预排版对齐等)。作用域约束保证只在 code-line 内替换。
+        html = (
+            '<div data-slate-type=paragraph>'
+            '<span data-slate-string=true>      </span>对齐文本</div>'
+        )
+        out = preflight._protect_code_indent(html)
+        self.assertEqual(out, html)
+        self.assertNotIn("\xa0", out)
+
+    def test_code_node_indent_survives_bs4_roundtrip(self) -> None:
+        # review finding:test_node_with_code_untouched 依赖"BS4 保留含代码节点
+        # 前导空格",补 roundtrip 断言证实该依赖成立(缩进+词完整穿过解析)。
+        from bs4 import BeautifulSoup
+        html = self._code_line('<span data-slate-string=true>    merged = x</span>')
+        protected = preflight._protect_code_indent(html)
+        text = BeautifulSoup(protected, "lxml").get_text()
+        self.assertEqual(text.replace("\xa0", " "), "    merged = x")
 
     def test_roundtrip_survives_bs4_parse(self) -> None:
         # 端到端:NBSP 保护后经 BS4 解析,缩进完整存活,还原得回空格
