@@ -510,17 +510,32 @@ def detect_signals(
 # ``.replace("\xa0", " ")`` 再还原成普通空格。
 #
 # ≥2 空格是关键约束:单空格是正文正常空格(非缩进),不匹配以免误伤正文;含代码
-# 字符的节点末尾不是紧邻 ``</span>`` 的纯空格,同样不匹配。实证:典型极客时间页面
-# 所有 ≥2 空格纯空白 slate-string 节点均落在 code-line 内,误伤面为零。
+# 字符的节点末尾不是紧邻 ``</span>`` 的纯空格,同样不匹配。为免误伤正文里恰好
+# ≥2 空格的纯空白节点(预排版对齐等),只在 ``data-slate-type=code-line`` 块内替换
+# ——不再依赖"所有 ≥2 空格节点都在 code-line 内"的实证假设。
+_CODE_LINE_RE = re.compile(
+    r'<(?P<tag>[a-zA-Z]+)\b[^>]*\bdata-slate-type=(?:"code-line"|\'code-line\'|code-line)[^>]*>'
+    r'.*?</(?P=tag)>',
+    re.DOTALL,
+)
+# 属性值三形态(裸/双引号/单引号)都认,漏一种缩进即漏保护退回折叠。
 _CODE_INDENT_RE = re.compile(
-    r'(data-slate-string=(?:"true"|true)>)(  +)(</span>)'
+    r'(data-slate-string=(?:"true"|\'true\'|true)>)(  +)(</span>)'
 )
 
 
-def _protect_code_indent(html: str) -> str:
-    """把 ≥2 空格纯空白 slate-string 节点的空格换成 NBSP,防 BS4 折叠代码缩进。"""
+def _protect_indent_in_segment(segment: str) -> str:
     return _CODE_INDENT_RE.sub(
         lambda m: m.group(1) + "\xa0" * len(m.group(2)) + m.group(3),
+        segment,
+    )
+
+
+def _protect_code_indent(html: str) -> str:
+    """把 code-line 块内 ≥2 空格纯空白 slate-string 节点的空格换成 NBSP,防 BS4
+    折叠代码缩进。只在 code-line 段内替换,正文不受影响。"""
+    return _CODE_LINE_RE.sub(
+        lambda m: _protect_indent_in_segment(m.group(0)),
         html,
     )
 
