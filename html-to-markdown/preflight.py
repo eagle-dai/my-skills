@@ -14,6 +14,7 @@ import argparse
 from dataclasses import asdict, dataclass, field
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -502,7 +503,31 @@ def detect_signals(
     return signals
 
 
+# Slate 代码块把缩进存成独立的纯空白 ``data-slate-string`` 文本节点。BS4/浏览器
+# 按 HTML 标准折叠连续空白,该缩进在解析瞬间塌成 1 空格 → 代码缩进丢失、Python
+# 不可运行。解析前把 ≥2 空格的纯空白 slate-string 节点转 NBSP:BS4 不折叠 NBSP,
+# 缩进原样穿过解析/序列化/二次解析,``fast_converter._code_text`` 的
+# ``.replace("\xa0", " ")`` 再还原成普通空格。
+#
+# ≥2 空格是关键约束:单空格是正文正常空格(非缩进),不匹配以免误伤正文;含代码
+# 字符的节点末尾不是紧邻 ``</span>`` 的纯空格,同样不匹配。实证:典型极客时间页面
+# 所有 ≥2 空格纯空白 slate-string 节点均落在 code-line 内,误伤面为零。
+_CODE_INDENT_RE = re.compile(
+    r'(data-slate-string=(?:"true"|true)>)(  +)(</span>)'
+)
+
+
+def _protect_code_indent(html: str) -> str:
+    """把 ≥2 空格纯空白 slate-string 节点的空格换成 NBSP,防 BS4 折叠代码缩进。"""
+    return _CODE_INDENT_RE.sub(
+        lambda m: m.group(1) + "\xa0" * len(m.group(2)) + m.group(3),
+        html,
+    )
+
+
 def build_preflight(html: str) -> PreflightResult:
+    original_html = html
+    html = _protect_code_indent(html)
     soup = BeautifulSoup(html, "lxml")
     standalone_math_tex_scripts = standalone_math_tex_script_count(soup)
     body, body_selector = select_body(soup)
@@ -510,8 +535,9 @@ def build_preflight(html: str) -> PreflightResult:
     compact_html = compact_root.decode(formatter="minimal")
     formulas = collect_formulas(compact_root)
     assets = collect_assets(compact_root)
+    # signals 用原始 html:NBSP 保护是内部机制,strict marker 检测应看原文。
     signals = detect_signals(
-        html,
+        original_html,
         compact_root,
         assets,
         standalone_math_tex_scripts=standalone_math_tex_scripts,
@@ -520,7 +546,7 @@ def build_preflight(html: str) -> PreflightResult:
     for item in formulas:
         source_counts[item.source_kind] = source_counts.get(item.source_kind, 0) + 1
 
-    input_bytes = len(html.encode("utf-8"))
+    input_bytes = len(original_html.encode("utf-8"))
     compact_bytes = len(compact_html.encode("utf-8"))
     visible_text_bytes = len(_normalized_text(compact_root).encode("utf-8"))
     recommended_mode = "strict" if signals["strict_reasons"] else "fast"
