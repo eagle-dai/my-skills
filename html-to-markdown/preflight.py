@@ -514,8 +514,8 @@ def detect_signals(
 # ≥2 空格的纯空白节点(预排版对齐等),只在 ``data-slate-type=code-line`` 块内替换
 # ——不再依赖"所有 ≥2 空格节点都在 code-line 内"的实证假设。
 _CODE_LINE_RE = re.compile(
-    r'<[a-zA-Z]+\b[^>]*\bdata-slate-type=(?:"code-line"|\'code-line\'|code-line)[^>]*>'
-    r'.*?</[a-zA-Z]+>',
+    r'<(?P<tag>[a-zA-Z]+)\b[^>]*\bdata-slate-type=(?:"code-line"|\'code-line\'|code-line)[^>]*>'
+    r'.*?</(?P=tag)>',
     re.DOTALL,
 )
 # 属性值三形态(裸/双引号/单引号)都认,漏一种缩进即漏保护退回折叠。

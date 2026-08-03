@@ -402,6 +402,29 @@ class ProtectCodeIndentTests(unittest.TestCase):
         text = BeautifulSoup(protected, "lxml").get_text()
         self.assertEqual(text.replace("\xa0", " "), "    merged = x")
 
+    def test_indent_node_followed_by_word_span(self) -> None:
+        # 真实结构:同一 code-line 内行首独立缩进节点 + 首词节点(见
+        # self-improvement.md 缺陷 40「同块内两种混存」)。段正则用配对闭合标签
+        # ``(?P=tag)`` 匹配到 code-line 容器的 </div>,不被内层第一个 </span>
+        # 截短,行首缩进照常保护。
+        html = self._code_line(
+            '<span data-slate-string=true>            </span>'
+            '<span data-slate-string=true>merged = x</span>'
+        )
+        out = preflight._protect_code_indent(html)
+        self.assertIn("\xa0" * 12, out)
+
+    def test_multiple_code_line_blocks_each_protected(self) -> None:
+        # 多个 code-line 块各自命中:非贪婪按块匹配,每块行首缩进独立保护。
+        html = (
+            self._code_line('<span data-slate-string=true>    </span>'
+                            '<span data-slate-string=true>a</span>')
+            + self._code_line('<span data-slate-string=true>        </span>'
+                              '<span data-slate-string=true>b</span>')
+        )
+        out = preflight._protect_code_indent(html)
+        self.assertEqual(out.count("\xa0"), 12)  # 4 + 8
+
     def test_roundtrip_survives_bs4_parse(self) -> None:
         # 端到端:NBSP 保护后经 BS4 解析,缩进完整存活,还原得回空格
         from bs4 import BeautifulSoup
