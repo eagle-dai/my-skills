@@ -44,6 +44,9 @@ NOISE_SELECTORS = [
     "script", "style", ".aside", ".VPDocAsideOutline",
     ".edit-info", ".prev-next", ".VPDocFooter", ".pager",
     ".table-of-contents", ".vp-doc-footer",
+    # VitePress code-group(tab 组)的 tab 栏:<label> 文本(如 "Java"/"Node.js",
+    # 单 tab 时甚至是语言名 "sh")会泄漏成裸文本行。整条 .tabs 删掉(含 radio input)。
+    ".vp-code-group .tabs",
     # 以下收窄到代码块内,避免误删正文 UI 词(如 <button>Save</button>、
     # i18n 文档正文里的 <span class="lang">zh-CN</span>):
     "div[class*=language] button",       # 复制按钮(裸 button 会吞正文)
@@ -57,6 +60,12 @@ _ZERO_WIDTH = re.compile(r"[​‌‍⁠﻿-]")
 _ANCHOR_LINK = re.compile(r"\[[​#\s]*\]\(#[^)]*\)")
 # 3+ 连续空行 → 2 行
 _MULTI_BLANK = re.compile(r"\n{3,}")
+# VitePress 属性表把软换行 <wbr> / 断行 <br> / 强调 <i> 等以【转义文本】塞进
+# 单元格(源码 &lt;wbr&gt;),markdownify 转 <table> 时不递归转,还原成裸标签文本
+# 混进 md。只在【表格单元格文本节点】里清,不碰正文/行内代码里的标签字面量。
+_CELL_DROP = re.compile(r"<wbr\s*/?>")                        # 软换行占位,删
+_CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空格
+_CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
 
 
 def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
@@ -98,6 +107,18 @@ def strip_noise_and_images(body: Tag) -> None:
     for sel in NOISE_SELECTORS:
         for t in body.select(sel):
             t.decompose()
+    # 表格单元格里的裸标签文本(<wbr>/<br>/<i> 等,VitePress 属性表以转义文本塞入,
+    # markdownify 不递归转 <td>)。只清单元格内的【文本节点】,且跳过 code/pre/kbd/samp
+    # 内的文本 —— 属性表值列常放行内代码,里面的 <br>/<wbr> 是要展示的标签字面量,不能动。
+    for cell in body.find_all(["td", "th"]):
+        for s in cell.find_all(string=True):
+            if s.find_parent(["code", "pre", "kbd", "samp"]):
+                continue
+            new = _CELL_DROP.sub("", str(s))
+            new = _CELL_SPACE.sub(" ", new)
+            new = _CELL_UNWRAP.sub("", new)
+            if new != str(s):
+                s.replace_with(new)
     for img in body.find_all("img"):
         parent = img.parent
         # 父 <a> 只包这一张图 → 整个链接丢弃,否则只删 img
@@ -111,6 +132,12 @@ def strip_noise_and_images(body: Tag) -> None:
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
             fig.decompose()
+    # 空 heading:两种来源 —— ①图砍后剩壳(img 上面已删) ②源里就空(只含 header-anchor
+    # + 零宽字符,如 VitePress <h4 id=""><a href="#">​</a></h4>)。零宽 strip 不掉,先剥再判。
+    # (img 在上面已 decompose,故不必再判 h.find("img");纯图 heading 图删后即空,该删。)
+    for h in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        if not _ZERO_WIDTH.sub("", h.get_text()).strip():
+            h.decompose()
 
 
 def code_language(pre: Tag) -> str:
