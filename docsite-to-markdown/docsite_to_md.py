@@ -124,8 +124,12 @@ def pick_body(soup: BeautifulSoup, selector: str | None):
     raise RuntimeError("找不到正文容器,用 --selector 指定")
 
 
-def strip_noise_and_images(body: Tag) -> None:
-    """删噪声节点 + 全砍图片(含只包一张图的父 <a> 死链)。"""
+def strip_noise_and_images(body: Tag, image_ctx: "ImageContext | None" = None) -> None:
+    """删噪声节点 + 处理图片。
+
+    image_ctx=None(默认):全砍图片(含只包一张图的父 <a> 死链)。
+    image_ctx 非 None:下载本地化,重写 src 为相对路径;失败降级为占位文本。
+    """
     for sel in NOISE_SELECTORS:
         for t in body.select(sel):
             t.decompose()
@@ -141,15 +145,10 @@ def strip_noise_and_images(body: Tag) -> None:
             new = _CELL_UNWRAP.sub("", new)
             if new != str(s):
                 s.replace_with(new)
-    for img in body.find_all("img"):
-        parent = img.parent
-        # 父 <a> 只包这一张图 → 整个链接丢弃,否则只删 img
-        if (isinstance(parent, Tag) and parent.name == "a"
-                and not parent.get_text(strip=True)
-                and len(parent.find_all("img")) == 1):
-            parent.decompose()
-        else:
-            img.decompose()
+    if image_ctx is None:
+        _strip_images(body)
+    else:
+        _localize_images(body, image_ctx)
     # 空 figure(图删光后剩壳)
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
@@ -160,6 +159,34 @@ def strip_noise_and_images(body: Tag) -> None:
     for h in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         if not _ZERO_WIDTH.sub("", h.get_text()).strip():
             h.decompose()
+
+
+def _strip_images(body: Tag) -> None:
+    """砍图:img 删除,只包一张图的父 <a> 整个删(死链)。"""
+    for img in body.find_all("img"):
+        parent = img.parent
+        if (isinstance(parent, Tag) and parent.name == "a"
+                and not parent.get_text(strip=True)
+                and len(parent.find_all("img")) == 1):
+            parent.decompose()
+        else:
+            img.decompose()
+
+
+def _localize_images(body: Tag, ctx: "ImageContext") -> None:
+    """下载图并重写 src 为相对路径;失败替换为占位文本节点。"""
+    for img in body.find_all("img"):
+        alt = (img.get("alt") or "").strip()
+        src = resolve_image_url(img.get("src"), ctx.page_url)
+        local = store_image(src, ctx) if src else None
+        if local is None:
+            # 用 <em> 让 markdownify 自然转成 *…*(裸 * 会被 markdownify 转义成 \*)
+            text = f"[图片: {alt}]" if alt else "[图片]"
+            em = BeautifulSoup("", "html.parser").new_tag("em")
+            em.string = text
+            img.replace_with(em)
+        else:
+            img["src"] = image_rel_href(local, ctx.md_path)
 
 
 def _href_link_text(href: str | None) -> str:
@@ -246,10 +273,11 @@ class DocConverter(markdownify.MarkdownConverter):
         return f"\n\n{fence}{lang}\n{code}\n{fence}\n\n"
 
 
-def html_to_md(html: str, selector: str | None) -> str:
+def html_to_md(html: str, selector: str | None,
+               image_ctx: "ImageContext | None" = None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     body = pick_body(soup, selector)
-    strip_noise_and_images(body)
+    strip_noise_and_images(body, image_ctx)
     unwrap_feature_links(body)
     md = DocConverter(heading_style="ATX", bullets="-").convert_soup(body)
     return clean(md)

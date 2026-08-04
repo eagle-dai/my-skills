@@ -593,6 +593,46 @@ def test_store_image_data_uri_decoded():
         assert p is not None and p.read_bytes() == raw
 
 
+# ── keep-images: 端到端(注入 fake downloader) ───────────────────────
+def conv_keep(body_html, downloader, page="https://s/docs/cds/", md_rel="cds/index.md"):
+    """keep-images 模式转换,注入 fake downloader + tmp out_dir。返 (md, out_dir)。"""
+    page_html = (f'<html><body><main class="main"><div class="vp-doc">'
+                 f'{body_html}</div></main></body></html>')
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp)
+    ctx = ImageContext(page_url=page, out_dir=out, md_path=out / md_rel,
+                       downloader=downloader)
+    md = html_to_md(page_html, selector=".vp-doc", image_ctx=ctx)
+    return md, out
+
+
+def test_keep_images_localizes_and_rewrites():
+    md, out = conv_keep('<p>t</p><img src="/docs/assets/csn.svg" alt="arch">',
+                        lambda url: b"<svg/>")
+    assert "![arch](../assets/csn.svg)" in md, "该保留图并重写为相对路径"
+    assert (out / "assets/csn.svg").exists(), "图该落盘"
+
+
+def test_keep_images_download_fail_placeholder():
+    md, _ = conv_keep('<img src="/docs/assets/x.png" alt="diagram">',
+                      lambda url: None)
+    assert "*[图片: diagram]*" in md, "下载失败该降级为占位"
+    assert "![" not in md, "失败不该留 md 图引用"
+
+
+def test_keep_images_fail_no_alt_placeholder():
+    md, _ = conv_keep('<img src="/docs/assets/x.png">', lambda url: None)
+    assert "*[图片]*" in md, "无 alt 失败占位"
+
+
+def test_keep_images_default_still_strips():
+    """不传 image_ctx 时,现有砍图行为不变。"""
+    page = ('<html><body><main class="main"><div class="vp-doc">'
+            '<img src="/foo.png" alt="x"><p>t</p></div></main></body></html>')
+    md = html_to_md(page, selector=".vp-doc")  # 无 image_ctx
+    assert "![" not in md and ".png" not in md
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
