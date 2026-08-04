@@ -235,6 +235,34 @@ def test_fence_aware_no_trailing_strip_inside_code():
     assert "    pass" in md, "代码块内缩进该保留"
 
 
+# ── 正文容器自动选择(pick_body,不传 selector) ───────────────────────
+def test_home_layout_picks_vphome_when_vpdoc_empty():
+    """VitePress home layout:.vp-doc 存在但空,正文在 .VPHome。
+    自动选择该跳过空 .vp-doc,兜底抽 .VPHome。"""
+    page = (
+        '<html><body><main class="main">'
+        '<div class="vp-doc"></div>'
+        '<div class="VPHome"><h1>CAP Docs</h1><p>Build enterprise apps.</p></div>'
+        '</main></body></html>'
+    )
+    md = html_to_md(page, selector=None)
+    assert "CAP Docs" in md, "空 .vp-doc 该被跳过,抽到 .VPHome"
+    assert "Build enterprise apps" in md
+
+
+def test_doc_layout_still_picks_nonempty_vpdoc():
+    """防回归:正常 doc 页 .vp-doc 有内容,即使 main 也匹配,
+    仍优先抽 .vp-doc(空容器跳过逻辑不该带偏正常页)。"""
+    page = (
+        '<html><body><main class="main">'
+        '<div class="vp-doc"><h1>Real Page</h1><p>Doc body here.</p></div>'
+        '</main></body></html>'
+    )
+    md = html_to_md(page, selector=None)
+    assert "Real Page" in md
+    assert "Doc body here" in md
+
+
 # ── URL → 路径映射 ────────────────────────────────────────────────────
 def test_url_to_path():
     base, out = "https://x.com/docs", Path("cap")
