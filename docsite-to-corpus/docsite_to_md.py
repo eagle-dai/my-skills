@@ -108,9 +108,12 @@ def strip_noise_and_images(body: Tag) -> None:
         for t in body.select(sel):
             t.decompose()
     # 表格单元格里的裸标签文本(<wbr>/<br>/<i> 等,VitePress 属性表以转义文本塞入,
-    # markdownify 不递归转 <td>)。只清单元格内的【文本节点】,正文/行内代码不受影响。
+    # markdownify 不递归转 <td>)。只清单元格内的【文本节点】,且跳过 code/pre/kbd/samp
+    # 内的文本 —— 属性表值列常放行内代码,里面的 <br>/<wbr> 是要展示的标签字面量,不能动。
     for cell in body.find_all(["td", "th"]):
         for s in cell.find_all(string=True):
+            if s.find_parent(["code", "pre", "kbd", "samp"]):
+                continue
             new = _CELL_DROP.sub("", str(s))
             new = _CELL_SPACE.sub(" ", new)
             new = _CELL_UNWRAP.sub("", new)
@@ -129,11 +132,11 @@ def strip_noise_and_images(body: Tag) -> None:
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
             fig.decompose()
-    # 空 heading:两种来源 —— ①图砍后剩壳 ②源里就空(只含 header-anchor + 零宽字符,
-    # 如 VitePress <h4 id=""><a href="#">​</a></h4>)。零宽字符 strip 不掉,先剥再判。
+    # 空 heading:两种来源 —— ①图砍后剩壳(img 上面已删) ②源里就空(只含 header-anchor
+    # + 零宽字符,如 VitePress <h4 id=""><a href="#">​</a></h4>)。零宽 strip 不掉,先剥再判。
+    # (img 在上面已 decompose,故不必再判 h.find("img");纯图 heading 图删后即空,该删。)
     for h in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
-        text = _ZERO_WIDTH.sub("", h.get_text()).strip()
-        if not text and not h.find("img"):
+        if not _ZERO_WIDTH.sub("", h.get_text()).strip():
             h.decompose()
 
 

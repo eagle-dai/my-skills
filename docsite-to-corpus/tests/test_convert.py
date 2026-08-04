@@ -202,6 +202,15 @@ def test_inline_code_tags_not_clobbered():
     assert "`<br>`" in md and "`<wbr>`" in md, "行内代码里的标签该保留"
 
 
+def test_table_cell_inline_code_tags_not_clobbered():
+    """单元格清理跳过 code/pre 内文本:属性表值列常放行内代码,里面展示的
+    <br>/<wbr> 标签字面量不能当噪声清掉。回归:DOM 遍历曾无差别抓 code 内文本。"""
+    html = '<table><tbody><tr><td>lineBreak</td>' \
+           '<td>Use <code>&lt;br&gt;</code> or <code>&lt;wbr&gt;</code></td></tr></tbody></table>'
+    md = conv(html)
+    assert "`<br>`" in md and "`<wbr>`" in md, "单元格内行内代码里的标签该保留"
+
+
 def test_empty_heading_removed():
     """空 heading 两种来源都该删:①图砍后剩壳 ②源里就空(只含 header-anchor
     + 零宽字符,零宽 strip 不掉需先剥)。含 img 的 heading 不误删。"""
