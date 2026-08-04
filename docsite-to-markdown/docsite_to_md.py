@@ -79,12 +79,15 @@ _CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空�
 _CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
 
 
+_UA = "docsite-to-md/1.0"
+
+
 def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
     """抓 HTML。静态 SSG 站正文已在 HTML 里,无需浏览器。"""
     last = None
     for i in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "docsite-to-md/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
@@ -386,6 +389,22 @@ def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
     return dest
 
 
+def _make_downloader(delay: float = 0.0) -> "Callable[[str], bytes | None]":
+    """返回图片下载器:成功返 bytes,失败(网络/404/超时)返 None,不抛。"""
+    def dl(url: str) -> "bytes | None":
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            if delay:
+                time.sleep(delay)
+            return data
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as e:
+            print(f"    ⚠ 图片下载失败 {url}: {e}", file=sys.stderr)
+            return None
+    return dl
+
+
 # ── URL → 输出路径映射 ────────────────────────────────────────────────
 def url_to_path(url: str, base_url: str, out_dir: Path) -> Path:
     """https://.../docs/cds/cdl → out_dir/cds/cdl.md; 尾斜杠→index.md
@@ -430,11 +449,22 @@ def main():
     ap.add_argument("--skip", action="append", default=[], help="跳过含此子串的 URL(可多次)")
     ap.add_argument("--delay", type=float, default=0.3, help="每页间隔秒")
     ap.add_argument("--limit", type=int, help="最多处理 N 页(调试)")
+    ap.add_argument("--keep-images", action="store_true",
+                    help="下载正文图片到 assets/ 并本地化引用(默认砍图)")
     args = ap.parse_args()
 
     if args.url:
-        md = html_to_md(fetch(args.url), args.selector)
+        image_ctx = None
+        if args.keep_images:
+            if not args.out:
+                ap.error("--keep-images 单页模式需 --out(图片相对路径基于输出文件位置)")
+            out_md = Path(args.out)
+            image_ctx = ImageContext(
+                page_url=args.url, out_dir=out_md.parent,
+                md_path=out_md, downloader=_make_downloader())
+        md = html_to_md(fetch(args.url), args.selector, image_ctx=image_ctx)
         if args.out:
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
             Path(args.out).write_text(md, encoding="utf-8")
             print(f"✓ {args.out} ({len(md)} chars)")
         else:
@@ -450,12 +480,19 @@ def main():
     if args.limit:
         urls = urls[:args.limit]
     out_dir = Path(args.out_dir)
+    shared_cache: dict[str, Path] = {}
+    downloader = _make_downloader(args.delay) if args.keep_images else None
     ok = fail = 0
     for i, url in enumerate(urls, 1):
         try:
-            md = html_to_md(fetch(url), args.selector)
             path = url_to_path(url, args.base_url, out_dir)
             path.parent.mkdir(parents=True, exist_ok=True)
+            image_ctx = None
+            if args.keep_images:
+                image_ctx = ImageContext(
+                    page_url=url, out_dir=out_dir, md_path=path,
+                    downloader=downloader, cache=shared_cache)
+            md = html_to_md(fetch(url), args.selector, image_ctx=image_ctx)
             path.write_text(md, encoding="utf-8")
             ok += 1
             print(f"[{i}/{len(urls)}] ✓ {path}")
