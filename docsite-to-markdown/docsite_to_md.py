@@ -52,6 +52,10 @@ NOISE_SELECTORS = [
     "div[class*=language] button",       # 复制按钮(裸 button 会吞正文)
     "div[class*=language] span.lang",    # 代码块语言角标(否则转成裸行)
     ".copy", ".copied",                  # 复制按钮类名(通用兜底)
+    # VitePress home layout 的 feature 卡片图标容器:<div class="icon"> 里是
+    # 装饰性 emoji(⭕️🍀🏆💯)或图标,会泄漏成正文裸行。收窄到 feature 卡片内
+    # (.box / .VPFeature),不裸删 .icon,避免误伤正文里合法的 .icon 元素。
+    ".box .icon", ".VPFeature .icon",
 ]
 
 # 零宽/PUA 字符(SingleFile、复制粘贴常带)
@@ -151,6 +155,36 @@ def strip_noise_and_images(body: Tag) -> None:
             h.decompose()
 
 
+def unwrap_feature_links(body: Tag) -> None:
+    """VitePress home layout 的 feature 卡片是整块可点的 <a>(class VPFeature),
+    内含 <h2 标题>/<p 详情>/<div link-text CTA>。markdownify 遇 <a> 包块级元素时
+    会把标题、列表全塞进链接文本 [## 标题 ...](url),渲染出来标题在方括号里、乱。
+
+    改法:把 a 内的块级内容(标题/详情)提到 a 之前当正文,a 只留底部 CTA 文字
+    (如 "Getting Started")+ href,转成正常的行尾链接 [Getting Started](url)。
+    只认 VitePress 官方 feature 结构(a.VPFeature),不碰普通链接。
+    """
+    for a in body.select("a.VPFeature"):
+        href = a.get("href")
+        # 底部 CTA 文字(.link-text);没有就用 a 的兜底文字
+        cta = a.select_one(".link-text")
+        cta_text = cta.get_text(strip=True) if cta else ""
+        # 把块级内容(除 CTA 外)逐个提到 a 之前
+        card = a.select_one("article.box") or a
+        for child in list(card.children):
+            if not isinstance(child, Tag):
+                continue
+            if cta is not None and (child is cta or cta in child.descendants):
+                continue
+            a.insert_before(child.extract())
+        # a 清空,只放 CTA 纯文本(保留 href → markdownify 转正常行内链接)
+        a.clear()
+        if cta_text:
+            a.string = cta_text
+        else:
+            a.decompose()  # 没 CTA 文字的空链接直接删
+
+
 def code_language(pre: Tag) -> str:
     """Shiki 语言在外层 <div class="language-xxx">;code/pre class 兜底。"""
     node = pre
@@ -185,6 +219,7 @@ def html_to_md(html: str, selector: str | None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     body = pick_body(soup, selector)
     strip_noise_and_images(body)
+    unwrap_feature_links(body)
     md = DocConverter(heading_style="ATX", bullets="-").convert_soup(body)
     return clean(md)
 

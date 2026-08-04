@@ -151,6 +151,60 @@ def test_code_copy_button_stripped():
     assert "```cds" in md
 
 
+def test_feature_card_icon_stripped():
+    """VitePress home feature 卡片的 <div class='icon'> 装饰 emoji 该删,
+    卡片标题/正文保留。"""
+    html = (
+        '<article class="box">'
+        '<div class="icon">⭕️</div>'
+        '<h2>Rapid Development</h2><p>Jumpstart & grow.</p>'
+        '</article>'
+    )
+    md = conv(html)
+    assert "⭕️" not in md, "feature 卡片图标 emoji 该删"
+    assert "Rapid Development" in md, "卡片标题该保留"
+    assert "Jumpstart" in md, "卡片正文该保留"
+
+
+def test_plain_icon_not_in_feature_card_kept():
+    """防误伤:正文里不在 .box/.VPFeature 内的 <div class='icon'> 不该被删
+    (.icon 是通用类名,只在 feature 卡片内才当装饰删)。"""
+    html = '<div class="icon">✅ Done</div><p>Body text.</p>'
+    md = conv(html)
+    assert "Done" in md, "非 feature 卡片的 .icon 内容该保留"
+    assert "Body text" in md
+
+
+def test_feature_link_unwrapped():
+    """VitePress home feature 卡片是整块可点的 <a class='VPFeature'>,内含标题/
+    详情/底部 CTA。该拆开:标题成正常 heading、CTA 成行尾链接,而非把整块塞进
+    [## 标题 ...](url)。"""
+    html = (
+        '<a class="VPLink VPFeature" href="/docs/get-started/">'
+        '<article class="box">'
+        '<div class="icon">⭕️</div>'
+        '<h2 class="title">Rapid Development</h2>'
+        '<p class="details">Jumpstart and grow.</p>'
+        '<div class="link-text"><p class="link-text-value">Getting Started</p></div>'
+        '</article></a>'
+    )
+    md = conv(html)
+    # 标题该是独立 heading 行,不在方括号里
+    assert any(l.strip() == "## Rapid Development" for l in md.splitlines()), \
+        "卡片标题该拆成正常 heading"
+    assert "Jumpstart and grow" in md
+    # CTA 该是行尾链接
+    assert "[Getting Started](/docs/get-started/)" in md, "CTA 该成行尾链接"
+    assert "[## Rapid Development" not in md, "标题不该被包进链接文本"
+
+
+def test_plain_link_not_unwrapped():
+    """防误伤:普通行内链接(非 VPFeature)不该被拆。"""
+    html = '<p>See <a href="/x">the guide</a> for details.</p>'
+    md = conv(html)
+    assert "[the guide](/x)" in md, "普通链接该原样保留"
+
+
 def test_code_group_tab_labels_stripped():
     """VitePress code-group 的 tab 栏 <label> 文本(Java/Node.js,单 tab 时甚至是
     语言名如 sh)会泄漏成裸文本行 —— 整条 .tabs 该删。"""
