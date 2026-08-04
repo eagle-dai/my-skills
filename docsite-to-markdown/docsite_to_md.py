@@ -53,9 +53,10 @@ NOISE_SELECTORS = [
     "div[class*=language] span.lang",    # 代码块语言角标(否则转成裸行)
     ".copy", ".copied",                  # 复制按钮类名(通用兜底)
     # VitePress home layout 的 feature 卡片图标容器:<div class="icon"> 里是
-    # 装饰性 emoji(⭕️🍀🏆💯)或图标,会泄漏成正文裸行。收窄到 feature 卡片内
-    # (.box / .VPFeature),不裸删 .icon,避免误伤正文里合法的 .icon 元素。
-    ".box .icon", ".VPFeature .icon",
+    # 装饰性 emoji(⭕️🍀🏆💯)或图标,会泄漏成正文裸行。收窄到 VitePress feature
+    # 卡片的确切结构(article.box / .VPFeature),不裸删 .icon,也不用宽泛的
+    # ".box .icon"(会误伤第三方主题里任何 class 含 box 的容器内的 .icon)。
+    "article.box .icon", ".VPFeature .icon",
 ]
 
 # 零宽/PUA 字符(SingleFile、复制粘贴常带)
@@ -155,6 +156,20 @@ def strip_noise_and_images(body: Tag) -> None:
             h.decompose()
 
 
+def _href_link_text(href: str | None) -> str:
+    """从 href 抽一段可读的链接文字(路径尾段)。只对像样的路径 href 生效;
+    退化 href(空 / 根 "/" / 纯锚点 "#x" / 纯 query "?x" / 相对 "./" "../")没有
+    有意义的文字,返回 "" —— 上游据此把无 CTA/无标题的空壳卡片链接直接删掉,
+    而非塞垃圾文字。"""
+    if not href:
+        return ""
+    # 剥 query / hash,只看路径部分
+    path = href.split("#", 1)[0].split("?", 1)[0]
+    seg = path.rstrip("/").rsplit("/", 1)[-1]
+    # 空段 / 当前目录 "." / 上级 ".." 都不是可读文字
+    return "" if seg in ("", ".", "..") else seg
+
+
 def unwrap_feature_links(body: Tag) -> None:
     """VitePress home layout 的 feature 卡片是整块可点的 <a>(class VPFeature),
     内含 <h2 标题>/<p 详情>/<div link-text CTA>。markdownify 遇 <a> 包块级元素时
@@ -166,23 +181,33 @@ def unwrap_feature_links(body: Tag) -> None:
     """
     for a in body.select("a.VPFeature"):
         href = a.get("href")
-        # 底部 CTA 文字(.link-text);没有就用 a 的兜底文字
+        # 底部 CTA 文字(.link-text)。CTA 是 VitePress schema 里的可选元素,
+        # 缺失时不能直接删链接(会丢导航目标),按 标题 → href 尾段 依次兜底。
         cta = a.select_one(".link-text")
         cta_text = cta.get_text(strip=True) if cta else ""
         # 把块级内容(除 CTA 外)逐个提到 a 之前
         card = a.select_one("article.box") or a
+        # 卡片标题是 card 的直接子 heading(VitePress 是 <h2 class="title">)。
+        # 只找直接子,不用深度搜索 —— 否则 details 里嵌套的 heading 会被误当标题。
+        title_text = ""
+        for c in card.children:
+            if isinstance(c, Tag) and c.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                title_text = c.get_text(strip=True)
+                break
         for child in list(card.children):
             if not isinstance(child, Tag):
                 continue
             if cta is not None and (child is cta or cta in child.descendants):
                 continue
             a.insert_before(child.extract())
-        # a 清空,只放 CTA 纯文本(保留 href → markdownify 转正常行内链接)
+        # a 清空,只放链接文字(保留 href → markdownify 转正常行内链接)。
+        # 文字优先级:CTA > 卡片标题 > href 的路径尾段。
         a.clear()
-        if cta_text:
-            a.string = cta_text
+        link_text = cta_text or title_text or _href_link_text(href)
+        if link_text:
+            a.string = link_text
         else:
-            a.decompose()  # 没 CTA 文字的空链接直接删
+            a.decompose()  # 无好文字的空壳链接(CTA/标题都没、href 也不像路径),删
 
 
 def code_language(pre: Tag) -> str:

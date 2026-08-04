@@ -205,6 +205,91 @@ def test_plain_link_not_unwrapped():
     assert "[the guide](/x)" in md, "普通链接该原样保留"
 
 
+def test_feature_link_no_cta_keeps_link_via_title():
+    """VitePress feature 卡片的 .link-text CTA 是可选的。缺 CTA 时不该静默
+    丢掉链接 —— 该用卡片标题当链接文字,保住 href 导航目标。"""
+    html = (
+        '<a class="VPFeature" href="/docs/get-started/">'
+        '<article class="box">'
+        '<h2 class="title">Rapid Development</h2>'
+        '<p class="details">Jumpstart and grow.</p>'
+        '</article></a>'
+    )
+    md = conv(html)
+    assert "Jumpstart and grow" in md
+    assert "[Rapid Development](/docs/get-started/)" in md, \
+        "缺 CTA 时该用标题当链接文字,不丢 href"
+
+
+def test_feature_link_no_cta_no_title_falls_back_to_href():
+    """CTA 和标题都缺时,退到 href 尾段当链接文字,仍不丢导航。"""
+    html = (
+        '<a class="VPFeature" href="/docs/guides/">'
+        '<article class="box"><p class="details">Body only.</p></article></a>'
+    )
+    md = conv(html)
+    assert "Body only" in md
+    assert "](/docs/guides/)" in md, "该保留 href 链接,文字用尾段兜底"
+    assert "[guides]" in md, "href 尾段 'guides' 该当链接文字"
+
+
+def test_multiple_feature_cards_order_preserved():
+    """多张 feature 卡片:各自拆开,顺序不乱。第一张【无 CTA】走标题兜底,
+    第二张有 CTA 走原路径 —— 覆盖两条链接文字路径 + 多卡片顺序。"""
+    html = (
+        '<a class="VPFeature" href="/a"><article class="box">'
+        '<h2>First Card</h2><p>Alpha.</p></article></a>'          # 无 CTA → 标题兜底
+        '<a class="VPFeature" href="/b"><article class="box">'
+        '<h2>Second Card</h2><p>Beta.</p>'
+        '<div class="link-text"><p>Go B</p></div></article></a>'   # 有 CTA
+    )
+    md = conv(html)
+    assert md.index("First Card") < md.index("Second Card"), "卡片顺序该保持"
+    assert "[First Card](/a)" in md, "无 CTA 的第一张该用标题当链接文字"
+    assert "[Go B](/b)" in md, "有 CTA 的第二张走 CTA"
+    assert "Alpha" in md and "Beta" in md
+
+
+def test_feature_link_degenerate_href_dropped():
+    """退化 href(根 / 纯锚点 / 纯 query / 相对 ./ ..)没有有意义的尾段文字。
+    无 CTA/标题时该删掉空壳链接,而非塞 '/' '#x' '?x' '.' '..' 这种垃圾。"""
+    for bad in ("/", "#section", "?tab=1", "./", "../"):
+        html = (
+            f'<a class="VPFeature" href="{bad}">'
+            '<article class="box"><p class="details">Just body.</p></article></a>'
+        )
+        md = conv(html)
+        assert "Just body" in md, f"正文该保留 (href={bad})"
+        assert bad not in md, f"退化 href {bad!r} 不该成链接文字"
+        assert "](" not in md, f"不该生成链接 (href={bad})"
+
+
+def test_degenerate_href_with_title_keeps_link_via_title():
+    """隔离 _href_link_text guard:卡片【有标题】但 href 退化(#section)时,
+    该用标题当链接文字保住链接 —— 退化的是 href 尾段,标题优先级更高。
+    (证明 drop 只发生在 CTA+标题都缺时,不是一见退化 href 就删。)"""
+    html = (
+        '<a class="VPFeature" href="#section">'
+        '<article class="box"><h2>Has Title</h2><p>Body.</p></article></a>'
+    )
+    md = conv(html)
+    assert "[Has Title](#section)" in md, "有标题时该用标题当链接文字,链接保留"
+
+
+def test_box_icon_scoped_to_article_box():
+    """收窄:只删 article.box 内的 .icon,第三方主题普通 <div class='box'>
+    (非 article)内的 .icon 不该被误删。两个方向都测。"""
+    # 正向:article.box 内的 .icon 该删
+    stripped = conv('<article class="box"><div class="icon">🎯</div>'
+                    '<h2>Card</h2><p>Detail.</p></article>')
+    assert "🎯" not in stripped, "article.box 内的 .icon 该被删"
+    assert "Card" in stripped and "Detail" in stripped
+    # 负向:非 article 的 .box 内 .icon 该保留
+    kept = conv('<div class="box"><span class="icon">📌 keep</span> Note text.</div>')
+    assert "keep" in kept, "非 article.box 容器内的 .icon 不该被删"
+    assert "Note text" in kept
+
+
 def test_code_group_tab_labels_stripped():
     """VitePress code-group 的 tab 栏 <label> 文本(Java/Node.js,单 tab 时甚至是
     语言名如 sh)会泄漏成裸文本行 —— 整条 .tabs 该删。"""
@@ -335,6 +420,29 @@ def test_doc_layout_still_picks_nonempty_vpdoc():
     md = html_to_md(page, selector=None)
     assert "Real Page" in md
     assert "Doc body here" in md
+
+
+def test_no_vpdoc_no_vphome_uses_candidate_loop():
+    """.vp-doc 和 .VPHome 都缺时,该退回候选表(article/main 等)照常抽。"""
+    page = (
+        '<html><body>'
+        '<article><h1>Article Page</h1><p>Article body.</p></article>'
+        '</body></html>'
+    )
+    md = html_to_md(page, selector=None)
+    assert "Article Page" in md
+    assert "Article body" in md
+
+
+def test_all_candidates_empty_raises():
+    """所有候选容器都存在但全空 → 该抛 RuntimeError,不返回空壳。"""
+    page = (
+        '<html><body>'
+        '<div class="vp-doc"></div><article></article><main></main>'
+        '</body></html>'
+    )
+    with raises(RuntimeError):
+        html_to_md(page, selector=None)
 
 
 # ── URL → 路径映射 ────────────────────────────────────────────────────
