@@ -41,11 +41,14 @@ BODY_SELECTORS = [".vp-doc", "main .content", "article", "main", ".markdown-body
 
 # 正文里要删的噪声(导航/侧栏/编辑链接/脚本等)
 NOISE_SELECTORS = [
-    "script", "style", "nav", ".aside", ".VPDocAsideOutline",
+    "script", "style", ".aside", ".VPDocAsideOutline",
     ".edit-info", ".prev-next", ".VPDocFooter", ".pager",
-    ".table-of-contents", ".vp-doc-footer", "button",
-    "span.lang",           # VitePress 代码块语言角标(否则转成裸行)
-    ".copy", ".copied",    # 复制按钮
+    ".table-of-contents", ".vp-doc-footer",
+    # 以下收窄到代码块内,避免误删正文 UI 词(如 <button>Save</button>、
+    # i18n 文档正文里的 <span class="lang">zh-CN</span>):
+    "div[class*=language] button",       # 复制按钮(裸 button 会吞正文)
+    "div[class*=language] span.lang",    # 代码块语言角标(否则转成裸行)
+    ".copy", ".copied",                  # 复制按钮类名(通用兜底)
 ]
 
 # 零宽/PUA 字符(SingleFile、复制粘贴常带)
@@ -64,6 +67,12 @@ def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
             req = urllib.request.Request(url, headers={"User-Agent": "docsite-to-md/1.0"})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            # 4xx(404 等)是确定性失败,重试无意义,立即抛
+            if 400 <= e.code < 500:
+                raise RuntimeError(f"fetch failed {url}: HTTP {e.code}") from e
+            last = e
+            time.sleep(1.5 * (i + 1))
         except (urllib.error.URLError, TimeoutError) as e:
             last = e
             time.sleep(1.5 * (i + 1))
@@ -107,7 +116,7 @@ def strip_noise_and_images(body: Tag) -> None:
 def code_language(pre: Tag) -> str:
     """Shiki 语言在外层 <div class="language-xxx">;code/pre class 兜底。"""
     node = pre
-    for _ in range(4):  # 向上找 4 层
+    for _ in range(6):  # 向上找 6 层(有些主题多包 line-numbers-wrapper 等)
         if not isinstance(node, Tag):
             break
         for cls in node.get("class", ()) or ():
@@ -170,13 +179,25 @@ def clean(md: str) -> str:
 
 # ── URL → 输出路径映射 ────────────────────────────────────────────────
 def url_to_path(url: str, base_url: str, out_dir: Path) -> Path:
-    """https://.../docs/cds/cdl → out_dir/cds/cdl.md; 尾斜杠→index.md"""
-    rel = url[len(base_url):].strip("/") if url.startswith(base_url) else url
-    rel = rel.split("#")[0].split("?")[0]
-    if not rel or url.rstrip("/").endswith(base_url.rstrip("/")):
+    """https://.../docs/cds/cdl → out_dir/cds/cdl.md; 尾斜杠→index.md
+
+    base_url 不匹配抛 ValueError(批量循环捕获后跳过并报错),不硬拼垃圾路径。
+    """
+    clean_url = url.split("#")[0].split("?")[0]  # 先剥 query/hash 再判尾斜杠
+    base = base_url.rstrip("/")
+    # 前缀匹配需边界对齐:base 之后是 / 或结束,避免 /docs 误配 /docs-old
+    if clean_url == base:
+        rel = ""
+    elif clean_url.startswith(base + "/"):
+        rel = clean_url[len(base) + 1:]
+    else:
+        raise ValueError(f"URL {url!r} 不在 base_url {base_url!r} 前缀下")
+    trailing_slash = rel.endswith("/")
+    rel = rel.strip("/")
+    if not rel:
         rel = "index"
-    if url.endswith("/"):
-        rel = rel + "/index" if rel != "index" else rel
+    elif trailing_slash:
+        rel = rel + "/index"
     return out_dir / f"{rel}.md"
 
 

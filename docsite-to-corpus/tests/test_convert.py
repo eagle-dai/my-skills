@@ -16,6 +16,23 @@ def conv(body_html: str) -> str:
     return html_to_md(page, selector=".vp-doc")
 
 
+class _Raises:
+    """不依赖 pytest 的 assertRaises 上下文管理器。"""
+    def __init__(self, exc):
+        self.exc = exc
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        assert et is not None and issubclass(et, self.exc), f"未抛 {self.exc.__name__}"
+        return True  # 吞掉预期异常
+
+
+def raises(exc):
+    return _Raises(exc)
+
+
 # ── 代码块:语言在外层 div.language-xxx,Shiki 行结构 ──────────────────
 def test_code_block_language_from_wrapper():
     html = '''
@@ -108,6 +125,32 @@ def test_empty_anchor_removed():
     assert "[Foo](#foo)" in md, "有文字的目录链接该保留"
 
 
+# ── 裸标签不误删正文 UI 词(review 回归) ─────────────────────────────
+def test_body_button_not_stripped():
+    """正文里讲 UI 的 <button>Save</button> 不该被当复制按钮删掉。"""
+    html = '<p>Click the <button>Save</button> button.</p>'
+    md = conv(html)
+    assert "Save" in md, "正文 button 文字该保留"
+
+
+def test_body_span_lang_not_stripped():
+    """正文里 i18n 的 <span class='lang'>zh-CN</span> 不该被当代码角标删。"""
+    html = '<p>The <span class="lang">zh-CN</span> locale.</p>'
+    md = conv(html)
+    assert "zh-CN" in md, "正文 span.lang 文字该保留"
+
+
+def test_code_copy_button_stripped():
+    """代码块内的复制按钮/语言角标仍该删。"""
+    html = '''<div class="language-cds">
+      <button class="copy"></button><span class="lang">cds</span>
+      <pre class="shiki"><code><span class="line"><span>x;</span></span></code></pre>
+    </div>'''
+    md = conv(html)
+    assert not [l for l in md.splitlines() if l.strip() == "cds"], "角标不该成裸行"
+    assert "```cds" in md
+
+
 # ── fence-aware 清洗:代码块内空格不动 ─────────────────────────────────
 def test_fence_aware_no_trailing_strip_inside_code():
     """代码块内行尾空格(缩进对齐用)不该被清洗动;仅非代码行清行尾。"""
@@ -129,6 +172,31 @@ def test_url_to_path():
     assert url_to_path("https://x.com/docs/cds/", base, out) == out / "cds/index.md"
     # 根 → index
     assert url_to_path("https://x.com/docs/", base, out) == out / "index.md"
+    assert url_to_path("https://x.com/docs", base, out) == out / "index.md"
+
+
+def test_url_to_path_base_with_trailing_slash():
+    """base_url 带尾斜杠也该正常。"""
+    assert url_to_path("https://x.com/docs/a", "https://x.com/docs/", Path("o")) == Path("o/a.md")
+
+
+def test_url_to_path_prefix_substring_trap():
+    """/docs 不该误配 /docs-old(前缀子串陷阱)。"""
+    with raises(ValueError):
+        url_to_path("https://x.com/docs-old/x", "https://x.com/docs", Path("o"))
+
+
+def test_url_to_path_base_mismatch_raises():
+    """base 不匹配该抛错,不硬拼垃圾路径。"""
+    with raises(ValueError):
+        url_to_path("https://other.com/a/b", "https://x.com/docs", Path("o"))
+
+
+def test_url_to_path_query_and_trailing_slash():
+    """query/hash 该先剥再判尾斜杠:.../cds/?x=1 → cds/index.md 而非 cds/.md"""
+    base, out = "https://x.com/docs", Path("o")
+    assert url_to_path("https://x.com/docs/cds/?x=1", base, out) == out / "cds/index.md"
+    assert url_to_path("https://x.com/docs/cds/cdl#anchor", base, out) == out / "cds/cdl.md"
 
 
 if __name__ == "__main__":

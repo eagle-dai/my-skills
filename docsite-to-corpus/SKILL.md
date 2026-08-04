@@ -1,6 +1,6 @@
 ---
 name: docsite-to-corpus
-description: Use when copying/mirroring a documentation website (VitePress, Docusaurus, MkDocs, or other static-site-generator docs) into local markdown for AI querying, RAG, or offline corpus — batch-converting many doc pages to clean text, not archiving a single rich page.
+description: Use when copying/mirroring a documentation website (VitePress best-supported; other SSG docs like Docusaurus/MkDocs via --selector) into local markdown for AI querying, RAG, or offline corpus — batch-converting many doc pages to clean text, not archiving a single rich page.
 ---
 
 # docsite-to-corpus
@@ -72,7 +72,7 @@ docsite_to_md.py --sitemap https://SITE/docs/sitemap.xml \
 # 无 sitemap,自备 URL 列表
 docsite_to_md.py --url-list urls.txt --base-url https://SITE/docs --out-dir OUT
 # 单页调试
-docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
+python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 ```
 
 脚本细节 `--help`。它已内置这些坑的处理(见下)。
@@ -95,6 +95,13 @@ docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 - **逐页猜 URL** → 用 sitemap/href 原始形式,尾斜杠敏感
 - **pandoc 转** → 不如 markdownify:pandoc 漏 shiki 类名、header-anchor 残留 HTML
 - **fence 不隔离清洗** → CJK/空格清洗会误改代码块内空格;清洗必须 fence-aware
+
+## 已知限制
+
+- **VitePress custom-block(`::: tip` / `::: warning`)降级**:标题+内容会压平成裸文本,`tip/warning` 语义标记丢失。对纯文本语料通常可接受,若需保留提示类型请后处理。
+- **非 VitePress 站**:Docusaurus/MkDocs 等正文容器不同,需 `--selector` 指定;custom container 处理未针对性适配。
+- **编码**:硬编码 utf-8,非 utf-8 站点(罕见)会出现替换字符。
+- **tab 组**:多 tab 标签(如 macOS/Linux 切换)渲染成纯文本可能粘连。
 
 ## 工具
 
