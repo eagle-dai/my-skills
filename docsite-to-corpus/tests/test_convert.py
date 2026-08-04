@@ -186,6 +186,22 @@ def test_table_cell_inline_html_cleaned():
     assert "cds.security.mock" in md, "属性名该连贯"
 
 
+def test_prose_literal_tags_not_clobbered():
+    """单元格 HTML 清理只限【表格内文本节点】,不碰正文里讲 HTML 标签的字面量。
+    回归:曾用文本层正则清 <wbr>/<br>/<i>,把正文 'the <b> tag' 里的 <b> 也吞了。"""
+    html = '<p>The tag &lt;b&gt; makes text bold, &lt;br&gt; breaks a line.</p>'
+    md = conv(html)
+    assert "<b>" in md and "<br>" in md, "正文里讲的 HTML 标签字面量该原样保留"
+
+
+def test_inline_code_tags_not_clobbered():
+    """行内代码里的标签字面量(文档讲 <br>/<wbr> 标签)不该被清空。
+    回归:文本层正则挡不住单反引号行内代码,曾把 `<br>` 清成空 ``。"""
+    html = '<p>Use <code>&lt;br&gt;</code> and <code>&lt;wbr&gt;</code> tags.</p>'
+    md = conv(html)
+    assert "`<br>`" in md and "`<wbr>`" in md, "行内代码里的标签该保留"
+
+
 def test_empty_heading_removed():
     """空 heading 两种来源都该删:①图砍后剩壳 ②源里就空(只含 header-anchor
     + 零宽字符,零宽 strip 不掉需先剥)。含 img 的 heading 不误删。"""

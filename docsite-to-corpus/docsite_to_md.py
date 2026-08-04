@@ -60,11 +60,12 @@ _ZERO_WIDTH = re.compile(r"[​‌‍⁠﻿-]")
 _ANCHOR_LINK = re.compile(r"\[[​#\s]*\]\(#[^)]*\)")
 # 3+ 连续空行 → 2 行
 _MULTI_BLANK = re.compile(r"\n{3,}")
-# VitePress 属性表把软换行标记 <wbr> / 斜体 <i> 以转义文本塞进单元格,
-# markdownify 转 <table> 时不递归转,还原成裸标签文本混进 md。fence-aware 清:
-_WBR = re.compile(r"<wbr\s*/?>")                         # 软换行,纯噪声,删
-_INLINE_TAG = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)>")  # 强调标签,解包留文本
-_BR_TAG = re.compile(r"<br\s*/?>")                       # 表格内断行 → 空格
+# VitePress 属性表把软换行 <wbr> / 断行 <br> / 强调 <i> 等以【转义文本】塞进
+# 单元格(源码 &lt;wbr&gt;),markdownify 转 <table> 时不递归转,还原成裸标签文本
+# 混进 md。只在【表格单元格文本节点】里清,不碰正文/行内代码里的标签字面量。
+_CELL_DROP = re.compile(r"<wbr\s*/?>")                        # 软换行占位,删
+_CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空格
+_CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
 
 
 def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
@@ -106,6 +107,15 @@ def strip_noise_and_images(body: Tag) -> None:
     for sel in NOISE_SELECTORS:
         for t in body.select(sel):
             t.decompose()
+    # 表格单元格里的裸标签文本(<wbr>/<br>/<i> 等,VitePress 属性表以转义文本塞入,
+    # markdownify 不递归转 <td>)。只清单元格内的【文本节点】,正文/行内代码不受影响。
+    for cell in body.find_all(["td", "th"]):
+        for s in cell.find_all(string=True):
+            new = _CELL_DROP.sub("", str(s))
+            new = _CELL_SPACE.sub(" ", new)
+            new = _CELL_UNWRAP.sub("", new)
+            if new != str(s):
+                s.replace_with(new)
     for img in body.find_all("img"):
         parent = img.parent
         # 父 <a> 只包这一张图 → 整个链接丢弃,否则只删 img
@@ -184,9 +194,6 @@ def clean(md: str) -> str:
             out.append(line)  # 代码内原样
         else:
             line = _ANCHOR_LINK.sub("", line)
-            line = _WBR.sub("", line)            # 软换行占位,删
-            line = _BR_TAG.sub(" ", line)        # 表格内断行 → 空格
-            line = _INLINE_TAG.sub("", line)     # 强调标签,解包留文本
             line = re.sub(r"[ \t]+$", "", line)  # 行尾空白
             out.append(line)
     md = "\n".join(out)

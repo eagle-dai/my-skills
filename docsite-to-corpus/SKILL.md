@@ -88,7 +88,7 @@ python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 | 页内 TOC 目录 | 自动生成的 outline | 删 nav/.table-of-contents |
 | 图片 | 文本语料不需要 | 砍 img,清只包一图的父 `<a>` 死链 |
 | code-group tab 标签 | `vp-code-group > .tabs > label`(如 `Java`/`Node.js`,单 tab 时是语言名 `sh`)泄漏成裸文本行 | 删整条 `.tabs`(含 radio input) |
-| 表格单元格裸 HTML | VitePress 属性表把 `<wbr>`/`<i>`/`&lt;key&gt;` 以转义文本塞进单元格,markdownify 转 table 不递归转 | fence-aware 清:删 `<wbr>`、解包 `<i>` 等强调标签、`<br>`→空格 |
+| 表格单元格裸 HTML | VitePress 属性表把 `<wbr>`/`<i>`/`&lt;key&gt;` 以转义文本塞进单元格,markdownify 转 table 不递归转 | DOM 层【只在 `<td>`/`<th>` 文本节点】清:删 `<wbr>`、`<br>`→空格、解包 `<i>` 等强调标签。不碰正文/行内代码里的标签字面量 |
 | 空 heading | 图砍后剩壳,或源里就空(`<h4 id=""><a>​</a></h4>` 只含锚点+零宽) | 剥零宽后判空则删(含 img 的不删) |
 
 ## Common Mistakes
@@ -105,9 +105,10 @@ python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 - **非 VitePress 站**:Docusaurus/MkDocs 等正文容器不同,需 `--selector` 指定;custom container 处理未针对性适配。
 - **编码**:硬编码 utf-8,非 utf-8 站点(罕见)会出现替换字符。
 - **code-group 内容合并**:多 tab 代码块(如 Java/Node.js 切换)的 tab 标签已删,但各 tab 的代码本体会顺序拼接输出(无 tab 分隔),读者需自行判断哪段属哪个 tab。
+- **链接 URL 里的脏 HTML**:极少数源页在 `<a href>` 属性值里嵌了 `&lt;br&gt;`(源数据本身错),单元格清理只处理文本节点、不动属性,故这类坏 URL 会原样留在 md。罕见(CAP 全站 2 处),不值得为它加属性清洗。
 
 ## 工具
 
 - `docsite_to_md.py` — 转换脚本(抓取/选容器/转换/清洗/URL→路径映射)
 - 依赖 `requirements.txt`:beautifulsoup4、markdownify
-- `tests/` — 固化 VitePress 关键行为(代码块语言、角标砍除、图片砍除、表格保留、fence-aware 清洗、code-group tab 标签砍除、表格单元格裸 HTML 清理、空 heading 砍除),防退化
+- `tests/` — 固化 VitePress 关键行为(代码块语言、角标砍除、图片砍除、表格保留、fence-aware 清洗、code-group tab 标签砍除、表格单元格裸 HTML 清理、空 heading 砍除、正文/行内代码里标签字面量不误清),防退化
