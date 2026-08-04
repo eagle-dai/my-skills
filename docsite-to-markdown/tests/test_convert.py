@@ -3,6 +3,7 @@
 离线测试:用内联 HTML 片段(真实 VitePress/Shiki 结构),不碰网络。
 跑: python3 -m pytest tests/ -q   或   python3 tests/test_convert.py
 """
+import base64
 import sys
 from pathlib import Path
 
@@ -478,6 +479,118 @@ def test_url_to_path_query_and_trailing_slash():
     base, out = "https://x.com/docs", Path("o")
     assert url_to_path("https://x.com/docs/cds/?x=1", base, out) == out / "cds/index.md"
     assert url_to_path("https://x.com/docs/cds/cdl#anchor", base, out) == out / "cds/cdl.md"
+
+
+# ── keep-images: URL 解析 ─────────────────────────────────────────────
+from docsite_to_md import resolve_image_url  # noqa: E402
+
+
+def test_resolve_image_url_relative():
+    r = resolve_image_url("/docs/assets/x.svg", "https://cap.cloud.sap/docs/cds/")
+    assert r == "https://cap.cloud.sap/docs/assets/x.svg"
+
+
+def test_resolve_image_url_absolute_kept():
+    r = resolve_image_url("https://cdn.x/y.png", "https://s/p/")
+    assert r == "https://cdn.x/y.png"
+
+
+def test_resolve_image_url_data_uri_kept():
+    r = resolve_image_url("data:image/png;base64,AAAA", "https://s/p/")
+    assert r == "data:image/png;base64,AAAA"
+
+
+def test_resolve_image_url_empty_none():
+    assert resolve_image_url("", "https://s/p/") is None
+    assert resolve_image_url(None, "https://s/p/") is None
+
+
+# ── keep-images: 本地路径 + 相对引用 ──────────────────────────────────
+from docsite_to_md import image_local_path, image_rel_href  # noqa: E402
+
+
+def test_image_local_path_from_url():
+    # 图在 .../assets/ 下:剥到 assets/ 后,存 out/assets/<file>,不带冗余层
+    p = image_local_path("https://cap.cloud.sap/docs/assets/csn.svg", Path("cap"))
+    assert p == Path("cap/assets/csn.svg")
+
+
+def test_image_local_path_no_assets_marker_keeps_path():
+    # 非 assets 结构:用完整 url path(去域名)防撞名
+    p = image_local_path("https://s/docs/a/b/pic.png", Path("out"))
+    assert p == Path("out/assets/docs/a/b/pic.png")
+
+
+def test_image_local_path_nested_under_assets():
+    # assets 后还有子目录 → 保留子结构
+    p = image_local_path("https://s/docs/assets/img/pic.png", Path("out"))
+    assert p == Path("out/assets/img/pic.png")
+
+
+def test_image_local_path_data_uri_hashed():
+    p = image_local_path("data:image/png;base64,iVBORw0AAA", Path("out"))
+    assert p.parent == Path("out/assets/inline")
+    assert p.suffix == ".png"
+
+
+def test_image_rel_href_sibling_assets():
+    href = image_rel_href(Path("out/assets/csn.svg"), Path("out/cds/index.md"))
+    assert href == "../assets/csn.svg"
+
+
+def test_image_rel_href_top_level_md():
+    href = image_rel_href(Path("out/assets/x.svg"), Path("out/index.md"))
+    assert href == "assets/x.svg"
+
+
+# ── keep-images: 落盘 + 缓存 ──────────────────────────────────────────
+import tempfile  # noqa: E402
+from docsite_to_md import store_image, ImageContext  # noqa: E402
+
+
+def _ctx(tmp, downloader, page="https://s/docs/cds/", md_rel="cds/index.md"):
+    out = Path(tmp)
+    return ImageContext(page_url=page, out_dir=out,
+                        md_path=out / md_rel, downloader=downloader)
+
+
+def test_store_image_http_writes_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"<svg>ok</svg>")
+        p = store_image("https://s/docs/assets/x.svg", ctx)
+        assert p is not None and p.exists()
+        assert p.read_bytes() == b"<svg>ok</svg>"
+
+
+def test_store_image_download_fail_returns_none():
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: None)
+        p = store_image("https://s/docs/assets/bad.png", ctx)
+        assert p is None
+
+
+def test_store_image_cache_hit_no_second_download():
+    calls = []
+
+    def dl(url):
+        calls.append(url)
+        return b"data"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, dl)
+        p1 = store_image("https://s/docs/assets/x.png", ctx)
+        p2 = store_image("https://s/docs/assets/x.png", ctx)
+        assert p1 == p2
+        assert len(calls) == 1, "同图第二次该走缓存,不重复下载"
+
+
+def test_store_image_data_uri_decoded():
+    raw = b"\x89PNG\r\n"
+    data_uri = "data:image/png;base64," + base64.b64encode(raw).decode()
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: None)  # data uri 不走 downloader
+        p = store_image(data_uri, ctx)
+        assert p is not None and p.read_bytes() == raw
 
 
 if __name__ == "__main__":

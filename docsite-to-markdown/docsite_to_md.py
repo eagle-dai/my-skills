@@ -22,12 +22,18 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import os
 import re
 import sys
 import time
 import urllib.request
 import urllib.error
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
+from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
 try:
@@ -273,6 +279,83 @@ def clean(md: str) -> str:
     md = "\n".join(out)
     md = _MULTI_BLANK.sub("\n\n", md)
     return md.strip() + "\n"
+
+
+# ── keep-images: 图片本地化 ───────────────────────────────────────────
+def resolve_image_url(src: str | None, page_url: str) -> str | None:
+    """img src → 绝对 URL。data: URI 原样返回;空/无效返 None。"""
+    if not src or not src.strip():
+        return None
+    src = src.strip()
+    if src.startswith("data:"):
+        return src
+    return urljoin(page_url, src)
+
+
+@dataclass
+class ImageContext:
+    """keep-images 模式下传给 html_to_md 的图片本地化上下文。
+
+    downloader(url) -> bytes | None:下载成功返 bytes,失败返 None(不抛)。
+    cache:URL → 已存本地 Path,同图多页去重。
+    """
+    page_url: str
+    out_dir: Path
+    md_path: Path
+    downloader: Callable[[str], "bytes | None"]
+    cache: dict[str, Path] = field(default_factory=dict)
+
+
+_DATA_URI_RE = re.compile(r"^data:image/([A-Za-z0-9.+-]+)[;,]")
+
+
+def image_local_path(img_url: str, out_dir: Path) -> Path:
+    """图 URL → 本地存放路径。http(s) 用 url path(去域名)存 assets/<path>;
+    data: URI 按内容 hash 存 assets/inline/<hash>.<ext>。"""
+    if img_url.startswith("data:"):
+        m = _DATA_URI_RE.match(img_url)
+        ext = (m.group(1) if m else "bin").lower()
+        if ext == "svg+xml":
+            ext = "svg"
+        if ext == "jpeg":
+            ext = "jpg"
+        h = hashlib.sha1(img_url.encode("utf-8")).hexdigest()[:16]
+        return out_dir / "assets" / "inline" / f"{h}.{ext}"
+    path = urlsplit(img_url).path.lstrip("/")
+    # 图常在 .../assets/<...> 下:剥到 assets/ 后,避免 out/assets/docs/assets/x 冗余层。
+    # 非 assets 结构则用完整 path(去域名),保唯一防撞名。
+    marker = "assets/"
+    idx = path.rfind(marker)
+    if idx != -1:
+        path = path[idx + len(marker):]
+    return out_dir / "assets" / path
+
+
+def image_rel_href(local: Path, md_path: Path) -> str:
+    """从 md 文件所在目录算到 local 图的相对路径(posix 斜杠)。"""
+    rel = os.path.relpath(local, md_path.parent)
+    return Path(rel).as_posix()
+
+
+def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
+    """把图存到本地 assets;成功返 Path,失败返 None。缓存去重。"""
+    if img_url in ctx.cache:
+        return ctx.cache[img_url]
+    dest = image_local_path(img_url, ctx.out_dir)
+    if img_url.startswith("data:"):
+        try:
+            head, _, payload = img_url.partition(",")
+            data = base64.b64decode(payload) if "base64" in head else payload.encode()
+        except Exception:
+            return None
+    else:
+        data = ctx.downloader(img_url)
+        if data is None:
+            return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)  # 写盘失败(OSError)是环境问题,该抛,不是单图问题
+    ctx.cache[img_url] = dest
+    return dest
 
 
 # ── URL → 输出路径映射 ────────────────────────────────────────────────
