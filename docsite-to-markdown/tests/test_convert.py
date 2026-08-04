@@ -234,19 +234,34 @@ def test_feature_link_no_cta_no_title_falls_back_to_href():
 
 
 def test_multiple_feature_cards_order_preserved():
-    """多张 feature 卡片:各自拆开,标题顺序不乱。"""
+    """多张 feature 卡片:各自拆开,顺序不乱。第一张【无 CTA】走标题兜底,
+    第二张有 CTA 走原路径 —— 覆盖两条链接文字路径 + 多卡片顺序。"""
     html = (
         '<a class="VPFeature" href="/a"><article class="box">'
-        '<h2>First Card</h2><p>Alpha.</p>'
-        '<div class="link-text"><p>Go A</p></div></article></a>'
+        '<h2>First Card</h2><p>Alpha.</p></article></a>'          # 无 CTA → 标题兜底
         '<a class="VPFeature" href="/b"><article class="box">'
         '<h2>Second Card</h2><p>Beta.</p>'
-        '<div class="link-text"><p>Go B</p></div></article></a>'
+        '<div class="link-text"><p>Go B</p></div></article></a>'   # 有 CTA
     )
     md = conv(html)
     assert md.index("First Card") < md.index("Second Card"), "卡片顺序该保持"
-    assert "[Go A](/a)" in md and "[Go B](/b)" in md
+    assert "[First Card](/a)" in md, "无 CTA 的第一张该用标题当链接文字"
+    assert "[Go B](/b)" in md, "有 CTA 的第二张走 CTA"
     assert "Alpha" in md and "Beta" in md
+
+
+def test_feature_link_degenerate_href_dropped():
+    """退化 href(根 / 纯锚点 / 纯 query)没有有意义的尾段文字。无 CTA/标题时
+    该删掉空壳链接,而非塞 '/' '#x' '?x' 这种垃圾当链接文字。"""
+    for bad in ("/", "#section", "?tab=1"):
+        html = (
+            f'<a class="VPFeature" href="{bad}">'
+            '<article class="box"><p class="details">Just body.</p></article></a>'
+        )
+        md = conv(html)
+        assert "Just body" in md, f"正文该保留 (href={bad})"
+        assert bad not in md, f"退化 href {bad!r} 不该成链接文字"
+        assert "](" not in md, f"不该生成链接 (href={bad})"
 
 
 def test_box_icon_scoped_to_article_box():

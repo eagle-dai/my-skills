@@ -156,6 +156,18 @@ def strip_noise_and_images(body: Tag) -> None:
             h.decompose()
 
 
+def _href_link_text(href: str | None) -> str:
+    """从 href 抽一段可读的链接文字(路径尾段)。只对像样的路径 href 生效;
+    退化 href(空 / 根 "/" / 纯锚点 "#x" / 纯 query "?x")没有有意义的文字,
+    返回 "" —— 上游据此把无 CTA/无标题的空壳卡片链接直接删掉,而非塞垃圾文字。"""
+    if not href:
+        return ""
+    # 剥 query / hash,只看路径部分
+    path = href.split("#", 1)[0].split("?", 1)[0]
+    seg = path.rstrip("/").rsplit("/", 1)[-1]
+    return seg
+
+
 def unwrap_feature_links(body: Tag) -> None:
     """VitePress home layout 的 feature 卡片是整块可点的 <a>(class VPFeature),
     内含 <h2 标题>/<p 详情>/<div link-text CTA>。markdownify 遇 <a> 包块级元素时
@@ -173,8 +185,13 @@ def unwrap_feature_links(body: Tag) -> None:
         cta_text = cta.get_text(strip=True) if cta else ""
         # 把块级内容(除 CTA 外)逐个提到 a 之前
         card = a.select_one("article.box") or a
-        title = card.select_one("h1, h2, h3, h4, h5, h6")
-        title_text = title.get_text(strip=True) if title else ""
+        # 卡片标题是 card 的直接子 heading(VitePress 是 <h2 class="title">)。
+        # 只找直接子,不用深度搜索 —— 否则 details 里嵌套的 heading 会被误当标题。
+        title_text = ""
+        for c in card.children:
+            if isinstance(c, Tag) and c.name in ("h1", "h2", "h3", "h4", "h5", "h6"):
+                title_text = c.get_text(strip=True)
+                break
         for child in list(card.children):
             if not isinstance(child, Tag):
                 continue
@@ -182,15 +199,13 @@ def unwrap_feature_links(body: Tag) -> None:
                 continue
             a.insert_before(child.extract())
         # a 清空,只放链接文字(保留 href → markdownify 转正常行内链接)。
-        # 文字优先级:CTA > 卡片标题 > href 尾段。都没有(且无 href)才删。
+        # 文字优先级:CTA > 卡片标题 > href 的路径尾段。
         a.clear()
-        link_text = cta_text or title_text
-        if not link_text and href:
-            link_text = href.rstrip("/").rsplit("/", 1)[-1] or href
+        link_text = cta_text or title_text or _href_link_text(href)
         if link_text:
             a.string = link_text
         else:
-            a.decompose()  # 无文字也无 href 的纯装饰空链接,才删
+            a.decompose()  # 无好文字的空壳链接(CTA/标题都没、href 也不像路径),删
 
 
 def code_language(pre: Tag) -> str:
