@@ -1,9 +1,10 @@
 # my-skills
 
-一组面向 AI coding agent 的自定义 skills。当前仓库主要解决两类相互关联的任务：
+一组面向 AI coding agent 的自定义 skills。当前仓库主要解决这几类相互关联的任务：
 
 1. 将 SingleFile 保存的完整网页转换为结构清晰、可离线阅读且可审计的 Markdown 包；
-2. 从 KaTeX、MathJax 或 MathML 公式节点中提取语义正确的 LaTeX。
+2. 从 KaTeX、MathJax 或 MathML 公式节点中提取语义正确的 LaTeX；
+3. 将静态文档站批量转成干净 Markdown 语料，喂 AI 查询 / RAG。
 
 仓库把可复用的规则固化到 Python 合同和测试里，而不是让 LLM 反复判断，遇到无法无损处理的情况一律 fail closed。
 
@@ -13,6 +14,7 @@
 |---|---|---|
 | `html-to-markdown` | [`html-to-markdown/SKILL.md`](html-to-markdown/SKILL.md) | 默认先跑确定性 `pipeline.py --mode auto` 处理静态 SingleFile；遇到 Notebook、虚拟化、lazy-load、题注、图片等歧义则转入 Playwright/sub-agent strict 工作流。 |
 | `formula-extraction` | [`formula-extraction/SKILL.md`](formula-extraction/SKILL.md) | 从 KaTeX、MathJax 或 MathML 公式节点中提取 LaTeX。单节点模式优先读取原始语义来源；页面级批处理由 `html-to-markdown/formula_batch.py` 负责去重、缓存和浏览器验证门禁。 |
+| `docsite-to-markdown` | [`docsite-to-markdown/SKILL.md`](docsite-to-markdown/SKILL.md) | 把静态文档站（SSG 预渲染，VitePress 支持最好，其它站点用 `--selector`）整站批量转成干净 Markdown 语料。先探测（页面清单 / 渲染方式 / 正文容器 / 站点噪声）再批量。只要文本、砍图片；与 `html-to-markdown` 的单页高保真归档场景相反。 |
 
 ## 关键目录与文件
 
@@ -23,6 +25,11 @@
 ├── run_tests.py
 ├── .github/workflows/tests.yml
 ├── _meta/skill-self-improvement.md
+├── docsite-to-markdown/
+│   ├── SKILL.md
+│   ├── docsite_to_md.py     # curl 抓页 → 定正文容器 → 去噪/砍图 → markdownify 转 md
+│   ├── requirements.txt     # beautifulsoup4 / markdownify
+│   └── tests/               # 转换规则的本地测试（脚本入口）
 ├── formula-extraction/
 │   ├── SKILL.md
 │   ├── katex-html-parser.md
@@ -58,6 +65,13 @@
 跨 skill 共享的维护规则。
 
 - `skill-self-improvement.md`：说明如何从真实缺陷提炼可泛化规则，并要求规则、实现、测试和文档同步更新。
+
+### `docsite-to-markdown/`
+
+- `SKILL.md`：agent 入口。核心是「先探测再批量」的四步流程（发现页面清单 → 判静态/SPA → 定正文容器 → 批量转换），以及站点特有噪声、已知限制和常见错误清单。
+- `docsite_to_md.py`：确定性转换脚本。`curl` 抓页、按候选序或 `--selector` 选正文容器、删导航/侧栏/编辑链接/脚本等噪声、砍图片、清 VitePress 锚点与属性表标签残留，再用 markdownify 转 Markdown；含 sitemap 读取和 URL→输出路径映射。
+- `requirements.txt`：脚本依赖（`beautifulsoup4`、`markdownify`）。
+- `tests/`：钉住转换规则（正文选择、去噪、清洗）的本地测试。
 
 ### `formula-extraction/`
 

@@ -1,9 +1,9 @@
 ---
-name: docsite-to-corpus
+name: docsite-to-markdown
 description: Use when copying/mirroring a documentation website (VitePress best-supported; other SSG docs like Docusaurus/MkDocs via --selector) into local markdown for AI querying, RAG, or offline corpus — batch-converting many doc pages to clean text, not archiving a single rich page.
 ---
 
-# docsite-to-corpus
+# docsite-to-markdown
 
 ## Overview
 
