@@ -37,7 +37,7 @@ except ImportError:
 import markdownify
 
 # ── 正文容器候选(按序尝试) ───────────────────────────────────────────
-BODY_SELECTORS = [".vp-doc", "main .content", "article", "main", ".markdown-body"]
+BODY_SELECTORS = [".vp-doc", "main .content", "article", "main", ".markdown-body", ".VPHome"]
 
 # 正文里要删的噪声(导航/侧栏/编辑链接/脚本等)
 NOISE_SELECTORS = [
@@ -95,9 +95,11 @@ def pick_body(soup: BeautifulSoup, selector: str | None):
         if el:
             return el
         raise RuntimeError(f"selector {selector!r} 未命中")
+    # 自动选:命中但为空容器(如 VitePress home layout 的空 .vp-doc)要跳过,
+    # 继续试下一候选,最终 .VPHome 兜底抽 hero/feature 卡片内容。
     for sel in BODY_SELECTORS:
         el = soup.select_one(sel)
-        if el:
+        if el and el.get_text(strip=True):
             return el
     raise RuntimeError("找不到正文容器,用 --selector 指定")
 
