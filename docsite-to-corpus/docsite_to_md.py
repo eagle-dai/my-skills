@@ -44,6 +44,9 @@ NOISE_SELECTORS = [
     "script", "style", ".aside", ".VPDocAsideOutline",
     ".edit-info", ".prev-next", ".VPDocFooter", ".pager",
     ".table-of-contents", ".vp-doc-footer",
+    # VitePress code-group(tab 组)的 tab 栏:<label> 文本(如 "Java"/"Node.js",
+    # 单 tab 时甚至是语言名 "sh")会泄漏成裸文本行。整条 .tabs 删掉(含 radio input)。
+    ".vp-code-group .tabs",
     # 以下收窄到代码块内,避免误删正文 UI 词(如 <button>Save</button>、
     # i18n 文档正文里的 <span class="lang">zh-CN</span>):
     "div[class*=language] button",       # 复制按钮(裸 button 会吞正文)
@@ -57,6 +60,11 @@ _ZERO_WIDTH = re.compile(r"[​‌‍⁠﻿-]")
 _ANCHOR_LINK = re.compile(r"\[[​#\s]*\]\(#[^)]*\)")
 # 3+ 连续空行 → 2 行
 _MULTI_BLANK = re.compile(r"\n{3,}")
+# VitePress 属性表把软换行标记 <wbr> / 斜体 <i> 以转义文本塞进单元格,
+# markdownify 转 <table> 时不递归转,还原成裸标签文本混进 md。fence-aware 清:
+_WBR = re.compile(r"<wbr\s*/?>")                         # 软换行,纯噪声,删
+_INLINE_TAG = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)>")  # 强调标签,解包留文本
+_BR_TAG = re.compile(r"<br\s*/?>")                       # 表格内断行 → 空格
 
 
 def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
@@ -111,6 +119,12 @@ def strip_noise_and_images(body: Tag) -> None:
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
             fig.decompose()
+    # 空 heading:两种来源 —— ①图砍后剩壳 ②源里就空(只含 header-anchor + 零宽字符,
+    # 如 VitePress <h4 id=""><a href="#">​</a></h4>)。零宽字符 strip 不掉,先剥再判。
+    for h in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
+        text = _ZERO_WIDTH.sub("", h.get_text()).strip()
+        if not text and not h.find("img"):
+            h.decompose()
 
 
 def code_language(pre: Tag) -> str:
@@ -170,6 +184,9 @@ def clean(md: str) -> str:
             out.append(line)  # 代码内原样
         else:
             line = _ANCHOR_LINK.sub("", line)
+            line = _WBR.sub("", line)            # 软换行占位,删
+            line = _BR_TAG.sub(" ", line)        # 表格内断行 → 空格
+            line = _INLINE_TAG.sub("", line)     # 强调标签,解包留文本
             line = re.sub(r"[ \t]+$", "", line)  # 行尾空白
             out.append(line)
     md = "\n".join(out)

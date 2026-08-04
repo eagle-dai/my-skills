@@ -151,6 +151,52 @@ def test_code_copy_button_stripped():
     assert "```cds" in md
 
 
+def test_code_group_tab_labels_stripped():
+    """VitePress code-group 的 tab 栏 <label> 文本(Java/Node.js,单 tab 时甚至是
+    语言名如 sh)会泄漏成裸文本行 —— 整条 .tabs 该删。"""
+    html = '''<div class="vp-code-group">
+      <div class="tabs">
+        <input type="radio" id="t1" checked><label for="t1">Java</label>
+        <input type="radio" id="t2"><label for="t2">Node.js</label>
+      </div>
+      <div class="blocks">
+        <div class="language-sh active"><span class="lang">sh</span>
+          <pre class="shiki"><code><span class="line"><span>cf apps</span></span></code></pre>
+        </div>
+      </div>
+    </div>'''
+    md = conv(html)
+    assert not [l for l in md.splitlines() if l.strip() in ("Java", "Node.js", "sh")], \
+        "tab 标签不该成裸行"
+    assert "cf apps" in md and "```sh" in md, "代码本体该保留"
+
+
+def test_table_cell_inline_html_cleaned():
+    """VitePress 属性表把 <wbr>(软换行)/<i>(斜体)以转义文本塞进单元格,
+    markdownify 转 table 时不递归转,还原成裸标签混进 md。该清成纯文本。"""
+    html = '''<table><thead><tr><th>Property</th><th>Desc</th></tr></thead>
+      <tbody><tr>
+        <td>cds.&lt;wbr&gt;security.&lt;wbr&gt;mock.&lt;wbr&gt;<i>&lt;key&gt;</i>.&lt;wbr&gt;id</td>
+        <td>The ID<br>of the user.</td>
+      </tr></tbody></table>'''
+    md = conv(html)
+    assert "<wbr>" not in md, "软换行标记该删"
+    assert "<i>" not in md and "</i>" not in md, "斜体标签该解包"
+    assert "<br>" not in md, "断行该转空格"
+    assert "cds.security.mock" in md, "属性名该连贯"
+
+
+def test_empty_heading_removed():
+    """空 heading 两种来源都该删:①图砍后剩壳 ②源里就空(只含 header-anchor
+    + 零宽字符,零宽 strip 不掉需先剥)。含 img 的 heading 不误删。"""
+    html = '<h4 id=""><a class="header-anchor" href="#">​</a></h4>' \
+           '<h2>Real Title</h2>'
+    md = conv(html)
+    assert not [l for l in md.splitlines() if l.strip() in ("#", "##", "###", "####")], \
+        "空 heading 不该剩裸 # 行"
+    assert "## Real Title" in md, "有文字的 heading 保留"
+
+
 # ── fence-aware 清洗:代码块内空格不动 ─────────────────────────────────
 def test_fence_aware_no_trailing_strip_inside_code():
     """代码块内行尾空格(缩进对齐用)不该被清洗动;仅非代码行清行尾。"""
