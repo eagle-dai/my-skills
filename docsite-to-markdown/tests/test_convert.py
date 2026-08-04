@@ -633,6 +633,34 @@ def test_keep_images_default_still_strips():
     assert "![" not in md and ".png" not in md
 
 
+def test_keep_images_single_page_self_contained():
+    """单页模式(out_dir=md 父目录):图落 md 同级 assets/,引用 assets/x 自包含。"""
+    md, out = conv_keep('<img src="/docs/assets/x.svg" alt="a">',
+                        lambda url: b"<svg/>", md_rel="foo.md")
+    assert "![a](assets/x.svg)" in md, "md 同级 assets 引用该无 ../ 前缀"
+    assert (out / "assets/x.svg").exists()
+
+
+def test_keep_images_shared_cache_across_pages():
+    """批量共享 cache:同图两页只下一次。"""
+    calls = []
+
+    def dl(url):
+        calls.append(url)
+        return b"<svg/>"
+
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp)
+    cache = {}
+    for md_rel in ("cds/a.md", "cds/b.md"):
+        ctx = ImageContext(page_url="https://s/docs/cds/", out_dir=out,
+                           md_path=out / md_rel, downloader=dl, cache=cache)
+        page = ('<html><body><main class="main"><div class="vp-doc">'
+                '<img src="/docs/assets/shared.svg" alt="s"></div></main></body></html>')
+        html_to_md(page, selector=".vp-doc", image_ctx=ctx)
+    assert len(calls) == 1, "同图跨页该走共享缓存只下一次"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

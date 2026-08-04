@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """docsite_to_md — 把静态文档站(SSG 预渲染 HTML)批量转成干净 markdown 语料。
 
-目标场景:喂 AI 查询的纯文本语料。不保留图片、不做公式高保真、不做站点归档。
+目标场景:喂 AI 查询的纯文本语料。默认不保留图片(--keep-images 可保留本地化)、
+不做公式高保真、不做站点归档。
 当前支持:VitePress(Shiki 高亮)。其它 SSG 靠 --selector 覆盖正文容器。
 
 用法:
@@ -16,7 +17,8 @@
   - 无语义 wrapper 穿透:div/section/article/main 无块子→当行内,有块子→递归(不抛错)
   - 代码块:Shiki 语言在外层 <div class="language-xxx">;code.get_text() 换行已正确
   - fence:动态长度 max(3, 内部最长连续反引号+1),避开正文反引号
-  - 图片全砍:遇 img 返空,顺手丢只包一张图的父 <a> 死链
+  - 图片:默认全砍(丢只包一张图的父 <a> 死链);--keep-images 时下载本地化到
+    assets/、md 相对路径引用、下载失败降级为 *[图片: alt]* 占位
   - 清洗:去零宽字符、VitePress 锚点 [​](#…)、收紧多余空行
 """
 from __future__ import annotations
