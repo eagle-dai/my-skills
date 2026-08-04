@@ -238,7 +238,7 @@ def test_fence_aware_no_trailing_strip_inside_code():
 # ── 正文容器自动选择(pick_body,不传 selector) ───────────────────────
 def test_home_layout_picks_vphome_when_vpdoc_empty():
     """VitePress home layout:.vp-doc 存在但空,正文在 .VPHome。
-    自动选择该跳过空 .vp-doc,兜底抽 .VPHome。"""
+    自动选择该跳过空 .vp-doc,抽 .VPHome。"""
     page = (
         '<html><body><main class="main">'
         '<div class="vp-doc"></div>'
@@ -248,6 +248,26 @@ def test_home_layout_picks_vphome_when_vpdoc_empty():
     md = html_to_md(page, selector=None)
     assert "CAP Docs" in md, "空 .vp-doc 该被跳过,抽到 .VPHome"
     assert "Build enterprise apps" in md
+
+
+def test_home_layout_vphome_wins_over_local_article():
+    """真实 CAP 首页坑:home layout 里散落局部 <article class="box">(仅一张
+    feature 卡片),排在候选表 .VPHome 前面会抢先命中、只抽到残片。
+    .vp-doc 空 → 该优先返回完整 .VPHome,而非局部 article。"""
+    page = (
+        '<html><body>'
+        '<div class="vp-doc container"></div>'
+        '<div class="VPHome">'
+        '<div class="VPHero"><h1><span class="name">Full Hero Title</span></h1>'
+        '<p class="tagline">Full hero tagline text.</p></div>'
+        '<article class="box"><h2>Rapid Development</h2><p>Local card only.</p></article>'
+        '</div>'
+        '</body></html>'
+    )
+    md = html_to_md(page, selector=None)
+    assert "Full Hero Title" in md, "该抽完整 .VPHome 的 hero,不被局部 article 抢走"
+    assert "Full hero tagline text" in md
+    assert "Rapid Development" in md, ".VPHome 内的局部卡片也应一并抽到"
 
 
 def test_doc_layout_still_picks_nonempty_vpdoc():
