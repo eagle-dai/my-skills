@@ -37,7 +37,7 @@ except ImportError:
 import markdownify
 
 # ── 正文容器候选(按序尝试) ───────────────────────────────────────────
-BODY_SELECTORS = [".vp-doc", "main .content", "article", "main", ".markdown-body", ".VPHome"]
+BODY_SELECTORS = [".vp-doc", "main .content", "article", "main", ".markdown-body"]
 
 # 正文里要删的噪声(导航/侧栏/编辑链接/脚本等)
 NOISE_SELECTORS = [
@@ -95,8 +95,17 @@ def pick_body(soup: BeautifulSoup, selector: str | None):
         if el:
             return el
         raise RuntimeError(f"selector {selector!r} 未命中")
-    # 自动选:命中但为空容器(如 VitePress home layout 的空 .vp-doc)要跳过,
-    # 继续试下一候选,最终 .VPHome 兜底抽 hero/feature 卡片内容。
+    # VitePress home layout(layout: home)特判:整页正文在 .VPHome(hero +
+    # feature 卡片 + 导航),而 .vp-doc 是空壳。此时页面里可能还散落局部
+    # <article>/<main> 卡片(如 CAP 首页的 <article class="box">,仅 113 字符),
+    # 排在候选表前面会抢先命中、只抽到残片。故在 .vp-doc 空/缺 且 .VPHome
+    # 有内容时,直接优先返回 .VPHome。doc layout 页 .vp-doc 必有内容,不进此路。
+    vp_doc = soup.select_one(".vp-doc")
+    if vp_doc is None or not vp_doc.get_text(strip=True):
+        vp_home = soup.select_one(".VPHome")
+        if vp_home and vp_home.get_text(strip=True):
+            return vp_home
+    # 常规:命中但为空容器要跳过,继续试下一候选。
     for sel in BODY_SELECTORS:
         el = soup.select_one(sel)
         if el and el.get_text(strip=True):
