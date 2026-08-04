@@ -158,14 +158,16 @@ def strip_noise_and_images(body: Tag) -> None:
 
 def _href_link_text(href: str | None) -> str:
     """从 href 抽一段可读的链接文字(路径尾段)。只对像样的路径 href 生效;
-    退化 href(空 / 根 "/" / 纯锚点 "#x" / 纯 query "?x")没有有意义的文字,
-    返回 "" —— 上游据此把无 CTA/无标题的空壳卡片链接直接删掉,而非塞垃圾文字。"""
+    退化 href(空 / 根 "/" / 纯锚点 "#x" / 纯 query "?x" / 相对 "./" "../")没有
+    有意义的文字,返回 "" —— 上游据此把无 CTA/无标题的空壳卡片链接直接删掉,
+    而非塞垃圾文字。"""
     if not href:
         return ""
     # 剥 query / hash,只看路径部分
     path = href.split("#", 1)[0].split("?", 1)[0]
     seg = path.rstrip("/").rsplit("/", 1)[-1]
-    return seg
+    # 空段 / 当前目录 "." / 上级 ".." 都不是可读文字
+    return "" if seg in ("", ".", "..") else seg
 
 
 def unwrap_feature_links(body: Tag) -> None:

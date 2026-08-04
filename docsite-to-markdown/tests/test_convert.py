@@ -251,9 +251,9 @@ def test_multiple_feature_cards_order_preserved():
 
 
 def test_feature_link_degenerate_href_dropped():
-    """退化 href(根 / 纯锚点 / 纯 query)没有有意义的尾段文字。无 CTA/标题时
-    该删掉空壳链接,而非塞 '/' '#x' '?x' 这种垃圾当链接文字。"""
-    for bad in ("/", "#section", "?tab=1"):
+    """退化 href(根 / 纯锚点 / 纯 query / 相对 ./ ..)没有有意义的尾段文字。
+    无 CTA/标题时该删掉空壳链接,而非塞 '/' '#x' '?x' '.' '..' 这种垃圾。"""
+    for bad in ("/", "#section", "?tab=1", "./", "../"):
         html = (
             f'<a class="VPFeature" href="{bad}">'
             '<article class="box"><p class="details">Just body.</p></article></a>'
@@ -264,13 +264,30 @@ def test_feature_link_degenerate_href_dropped():
         assert "](" not in md, f"不该生成链接 (href={bad})"
 
 
-def test_box_icon_scoped_to_article_box():
-    """收窄:只删 article.box 内的 .icon。第三方主题里普通 <div class='box'>
-    (非 article)内的 .icon 不该被误删。"""
-    html = '<div class="box"><span class="icon">📌 keep</span> Note text.</div>'
+def test_degenerate_href_with_title_keeps_link_via_title():
+    """隔离 _href_link_text guard:卡片【有标题】但 href 退化(#section)时,
+    该用标题当链接文字保住链接 —— 退化的是 href 尾段,标题优先级更高。
+    (证明 drop 只发生在 CTA+标题都缺时,不是一见退化 href 就删。)"""
+    html = (
+        '<a class="VPFeature" href="#section">'
+        '<article class="box"><h2>Has Title</h2><p>Body.</p></article></a>'
+    )
     md = conv(html)
-    assert "keep" in md, "非 article.box 容器内的 .icon 不该被删"
-    assert "Note text" in md
+    assert "[Has Title](#section)" in md, "有标题时该用标题当链接文字,链接保留"
+
+
+def test_box_icon_scoped_to_article_box():
+    """收窄:只删 article.box 内的 .icon,第三方主题普通 <div class='box'>
+    (非 article)内的 .icon 不该被误删。两个方向都测。"""
+    # 正向:article.box 内的 .icon 该删
+    stripped = conv('<article class="box"><div class="icon">🎯</div>'
+                    '<h2>Card</h2><p>Detail.</p></article>')
+    assert "🎯" not in stripped, "article.box 内的 .icon 该被删"
+    assert "Card" in stripped and "Detail" in stripped
+    # 负向:非 article 的 .box 内 .icon 该保留
+    kept = conv('<div class="box"><span class="icon">📌 keep</span> Note text.</div>')
+    assert "keep" in kept, "非 article.box 容器内的 .icon 不该被删"
+    assert "Note text" in kept
 
 
 def test_code_group_tab_labels_stripped():
