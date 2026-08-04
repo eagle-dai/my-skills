@@ -205,6 +205,59 @@ def test_plain_link_not_unwrapped():
     assert "[the guide](/x)" in md, "普通链接该原样保留"
 
 
+def test_feature_link_no_cta_keeps_link_via_title():
+    """VitePress feature 卡片的 .link-text CTA 是可选的。缺 CTA 时不该静默
+    丢掉链接 —— 该用卡片标题当链接文字,保住 href 导航目标。"""
+    html = (
+        '<a class="VPFeature" href="/docs/get-started/">'
+        '<article class="box">'
+        '<h2 class="title">Rapid Development</h2>'
+        '<p class="details">Jumpstart and grow.</p>'
+        '</article></a>'
+    )
+    md = conv(html)
+    assert "Jumpstart and grow" in md
+    assert "[Rapid Development](/docs/get-started/)" in md, \
+        "缺 CTA 时该用标题当链接文字,不丢 href"
+
+
+def test_feature_link_no_cta_no_title_falls_back_to_href():
+    """CTA 和标题都缺时,退到 href 尾段当链接文字,仍不丢导航。"""
+    html = (
+        '<a class="VPFeature" href="/docs/guides/">'
+        '<article class="box"><p class="details">Body only.</p></article></a>'
+    )
+    md = conv(html)
+    assert "Body only" in md
+    assert "](/docs/guides/)" in md, "该保留 href 链接,文字用尾段兜底"
+    assert "[guides]" in md, "href 尾段 'guides' 该当链接文字"
+
+
+def test_multiple_feature_cards_order_preserved():
+    """多张 feature 卡片:各自拆开,标题顺序不乱。"""
+    html = (
+        '<a class="VPFeature" href="/a"><article class="box">'
+        '<h2>First Card</h2><p>Alpha.</p>'
+        '<div class="link-text"><p>Go A</p></div></article></a>'
+        '<a class="VPFeature" href="/b"><article class="box">'
+        '<h2>Second Card</h2><p>Beta.</p>'
+        '<div class="link-text"><p>Go B</p></div></article></a>'
+    )
+    md = conv(html)
+    assert md.index("First Card") < md.index("Second Card"), "卡片顺序该保持"
+    assert "[Go A](/a)" in md and "[Go B](/b)" in md
+    assert "Alpha" in md and "Beta" in md
+
+
+def test_box_icon_scoped_to_article_box():
+    """收窄:只删 article.box 内的 .icon。第三方主题里普通 <div class='box'>
+    (非 article)内的 .icon 不该被误删。"""
+    html = '<div class="box"><span class="icon">📌 keep</span> Note text.</div>'
+    md = conv(html)
+    assert "keep" in md, "非 article.box 容器内的 .icon 不该被删"
+    assert "Note text" in md
+
+
 def test_code_group_tab_labels_stripped():
     """VitePress code-group 的 tab 栏 <label> 文本(Java/Node.js,单 tab 时甚至是
     语言名如 sh)会泄漏成裸文本行 —— 整条 .tabs 该删。"""
@@ -335,6 +388,29 @@ def test_doc_layout_still_picks_nonempty_vpdoc():
     md = html_to_md(page, selector=None)
     assert "Real Page" in md
     assert "Doc body here" in md
+
+
+def test_no_vpdoc_no_vphome_uses_candidate_loop():
+    """.vp-doc 和 .VPHome 都缺时,该退回候选表(article/main 等)照常抽。"""
+    page = (
+        '<html><body>'
+        '<article><h1>Article Page</h1><p>Article body.</p></article>'
+        '</body></html>'
+    )
+    md = html_to_md(page, selector=None)
+    assert "Article Page" in md
+    assert "Article body" in md
+
+
+def test_all_candidates_empty_raises():
+    """所有候选容器都存在但全空 → 该抛 RuntimeError,不返回空壳。"""
+    page = (
+        '<html><body>'
+        '<div class="vp-doc"></div><article></article><main></main>'
+        '</body></html>'
+    )
+    with raises(RuntimeError):
+        html_to_md(page, selector=None)
 
 
 # ── URL → 路径映射 ────────────────────────────────────────────────────

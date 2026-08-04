@@ -53,9 +53,10 @@ NOISE_SELECTORS = [
     "div[class*=language] span.lang",    # 代码块语言角标(否则转成裸行)
     ".copy", ".copied",                  # 复制按钮类名(通用兜底)
     # VitePress home layout 的 feature 卡片图标容器:<div class="icon"> 里是
-    # 装饰性 emoji(⭕️🍀🏆💯)或图标,会泄漏成正文裸行。收窄到 feature 卡片内
-    # (.box / .VPFeature),不裸删 .icon,避免误伤正文里合法的 .icon 元素。
-    ".box .icon", ".VPFeature .icon",
+    # 装饰性 emoji(⭕️🍀🏆💯)或图标,会泄漏成正文裸行。收窄到 VitePress feature
+    # 卡片的确切结构(article.box / .VPFeature),不裸删 .icon,也不用宽泛的
+    # ".box .icon"(会误伤第三方主题里任何 class 含 box 的容器内的 .icon)。
+    "article.box .icon", ".VPFeature .icon",
 ]
 
 # 零宽/PUA 字符(SingleFile、复制粘贴常带)
@@ -166,23 +167,30 @@ def unwrap_feature_links(body: Tag) -> None:
     """
     for a in body.select("a.VPFeature"):
         href = a.get("href")
-        # 底部 CTA 文字(.link-text);没有就用 a 的兜底文字
+        # 底部 CTA 文字(.link-text)。CTA 是 VitePress schema 里的可选元素,
+        # 缺失时不能直接删链接(会丢导航目标),按 标题 → href 尾段 依次兜底。
         cta = a.select_one(".link-text")
         cta_text = cta.get_text(strip=True) if cta else ""
         # 把块级内容(除 CTA 外)逐个提到 a 之前
         card = a.select_one("article.box") or a
+        title = card.select_one("h1, h2, h3, h4, h5, h6")
+        title_text = title.get_text(strip=True) if title else ""
         for child in list(card.children):
             if not isinstance(child, Tag):
                 continue
             if cta is not None and (child is cta or cta in child.descendants):
                 continue
             a.insert_before(child.extract())
-        # a 清空,只放 CTA 纯文本(保留 href → markdownify 转正常行内链接)
+        # a 清空,只放链接文字(保留 href → markdownify 转正常行内链接)。
+        # 文字优先级:CTA > 卡片标题 > href 尾段。都没有(且无 href)才删。
         a.clear()
-        if cta_text:
-            a.string = cta_text
+        link_text = cta_text or title_text
+        if not link_text and href:
+            link_text = href.rstrip("/").rsplit("/", 1)[-1] or href
+        if link_text:
+            a.string = link_text
         else:
-            a.decompose()  # 没 CTA 文字的空链接直接删
+            a.decompose()  # 无文字也无 href 的纯装饰空链接,才删
 
 
 def code_language(pre: Tag) -> str:
