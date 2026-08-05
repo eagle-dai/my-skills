@@ -1,6 +1,6 @@
 ---
 name: html-to-markdown
-description: Convert SingleFile-saved HTML pages into clean offline Markdown packages. Use the deterministic auto pipeline first; deliver converted results after independent verification, resolve formula-validation blockers, and enter the Playwright/sub-agent strict workflow only when the pipeline reports strict_required.
+description: Use when converting one or more SingleFile-saved HTML files into high-fidelity offline Markdown packages — preserves formulas, images (de-watermark/compress), comments and structure with auditable ledgers. Runs the deterministic auto pipeline first; deliver after independent verification, resolve formula-validation blockers, enter the Playwright/sub-agent strict workflow only when the pipeline reports strict_required. Handles batches of files, but each is a saved page — NOT for crawling a whole documentation website (use docsite-to-markdown for that).
 ---
 
 # SingleFile HTML 转离线 Markdown 包
