@@ -27,6 +27,7 @@ import argparse
 import base64
 import hashlib
 import html
+import html.entities
 import os
 import re
 import sys
@@ -80,6 +81,38 @@ _MULTI_BLANK = re.compile(r"\n{3,}")
 _CELL_DROP = re.compile(r"<wbr\s*/?>")                        # 软换行占位,删
 _CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空格
 _CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
+
+# 只解【精确的完整实体】:命名(&amp;)、十进制(&#38;)、十六进制(&#x26; / &#X26;)。
+# 不能用 html.unescape:它会额外解析【无分号】的 legacy 实体前缀(&curren、&reg、&copy),
+# 对代码/URL 里字面的 & 是灾难 —— JDBC URL 的 &currentschema 会被吃成 ¤tschema
+# (&curren; = ¤)。而且即便整串带分号,html.unescape 仍对串内部做最长 legacy 前缀匹配
+# (&notreal; → ¬real;,因 &not; = ¬)。所以这里【逐个精确查表】:命名实体必须整个是
+# html5 表里的已知名(带分号形式),否则原样保留;数字实体自己算 chr。代码/属性表里
+# 的 & 几乎总是字面量,只有真正写全的标准实体才该解。
+_ENTITY_SEMI = re.compile(r"&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")
+# 裸尖括号:表格单元格 unescape 后,占位符如 <key>/<index> 会变裸 < >,GitHub 渲染
+# 时当未知 HTML 标签整个吞掉。删完真标签(wbr/br/i…)后,把剩下的裸尖括号转回实体,
+# 让它们可见地渲染出来。
+_BARE_LT = re.compile(r"<")
+_BARE_GT = re.compile(r">")
+
+
+def _decode_one_entity(m: "re.Match[str]") -> str:
+    """把单个匹配到的实体串解成字符;不是已知实体则原样保留(不做 legacy 前缀匹配)。"""
+    whole, body = m.group(0), m.group(1)
+    if body[0] == "#":
+        try:
+            cp = int(body[2:], 16) if body[1] in "xX" else int(body[1:])
+            return chr(cp)
+        except (ValueError, OverflowError):
+            return whole
+    # 命名实体:html5 表的标准键是【带分号】形式(如 "amp;"),精确命中才解
+    return html.entities.html5.get(body + ";", whole)
+
+
+def _unescape_semicolon_only(text: str) -> str:
+    """只解精确的完整 HTML 实体,不碰无分号 legacy 前缀,也不对带分号串做贪婪前缀匹配。"""
+    return _ENTITY_SEMI.sub(_decode_one_entity, text)
 
 
 _UA = "docsite-to-md/1.0"
@@ -149,12 +182,18 @@ def strip_noise_and_images(body: Tag, image_ctx: "ImageContext | None" = None) -
             new = str(s)
             # VitePress 属性表把占位符如 &amp;lt;key&amp;gt; 双重转义塞进单元格,bs4 一层
             # 解析后文本节点里剩 &lt;key&gt; / &lt;wbr&gt; 等,markdownify 转 <td> 时不再
-            # 解码。先 unescape 成真字符,再统一删标签字面量(<wbr>/<br>/<i>),这样
-            # 单层(bs4 已解成 <wbr>)和双层(unescape 后才成 <wbr>)转义都能清干净。
-            new = html.unescape(new)
+            # 解码。先解带分号实体成真字符,再统一删标签字面量(<wbr>/<br>/<i>),这样
+            # 单层(bs4 已解成 <wbr>)和双层(解码后才成 <wbr>)转义都能清干净。
+            # 用 _unescape_semicolon_only 而非 html.unescape:属性表默认值列可能含
+            # 字面 &(如 URL query),避免 &curren 等无分号前缀被误吃。
+            new = _unescape_semicolon_only(new)
             new = _CELL_DROP.sub("", new)
             new = _CELL_SPACE.sub(" ", new)
             new = _CELL_UNWRAP.sub("", new)
+            # 删完真标签后剩下的裸尖括号是占位符文本(<key>/<index> 等),不是要处理的
+            # 标签。转回实体,否则 markdown 表格里 GitHub 会当未知 HTML 标签整个吞掉
+            # (cds...<key>.id 渲染成 cds...id)。实体形式能可见地渲染出尖括号。
+            new = _BARE_GT.sub("&gt;", _BARE_LT.sub("&lt;", new))
             if new != str(s):
                 s.replace_with(new)
     if image_ctx is None:
@@ -287,7 +326,10 @@ class DocConverter(markdownify.MarkdownConverter):
         code = code_el.get_text()
         # VitePress/Shiki 快照有时把代码里的 & < > " 双重转义(源 &amp;quot;),bs4 一层
         # 解析后 get_text 得到 &quot; 残留。代码块里这些几乎总该显示为真字符,再解码一次。
-        code = html.unescape(code)
+        # 但【只解带分号的实体】:代码/URL 里字面的 & 后面常跟单词(&currentschema、
+        # &validateCertificate),html.unescape 会把 &curren 等无分号 legacy 前缀误吃成
+        # 符号(¤),破坏代码。见 _unescape_semicolon_only 注释。
+        code = _unescape_semicolon_only(code)
         code = code.rstrip("\n")
         lang = code_language(el)
         fence = "`" * max(3, max_backticks(code) + 1)

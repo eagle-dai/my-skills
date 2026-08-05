@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from docsite_to_md import html_to_md, url_to_path  # noqa: E402
+from docsite_to_md import html_to_md, url_to_path, _unescape_semicolon_only  # noqa: E402
 
 
 def conv(body_html: str) -> str:
@@ -759,13 +759,15 @@ def test_store_image_data_uri_plain_url_decoded(tmp_path=None):
 
 
 # ── 双重转义实体:单元格与代码块里的 &amp;lt;key&amp;gt; / &amp;quot; 要解码 ──
-def test_table_cell_double_escaped_entity_decoded():
+def test_table_cell_placeholder_stays_entity_escaped():
     """VitePress 属性表把占位符 &amp;lt;key&amp;gt; 双重转义塞单元格,bs4 一层解析后
-    剩 &lt;key&gt;,markdownify 不再解码 → md 残留裸实体。清洗要解码成 <key>。"""
+    剩 &lt;key&gt;。占位符 <key> 不是要处理的标签(<wbr>/<br>/<i> 才是),必须以实体
+    形式留在 md 里:裸 <key> 在 GitHub 表格里会被当未知 HTML 标签整个吞掉
+    (cds.mock.users.<key>.id 渲染成 cds.mock.users..id)。&lt;key&gt; 才能可见渲染。"""
     md = conv('<table><tr><th>K</th></tr>'
               '<tr><td>cds.mock.users.&amp;lt;key&amp;gt;.id</td></tr></table>')
-    assert "<key>" in md, md
-    assert "&lt;" not in md and "&gt;" not in md, f"实体没解码: {md}"
+    assert "&lt;key&gt;" in md, md
+    assert "<key>" not in md, f"裸尖括号会被 GitHub 吞: {md}"
 
 
 def test_table_cell_double_escaped_quot_decoded():
@@ -790,6 +792,53 @@ def test_code_block_double_escaped_entity_decoded():
               '</code></pre></div>')
     assert '"id"' in md, md
     assert "&quot;" not in md
+
+
+def test_code_block_bare_ampersand_word_not_decoded():
+    """代码/URL 里字面的 & 后接单词(&currentschema)不能被当 legacy 实体解码。
+    html.unescape 会把无分号前缀 &curren 吃成货币符 ¤,破坏 JDBC URL。只解带分号实体。"""
+    md = conv('<div class="language-js"><pre class="shiki"><code>'
+              '<span class="line"><span>'
+              "url: 'jdbc:sap://h:443?encrypt=true&amp;validateCertificate=true&amp;currentschema=X'"
+              '</span></span></code></pre></div>')
+    assert "&currentschema=" in md, md
+    assert "¤" not in md, f"&curren 被误解成货币符: {md}"
+    # 双重转义的 &amp; → 单个字面 &,不是要保留 &amp; 也不是解成别的
+    assert "validateCertificate=true&currentschema" in md, md
+
+
+def test_code_block_amp_reg_word_not_decoded():
+    """另一个无分号 legacy 前缀:&reg 不能被吃成 ®。"""
+    md = conv('<div class="language-sh"><pre class="shiki"><code>'
+              '<span class="line"><span>curl "http://x?a=1&amp;region=eu"</span></span>'
+              '</code></pre></div>')
+    assert "&region=eu" in md, md
+    assert "®" not in md, md
+
+
+# ── _unescape_semicolon_only 函数级边界:精确实体查表,不贪婪 ──────────
+def test_unescape_semicolon_decodes_known_entities():
+    """已知完整实体(命名/十进制/十六进制含大写 X)都该解。"""
+    assert _unescape_semicolon_only("a&amp;b") == "a&b"
+    assert _unescape_semicolon_only("&lt;x&gt;") == "<x>"
+    assert _unescape_semicolon_only("&#38;") == "&"
+    assert _unescape_semicolon_only("&#x26;") == "&"
+    assert _unescape_semicolon_only("&#X26;") == "&"  # 大写 X 也是合法十六进制实体
+
+
+def test_unescape_semicolon_no_semicolonless_legacy():
+    """无分号 legacy 前缀原样保留:&curren/&reg 不解成 ¤/®。"""
+    assert _unescape_semicolon_only("a=1&currentschema=X") == "a=1&currentschema=X"
+    assert _unescape_semicolon_only("?a=1&region=eu") == "?a=1&region=eu"
+
+
+def test_unescape_semicolon_no_greedy_prefix_on_semicolon_string():
+    """带分号但非已知实体全名的串,不做贪婪 legacy 前缀匹配。
+    html.unescape('&notreal;') 会解成 '¬real;'(&not;=¬);本函数应原样保留。"""
+    assert _unescape_semicolon_only("&notreal;") == "&notreal;"
+    assert _unescape_semicolon_only("x&param;y") == "x&param;y"  # &param; 非标准实体
+    # 但真正的 &not; (已知实体) 仍该解
+    assert _unescape_semicolon_only("&not;") == "¬"
 
 
 # ── sitemap index(嵌套 sitemap)要递归展开子 sitemap ──────────────
