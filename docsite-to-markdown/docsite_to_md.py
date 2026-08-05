@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """docsite_to_md — 把静态文档站(SSG 预渲染 HTML)批量转成干净 markdown 语料。
 
-目标场景:喂 AI 查询的纯文本语料。默认不保留图片(--keep-images 可保留本地化)、
+目标场景:喂 AI 查询的纯文本语料。图片默认下载本地化(存 assets/、md 相对引用),
 不做公式高保真、不做站点归档。
 当前支持:VitePress(Shiki 高亮)。其它 SSG 靠 --selector 覆盖正文容器。
 
@@ -17,8 +17,8 @@
   - 无语义 wrapper 穿透:div/section/article/main 无块子→当行内,有块子→递归(不抛错)
   - 代码块:Shiki 语言在外层 <div class="language-xxx">;code.get_text() 换行已正确
   - fence:动态长度 max(3, 内部最长连续反引号+1),避开正文反引号
-  - 图片:默认全砍(丢只包一张图的父 <a> 死链);--keep-images 时下载本地化到
-    assets/、md 相对路径引用、下载失败降级为 *[图片: alt]* 占位
+  - 图片:默认下载本地化到 assets/、md 相对路径引用,下载失败降级为 *[图片: alt]*
+    占位(内部 html_to_md 不传 image_ctx 时仍走砍图兜底,丢只包一张图的父 <a> 死链)
   - 清洗:去零宽字符、VitePress 锚点 [​](#…)、收紧多余空行
 """
 from __future__ import annotations
@@ -314,7 +314,7 @@ def clean(md: str) -> str:
     return md.strip() + "\n"
 
 
-# ── keep-images: 图片本地化 ───────────────────────────────────────────
+# ── 图片本地化 ────────────────────────────────────────────────────────
 def resolve_image_url(src: str | None, page_url: str) -> str | None:
     """img src → 绝对 URL。data: URI 原样返回;空/无效返 None。"""
     if not src or not src.strip():
@@ -327,7 +327,7 @@ def resolve_image_url(src: str | None, page_url: str) -> str | None:
 
 @dataclass
 class ImageContext:
-    """keep-images 模式下传给 html_to_md 的图片本地化上下文。
+    """传给 html_to_md 的图片本地化上下文(传入则本地化,不传则砍图兜底)。
 
     downloader(url) -> bytes | None:下载成功返 bytes,失败返 None(不抛)。
     cache:URL → 已存本地 Path,同图多页去重。
@@ -451,26 +451,19 @@ def main():
     ap.add_argument("--skip", action="append", default=[], help="跳过含此子串的 URL(可多次)")
     ap.add_argument("--delay", type=float, default=0.3, help="每页间隔秒")
     ap.add_argument("--limit", type=int, help="最多处理 N 页(调试)")
-    ap.add_argument("--keep-images", action="store_true",
-                    help="下载正文图片到 assets/ 并本地化引用(默认砍图)")
     args = ap.parse_args()
 
     if args.url:
-        image_ctx = None
-        if args.keep_images:
-            if not args.out:
-                ap.error("--keep-images 单页模式需 --out(图片相对路径基于输出文件位置)")
-            out_md = Path(args.out)
-            image_ctx = ImageContext(
-                page_url=args.url, out_dir=out_md.parent,
-                md_path=out_md, downloader=_make_downloader())
+        if not args.out:
+            ap.error("单页模式需 --out(图片本地化的相对路径基于输出文件位置)")
+        out_md = Path(args.out)
+        image_ctx = ImageContext(
+            page_url=args.url, out_dir=out_md.parent,
+            md_path=out_md, downloader=_make_downloader())
         md = html_to_md(fetch(args.url), args.selector, image_ctx=image_ctx)
-        if args.out:
-            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.out).write_text(md, encoding="utf-8")
-            print(f"✓ {args.out} ({len(md)} chars)")
-        else:
-            print(md)
+        out_md.parent.mkdir(parents=True, exist_ok=True)
+        out_md.write_text(md, encoding="utf-8")
+        print(f"✓ {args.out} ({len(md)} chars)")
         return
 
     # 批量
@@ -483,17 +476,15 @@ def main():
         urls = urls[:args.limit]
     out_dir = Path(args.out_dir)
     shared_cache: dict[str, Path] = {}
-    downloader = _make_downloader(args.delay) if args.keep_images else None
+    downloader = _make_downloader(args.delay)
     ok = fail = 0
     for i, url in enumerate(urls, 1):
         try:
             path = url_to_path(url, args.base_url, out_dir)
             path.parent.mkdir(parents=True, exist_ok=True)
-            image_ctx = None
-            if args.keep_images:
-                image_ctx = ImageContext(
-                    page_url=url, out_dir=out_dir, md_path=path,
-                    downloader=downloader, cache=shared_cache)
+            image_ctx = ImageContext(
+                page_url=url, out_dir=out_dir, md_path=path,
+                downloader=downloader, cache=shared_cache)
             md = html_to_md(fetch(url), args.selector, image_ctx=image_ctx)
             path.write_text(md, encoding="utf-8")
             ok += 1
