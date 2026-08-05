@@ -595,12 +595,15 @@ def test_store_image_data_uri_decoded():
 
 def test_store_image_collision_raises():
     """两个不同 URL 剥 assets/ 后撞到同一本地路径,报错不静默覆盖。"""
-    import pytest
     with tempfile.TemporaryDirectory() as tmp:
         ctx = _ctx(tmp, lambda url: b"data")
         store_image("https://s/a/assets/logo.png", ctx)  # 先落一个
-        with pytest.raises(ValueError, match="撞名"):
+        try:
             store_image("https://s/b/assets/logo.png", ctx)  # 剥后同为 assets/logo.png
+        except ValueError as e:
+            assert "撞名" in str(e), f"异常消息不含'撞名': {e}"
+        else:
+            assert False, "未抛 ValueError"
 
 
 def test_store_image_traversal_skipped():
