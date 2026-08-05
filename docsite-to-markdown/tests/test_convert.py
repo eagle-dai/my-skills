@@ -543,6 +543,15 @@ def test_image_rel_href_top_level_md():
     assert href == "assets/x.svg"
 
 
+def test_image_rel_href_space_encoded():
+    """文件按真名(空格)存,但 md 引用里裸空格会截断 URL,须编码成 %20;
+    路径分隔 / 保留。"""
+    href = image_rel_href(Path("out/assets/remote services.svg"),
+                          Path("out/java/p.md"))
+    assert href == "../assets/remote%20services.svg", href
+    assert " " not in href, "引用里不该有裸空格"
+
+
 # ── keep-images: 落盘 + 缓存 ──────────────────────────────────────────
 import tempfile  # noqa: E402
 from docsite_to_md import store_image, ImageContext  # noqa: E402
@@ -711,6 +720,26 @@ def test_image_local_path_url_decoded():
     assert p == Path("out/assets/remote services.svg"), p
     # 编码残留不该出现在文件名里
     assert "%20" not in str(p)
+
+
+def test_image_encoded_url_roundtrip_file_real_ref_encoded():
+    """端到端:src 含 %20 → 文件按空格真名落盘,md 引用用 %20 编码,两侧对得上。"""
+    import tempfile, os
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td)
+        ctx = ImageContext(page_url="https://s/docs/java/p", out_dir=out,
+                           md_path=out / "java/p.md",
+                           downloader=lambda u: b"<svg/>")
+        page = ('<html><body><main><div class="vp-doc">'
+                '<img src="/docs/assets/remote%20services.svg" alt="a">'
+                '</div></main></body></html>')
+        md = html_to_md(page, selector=".vp-doc", image_ctx=ctx)
+        # 引用侧:%20 编码,无裸空格
+        assert "remote%20services.svg" in md, md
+        assert "remote services.svg" not in md, "引用不该有裸空格"
+        # 文件侧:真名(空格)
+        files = [f for _, _, fs in os.walk(out) for f in fs]
+        assert "remote services.svg" in files, files
 
 
 def test_store_image_data_uri_plain_url_decoded(tmp_path=None):

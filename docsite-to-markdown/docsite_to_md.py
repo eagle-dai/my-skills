@@ -36,7 +36,7 @@ import urllib.error
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urljoin, urlsplit, unquote
+from urllib.parse import urljoin, urlsplit, unquote, quote
 from xml.etree import ElementTree
 
 try:
@@ -385,9 +385,11 @@ def image_local_path(img_url: str, out_dir: Path) -> Path:
 
 
 def image_rel_href(local: Path, md_path: Path) -> str:
-    """从 md 文件所在目录算到 local 图的相对路径(posix 斜杠)。"""
+    """从 md 文件所在目录算到 local 图的相对路径(posix 斜杠)。
+    文件按解码后的真名(可能含空格等)存盘,但 md 引用里的裸空格会截断 URL,
+    故对每段做 URL 编码(空格→%20),渲染器解码后正好命中真名文件。保留 `/`。"""
     rel = os.path.relpath(local, md_path.parent)
-    return Path(rel).as_posix()
+    return quote(Path(rel).as_posix(), safe="/")
 
 
 def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
