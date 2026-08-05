@@ -701,6 +701,103 @@ def test_keep_images_shared_cache_across_pages():
     assert len(calls) == 1, "同图跨页该走共享缓存只下一次"
 
 
+# ── 图片文件名:URL 编码要解码,存盘名与引用名一致 ──────────────
+from docsite_to_md import read_sitemap  # noqa: E402
+
+
+def test_image_local_path_url_decoded():
+    """URL 里 %20 等编码,存盘用解码后的真名(空格),否则引用侧解码后找不到文件。"""
+    p = image_local_path("https://s/docs/assets/remote%20services.svg", Path("out"))
+    assert p == Path("out/assets/remote services.svg"), p
+    # 编码残留不该出现在文件名里
+    assert "%20" not in str(p)
+
+
+def test_store_image_data_uri_plain_url_decoded(tmp_path=None):
+    """非 base64 data-URI 的明文 payload 要 urldecode 后再存,否则存出带 %3C 的坏 SVG。"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td)
+        ctx = ImageContext(page_url="https://s/docs/p", out_dir=out,
+                           md_path=out / "p.md",
+                           downloader=lambda u: None)
+        data_uri = "data:image/svg+xml,%3Csvg%3E%3C%2Fsvg%3E"
+        p = store_image(data_uri, ctx)
+        assert p is not None
+        content = p.read_bytes()
+        assert b"<svg>" in content, f"应解码成真 SVG,实际: {content!r}"
+        assert b"%3C" not in content, "不该有编码残留"
+
+
+# ── sitemap index(嵌套 sitemap)要递归展开子 sitemap ──────────────
+def test_read_sitemap_index_recurses(monkeypatch=None):
+    """sitemapindex 的 <loc> 指向子 sitemap 的 .xml,要递归抓子 sitemap 里的页面 URL,
+    而非把子 sitemap 的 .xml 当页面返回。"""
+    import docsite_to_md as d
+    index_xml = (
+        '<?xml version="1.0"?>'
+        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<sitemap><loc>https://s/sitemap-1.xml</loc></sitemap>'
+        '<sitemap><loc>https://s/sitemap-2.xml</loc></sitemap>'
+        '</sitemapindex>')
+    child1 = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://s/docs/a</loc></url>'
+        '<url><loc>https://s/docs/b</loc></url>'
+        '</urlset>')
+    child2 = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://s/docs/c</loc></url>'
+        '</urlset>')
+    responses = {
+        "https://s/sitemap_index.xml": index_xml,
+        "https://s/sitemap-1.xml": child1,
+        "https://s/sitemap-2.xml": child2,
+    }
+    orig = d.fetch
+    d.fetch = lambda url: responses[url]
+    try:
+        urls = read_sitemap("https://s/sitemap_index.xml")
+    finally:
+        d.fetch = orig
+    assert urls == ["https://s/docs/a", "https://s/docs/b", "https://s/docs/c"], urls
+
+
+def test_read_sitemap_flat_still_works():
+    """普通 urlset sitemap 照常返回页面 URL。"""
+    import docsite_to_md as d
+    flat = (
+        '<?xml version="1.0"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        '<url><loc>https://s/docs/x</loc></url>'
+        '</urlset>')
+    orig = d.fetch
+    d.fetch = lambda url: flat
+    try:
+        urls = read_sitemap("https://s/sitemap.xml")
+    finally:
+        d.fetch = orig
+    assert urls == ["https://s/docs/x"], urls
+
+
+# ── 空 language div(code-group 畸形残留)不该产出空围栏 ──────────
+def test_empty_language_div_no_empty_fence():
+    """<div class="language-"> 空块(VitePress code-group 畸形残留)转出一对空 ```
+    围栏,是垃圾。应删空 language 块,不留空围栏。"""
+    html = '''
+    <p>text before</p>
+    <div class="language- active"><button class="copy"></button><span class="lang"></span>
+      <pre class="shiki"><code></code></pre>
+    </div>
+    <p>text after</p>'''
+    md = conv(html)
+    # 不该出现连续两行空围栏
+    import re as _re
+    assert not _re.search(r"```\s*\n\s*```", md), f"不该有空围栏对:\n{md}"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

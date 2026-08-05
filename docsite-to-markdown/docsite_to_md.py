@@ -35,7 +35,7 @@ import urllib.error
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, unquote
 from xml.etree import ElementTree
 
 try:
@@ -158,6 +158,12 @@ def strip_noise_and_images(body: Tag, image_ctx: "ImageContext | None" = None) -
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
             fig.decompose()
+    # 空 language 块:VitePress code-group 畸形快照会留一个空的 <div class="language-">
+    # (真代码跑到了兄弟 <p> 里),转换后产出一对空 ``` 围栏,是垃圾。删掉整块。
+    for div in body.select('div[class*="language-"]'):
+        pre = div.find("pre")
+        if pre is not None and not pre.get_text(strip=True):
+            div.decompose()
     # 空 heading:两种来源 —— ①图砍后剩壳(img 上面已删) ②源里就空(只含 header-anchor
     # + 零宽字符,如 VitePress <h4 id=""><a href="#">​</a></h4>)。零宽 strip 不掉,先剥再判。
     # (img 在上面已 decompose,故不必再判 h.find("img");纯图 heading 图删后即空,该删。)
@@ -356,7 +362,9 @@ def image_local_path(img_url: str, out_dir: Path) -> Path:
             ext = "jpg"
         h = hashlib.sha1(img_url.encode("utf-8")).hexdigest()[:16]
         return out_dir / "assets" / "inline" / f"{h}.{ext}"
-    path = urlsplit(img_url).path.lstrip("/")
+    # URL path 里的 %20 等百分号编码要解码成真名(空格等),否则存盘名带 %20、
+    # 而 md 引用侧渲染器又会把 %20 解码成空格去找文件 → 404。存盘与引用都用解码后的真名。
+    path = unquote(urlsplit(img_url).path).lstrip("/")
     # 图常在 .../assets/<...> 下:剥到 assets/ 后,避免 out/assets/docs/assets/x 冗余层。
     # 非 assets 结构则用完整 path(去域名),保唯一防撞名。
     marker = "assets/"
@@ -391,7 +399,9 @@ def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
     if img_url.startswith("data:"):
         try:
             head, _, payload = img_url.partition(",")
-            data = base64.b64decode(payload) if "base64" in head else payload.encode()
+            # 非 base64 的 data-URI 是 URL-encoded 明文(如 SVG),要先 urldecode 再 encode,
+            # 否则存出带 %3C 的坏 SVG。base64 分支直接解码。
+            data = base64.b64decode(payload) if "base64" in head else unquote(payload).encode()
         except Exception:
             return None
     else:
@@ -453,11 +463,22 @@ def url_to_path(url: str, base_url: str, out_dir: Path) -> Path:
     return out_dir / f"{rel}.md"
 
 
-def read_sitemap(url: str) -> list[str]:
+def read_sitemap(url: str, _depth: int = 0) -> list[str]:
+    """读 sitemap 返回页面 URL 列表。支持 sitemap index(嵌套):根标签是
+    <sitemapindex> 时,其 <loc> 指向子 sitemap 的 .xml,递归展开子 sitemap 的页面 URL。"""
     xml = fetch(url)
     root = ElementTree.fromstring(xml)
     ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-    return [loc.text.strip() for loc in root.findall(".//s:loc", ns) if loc.text]
+    tag = root.tag.rsplit("}", 1)[-1]  # 去命名空间前缀
+    locs = [loc.text.strip() for loc in root.findall(".//s:loc", ns) if loc.text]
+    if tag == "sitemapindex":
+        if _depth > 5:  # 防病态自引用/深嵌套
+            raise ValueError(f"sitemap index 嵌套过深(>5):{url}")
+        out: list[str] = []
+        for child in locs:
+            out.extend(read_sitemap(child, _depth + 1))
+        return out
+    return locs
 
 
 def main():
@@ -498,7 +519,9 @@ def main():
         urls = urls[:args.limit]
     out_dir = Path(args.out_dir)
     shared_cache: dict[str, Path] = {}
-    downloader = _make_downloader(args.delay)
+    # 图下载不额外 sleep:页级循环末尾已 sleep(args.delay) 限速,图再逐张 sleep 是
+    # 双重计费(206 图站会白等 ~60s)。--delay 只管页间隔,不管图。
+    downloader = _make_downloader()
     ok = fail = 0
     for i, url in enumerate(urls, 1):
         try:
