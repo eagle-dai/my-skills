@@ -1,6 +1,6 @@
 ---
 name: docsite-to-markdown
-description: Use when mirroring a whole SSG-prerendered documentation site (typically built from a git repo — VitePress best-supported, Docusaurus/MkDocs via --selector) into a local markdown corpus for AI querying, RAG, or offline reading — crawls the site (sitemap/BFS), converts many pages to clean text, drops image/formula fidelity. NOT for pure SPAs without prerendering (curl path can't see the content), and NOT for high-fidelity archival of SingleFile-saved HTML (use html-to-markdown for that, even in batch).
+description: Use when mirroring a whole SSG-prerendered documentation site (typically built from a git repo — VitePress best-supported, Docusaurus/MkDocs via --selector) into a local markdown corpus for AI querying, RAG, or offline reading — converts many pages (from a sitemap or a user-supplied URL list; no-sitemap sites need a manual BFS step to build the list first) to clean text, drops image/formula fidelity. NOT for pure SPAs without prerendering (curl path can't see the content), and NOT for high-fidelity archival of SingleFile-saved HTML (use html-to-markdown for that, even in batch).
 ---
 
 # docsite-to-markdown
@@ -87,7 +87,7 @@ python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 | 裸语言角标行 | `<span class="lang">cds</span>` | 删 `span.lang` |
 | 复制按钮文字 | `<button class="copy">` | 删 button/.copy |
 | 标题锚点噪声 | `[​](#anchor)` header-anchor + 零宽字符 | 删空文本锚点 + 去零宽 |
-| 页内 TOC 目录 | 自动生成的 outline | 删 nav/.table-of-contents |
+| 页内 TOC 目录 | 自动生成的 outline | 删 `.table-of-contents`（不删裸 `nav`：正文里合法 `<nav>` 罕见但存在，删了有风险） |
 | 图片 | 正文 `<img>` | 默认下载到 `assets/`、本地化相对引用、失败降级 `*[图片: alt]*`;清只含死图的父 `<a>` 死链 |
 | code-group tab 标签 | `vp-code-group > .tabs > label`(如 `Java`/`Node.js`,单 tab 时是语言名 `sh`)泄漏成裸文本行 | 删整条 `.tabs`(含 radio input) |
 | 表格单元格裸 HTML | VitePress 属性表把 `<wbr>`/`<i>`/`&lt;key&gt;` 以转义文本塞进单元格,markdownify 转 table 不递归转 | DOM 层【只在 `<td>`/`<th>` 文本节点】清:删 `<wbr>`、`<br>`→空格、解包 `<i>` 等强调标签。不碰正文/行内代码里的标签字面量 |

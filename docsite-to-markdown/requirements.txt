@@ -1,2 +1,3 @@
+# Python >= 3.9 (uses pathlib.Path.is_relative_to, added in 3.9)
 beautifulsoup4>=4.12
 markdownify>=1.0
