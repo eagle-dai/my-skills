@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """docsite_to_md — 把静态文档站(SSG 预渲染 HTML)批量转成干净 markdown 语料。
 
-目标场景:喂 AI 查询的纯文本语料。不保留图片、不做公式高保真、不做站点归档。
+目标场景:喂 AI 查询的纯文本语料。图片默认下载本地化(存 assets/、md 相对引用),
+不做公式高保真、不做站点归档。
 当前支持:VitePress(Shiki 高亮)。其它 SSG 靠 --selector 覆盖正文容器。
 
 用法:
@@ -16,18 +17,25 @@
   - 无语义 wrapper 穿透:div/section/article/main 无块子→当行内,有块子→递归(不抛错)
   - 代码块:Shiki 语言在外层 <div class="language-xxx">;code.get_text() 换行已正确
   - fence:动态长度 max(3, 内部最长连续反引号+1),避开正文反引号
-  - 图片全砍:遇 img 返空,顺手丢只包一张图的父 <a> 死链
+  - 图片:默认下载本地化到 assets/、md 相对路径引用,下载失败降级为 *[图片: alt]*
+    占位(内部 html_to_md 不传 image_ctx 时仍走砍图兜底,丢只包一张图的父 <a> 死链)
   - 清洗:去零宽字符、VitePress 锚点 [​](#…)、收紧多余空行
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import os
 import re
 import sys
 import time
 import urllib.request
 import urllib.error
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
+from urllib.parse import urljoin, urlsplit
 from xml.etree import ElementTree
 
 try:
@@ -73,12 +81,15 @@ _CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空�
 _CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
 
 
+_UA = "docsite-to-md/1.0"
+
+
 def fetch(url: str, timeout: int = 30, retries: int = 3) -> str:
     """抓 HTML。静态 SSG 站正文已在 HTML 里,无需浏览器。"""
     last = None
     for i in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "docsite-to-md/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
@@ -118,8 +129,12 @@ def pick_body(soup: BeautifulSoup, selector: str | None):
     raise RuntimeError("找不到正文容器,用 --selector 指定")
 
 
-def strip_noise_and_images(body: Tag) -> None:
-    """删噪声节点 + 全砍图片(含只包一张图的父 <a> 死链)。"""
+def strip_noise_and_images(body: Tag, image_ctx: "ImageContext | None" = None) -> None:
+    """删噪声节点 + 处理图片。
+
+    image_ctx=None(默认):全砍图片(含只包一张图的父 <a> 死链)。
+    image_ctx 非 None:下载本地化,重写 src 为相对路径;失败降级为占位文本。
+    """
     for sel in NOISE_SELECTORS:
         for t in body.select(sel):
             t.decompose()
@@ -135,15 +150,10 @@ def strip_noise_and_images(body: Tag) -> None:
             new = _CELL_UNWRAP.sub("", new)
             if new != str(s):
                 s.replace_with(new)
-    for img in body.find_all("img"):
-        parent = img.parent
-        # 父 <a> 只包这一张图 → 整个链接丢弃,否则只删 img
-        if (isinstance(parent, Tag) and parent.name == "a"
-                and not parent.get_text(strip=True)
-                and len(parent.find_all("img")) == 1):
-            parent.decompose()
-        else:
-            img.decompose()
+    if image_ctx is None:
+        _strip_images(body)
+    else:
+        _localize_images(body, image_ctx)
     # 空 figure(图删光后剩壳)
     for fig in body.find_all("figure"):
         if not fig.get_text(strip=True):
@@ -154,6 +164,34 @@ def strip_noise_and_images(body: Tag) -> None:
     for h in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         if not _ZERO_WIDTH.sub("", h.get_text()).strip():
             h.decompose()
+
+
+def _strip_images(body: Tag) -> None:
+    """砍图:img 删除,只包一张图的父 <a> 整个删(死链)。"""
+    for img in body.find_all("img"):
+        parent = img.parent
+        if (isinstance(parent, Tag) and parent.name == "a"
+                and not parent.get_text(strip=True)
+                and len(parent.find_all("img")) == 1):
+            parent.decompose()
+        else:
+            img.decompose()
+
+
+def _localize_images(body: Tag, ctx: "ImageContext") -> None:
+    """下载图并重写 src 为相对路径;失败替换为占位文本节点。"""
+    for img in body.find_all("img"):
+        alt = (img.get("alt") or "").strip()
+        src = resolve_image_url(img.get("src"), ctx.page_url)
+        local = store_image(src, ctx) if src else None
+        if local is None:
+            # 用 <em> 让 markdownify 自然转成 *…*(裸 * 会被 markdownify 转义成 \*)
+            text = f"[图片: {alt}]" if alt else "[图片]"
+            em = BeautifulSoup("", "html.parser").new_tag("em")
+            em.string = text
+            img.replace_with(em)
+        else:
+            img["src"] = image_rel_href(local, ctx.md_path)
 
 
 def _href_link_text(href: str | None) -> str:
@@ -240,10 +278,11 @@ class DocConverter(markdownify.MarkdownConverter):
         return f"\n\n{fence}{lang}\n{code}\n{fence}\n\n"
 
 
-def html_to_md(html: str, selector: str | None) -> str:
+def html_to_md(html: str, selector: str | None,
+               image_ctx: "ImageContext | None" = None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     body = pick_body(soup, selector)
-    strip_noise_and_images(body)
+    strip_noise_and_images(body, image_ctx)
     unwrap_feature_links(body)
     md = DocConverter(heading_style="ATX", bullets="-").convert_soup(body)
     return clean(md)
@@ -273,6 +312,121 @@ def clean(md: str) -> str:
     md = "\n".join(out)
     md = _MULTI_BLANK.sub("\n\n", md)
     return md.strip() + "\n"
+
+
+# ── 图片本地化 ────────────────────────────────────────────────────────
+def resolve_image_url(src: str | None, page_url: str) -> str | None:
+    """img src → 绝对 URL。data: URI 原样返回;空/无效返 None。"""
+    if not src or not src.strip():
+        return None
+    src = src.strip()
+    if src.startswith("data:"):
+        return src
+    return urljoin(page_url, src)
+
+
+@dataclass
+class ImageContext:
+    """传给 html_to_md 的图片本地化上下文(传入则本地化,不传则砍图兜底)。
+
+    downloader(url) -> bytes | None:下载成功返 bytes,失败返 None(不抛)。
+    cache:URL → 已存本地 Path,同图多页去重。
+    """
+    page_url: str
+    out_dir: Path
+    md_path: Path
+    downloader: Callable[[str], "bytes | None"]
+    cache: dict[str, Path] = field(default_factory=dict)
+    # 反向映射 dest→url,检测两个不同 URL 剥 assets/ 后撞到同一本地路径
+    dest_owner: dict[Path, str] = field(default_factory=dict)
+
+
+_DATA_URI_RE = re.compile(r"^data:image/([A-Za-z0-9.+-]+)[;,]")
+
+
+def image_local_path(img_url: str, out_dir: Path) -> Path:
+    """图 URL → 本地存放路径。http(s) 用 url path(去域名)存 assets/<path>;
+    data: URI 按内容 hash 存 assets/inline/<hash>.<ext>。"""
+    if img_url.startswith("data:"):
+        m = _DATA_URI_RE.match(img_url)
+        ext = (m.group(1) if m else "bin").lower()
+        if ext == "svg+xml":
+            ext = "svg"
+        if ext == "jpeg":
+            ext = "jpg"
+        h = hashlib.sha1(img_url.encode("utf-8")).hexdigest()[:16]
+        return out_dir / "assets" / "inline" / f"{h}.{ext}"
+    path = urlsplit(img_url).path.lstrip("/")
+    # 图常在 .../assets/<...> 下:剥到 assets/ 后,避免 out/assets/docs/assets/x 冗余层。
+    # 非 assets 结构则用完整 path(去域名),保唯一防撞名。
+    marker = "assets/"
+    idx = path.rfind(marker)
+    if idx != -1:
+        path = path[idx + len(marker):]
+    return out_dir / "assets" / path
+
+
+def image_rel_href(local: Path, md_path: Path) -> str:
+    """从 md 文件所在目录算到 local 图的相对路径(posix 斜杠)。"""
+    rel = os.path.relpath(local, md_path.parent)
+    return Path(rel).as_posix()
+
+
+def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
+    """把图存到本地 assets;成功返 Path,失败返 None。缓存去重。"""
+    if img_url in ctx.cache:
+        return ctx.cache[img_url]
+    dest = image_local_path(img_url, ctx.out_dir)
+    # traversal 兜底:畸形 src(含 ../)可能让 dest 逃出 out_dir,拒写
+    root = ctx.out_dir.resolve()
+    if not dest.resolve().is_relative_to(root):
+        print(f"    ⚠ 跳过越界图片路径 {img_url} → {dest}", file=sys.stderr)
+        return None
+    # 撞名检测:两个不同 URL 剥 assets/ 后映到同一本地路径,报错不静默覆盖
+    prev = ctx.dest_owner.get(dest)
+    if prev is not None and prev != img_url:
+        raise ValueError(
+            f"图片本地路径撞名:{prev} 和 {img_url} 都映射到 {dest}"
+            f"(剥 assets/ 前缀后同名)。改站点结构或改 image_local_path 剥法")
+    if img_url.startswith("data:"):
+        try:
+            head, _, payload = img_url.partition(",")
+            data = base64.b64decode(payload) if "base64" in head else payload.encode()
+        except Exception:
+            return None
+    else:
+        data = ctx.downloader(img_url)
+        if data is None:
+            return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)  # 写盘失败(OSError)是环境问题,该抛,不是单图问题
+    ctx.cache[img_url] = dest
+    ctx.dest_owner[dest] = img_url
+    return dest
+
+
+_MAX_IMAGE_BYTES = 50 * 1024 * 1024  # 单图上限,防超大响应爆内存
+
+
+def _make_downloader(delay: float = 0.0) -> "Callable[[str], bytes | None]":
+    """返回图片下载器:成功返 bytes,失败(网络/404/超时/超限)返 None,不抛。"""
+    def dl(url: str) -> "bytes | None":
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _UA})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                # 多读 1 字节判断是否超限(Content-Length 可缺失/撒谎,以实读为准)
+                data = resp.read(_MAX_IMAGE_BYTES + 1)
+            if len(data) > _MAX_IMAGE_BYTES:
+                print(f"    ⚠ 图片超 {_MAX_IMAGE_BYTES // 1024 // 1024}MB 跳过 {url}",
+                      file=sys.stderr)
+                return None
+            if delay:
+                time.sleep(delay)
+            return data
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            print(f"    ⚠ 图片下载失败 {url}: {e}", file=sys.stderr)
+            return None
+    return dl
 
 
 # ── URL → 输出路径映射 ────────────────────────────────────────────────
@@ -322,12 +476,16 @@ def main():
     args = ap.parse_args()
 
     if args.url:
-        md = html_to_md(fetch(args.url), args.selector)
-        if args.out:
-            Path(args.out).write_text(md, encoding="utf-8")
-            print(f"✓ {args.out} ({len(md)} chars)")
-        else:
-            print(md)
+        if not args.out:
+            ap.error("单页模式需 --out(图片本地化的相对路径基于输出文件位置)")
+        out_md = Path(args.out)
+        image_ctx = ImageContext(
+            page_url=args.url, out_dir=out_md.parent,
+            md_path=out_md, downloader=_make_downloader())
+        md = html_to_md(fetch(args.url), args.selector, image_ctx=image_ctx)
+        out_md.parent.mkdir(parents=True, exist_ok=True)
+        out_md.write_text(md, encoding="utf-8")
+        print(f"✓ {args.out} ({len(md)} chars)")
         return
 
     # 批量
@@ -339,12 +497,17 @@ def main():
     if args.limit:
         urls = urls[:args.limit]
     out_dir = Path(args.out_dir)
+    shared_cache: dict[str, Path] = {}
+    downloader = _make_downloader(args.delay)
     ok = fail = 0
     for i, url in enumerate(urls, 1):
         try:
-            md = html_to_md(fetch(url), args.selector)
             path = url_to_path(url, args.base_url, out_dir)
             path.parent.mkdir(parents=True, exist_ok=True)
+            image_ctx = ImageContext(
+                page_url=url, out_dir=out_dir, md_path=path,
+                downloader=downloader, cache=shared_cache)
+            md = html_to_md(fetch(url), args.selector, image_ctx=image_ctx)
             path.write_text(md, encoding="utf-8")
             ok += 1
             print(f"[{i}/{len(urls)}] ✓ {path}")

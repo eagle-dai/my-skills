@@ -71,9 +71,11 @@ docsite_to_md.py --sitemap https://SITE/docs/sitemap.xml \
     --base-url https://SITE/docs --out-dir OUT --skip '/releases/' --delay 0.3
 # 无 sitemap,自备 URL 列表
 docsite_to_md.py --url-list urls.txt --base-url https://SITE/docs --out-dir OUT
-# 单页调试
+# 单页调试(必须 --out;图片本地化相对路径基于输出文件位置)
 python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 ```
+
+图片默认下载本地化到 `assets/`(批量→顶层集中,单页→md 同级 `assets/`)。
 
 脚本细节 `--help`。它已内置这些坑的处理(见下)。
 
@@ -86,7 +88,7 @@ python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 | 复制按钮文字 | `<button class="copy">` | 删 button/.copy |
 | 标题锚点噪声 | `[​](#anchor)` header-anchor + 零宽字符 | 删空文本锚点 + 去零宽 |
 | 页内 TOC 目录 | 自动生成的 outline | 删 nav/.table-of-contents |
-| 图片 | 文本语料不需要 | 砍 img,清只包一图的父 `<a>` 死链 |
+| 图片 | 正文 `<img>` | 默认下载到 `assets/`、本地化相对引用、失败降级 `*[图片: alt]*`;清只含死图的父 `<a>` 死链 |
 | code-group tab 标签 | `vp-code-group > .tabs > label`(如 `Java`/`Node.js`,单 tab 时是语言名 `sh`)泄漏成裸文本行 | 删整条 `.tabs`(含 radio input) |
 | 表格单元格裸 HTML | VitePress 属性表把 `<wbr>`/`<i>`/`&lt;key&gt;` 以转义文本塞进单元格,markdownify 转 table 不递归转 | DOM 层【只在 `<td>`/`<th>` 文本节点】清:删 `<wbr>`、`<br>`→空格、解包 `<i>` 等强调标签。不碰正文/行内代码里的标签字面量 |
 | 空 heading | 图砍后剩壳,或源里就空(`<h4 id=""><a>​</a></h4>` 只含锚点+零宽) | 剥零宽后判空则删(含 img 的不删) |
@@ -101,6 +103,7 @@ python3 docsite_to_md.py --url https://SITE/docs/foo --out /tmp/foo.md
 
 ## 已知限制
 
+- **图片本地化(默认)**:下载正文 `<img>` 到 `assets/`(按 URL 里 `assets/` 后的路径去重;批量模式顶层集中,单页模式落 md 同级 `assets/` 自包含),md 用相对路径引用;SVG 原样存不转格式;data-URI 内联图解码存 `assets/inline/`;单图下载失败降级为 `*[图片: alt]*` 占位,不中断整批;同图多页引用走缓存只下一次。**只处理 `<img>` 标签** —— CSS 背景图 / `<object>` / `<iframe>` / canvas 抓不到;不去水印、不压缩(那是 `html-to-markdown` 的高保真活)。
 - **VitePress custom-block(`::: tip` / `::: warning`)降级**:标题+内容会压平成裸文本,`tip/warning` 语义标记丢失。对纯文本语料通常可接受,若需保留提示类型请后处理。
 - **非 VitePress 站**:Docusaurus/MkDocs 等正文容器不同,需 `--selector` 指定;custom container 处理未针对性适配。
 - **编码**:硬编码 utf-8,非 utf-8 站点(罕见)会出现替换字符。

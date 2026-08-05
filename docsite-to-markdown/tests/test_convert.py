@@ -3,6 +3,7 @@
 离线测试:用内联 HTML 片段(真实 VitePress/Shiki 结构),不碰网络。
 跑: python3 -m pytest tests/ -q   或   python3 tests/test_convert.py
 """
+import base64
 import sys
 from pathlib import Path
 
@@ -478,6 +479,223 @@ def test_url_to_path_query_and_trailing_slash():
     base, out = "https://x.com/docs", Path("o")
     assert url_to_path("https://x.com/docs/cds/?x=1", base, out) == out / "cds/index.md"
     assert url_to_path("https://x.com/docs/cds/cdl#anchor", base, out) == out / "cds/cdl.md"
+
+
+# ── keep-images: URL 解析 ─────────────────────────────────────────────
+from docsite_to_md import resolve_image_url  # noqa: E402
+
+
+def test_resolve_image_url_relative():
+    r = resolve_image_url("/docs/assets/x.svg", "https://cap.cloud.sap/docs/cds/")
+    assert r == "https://cap.cloud.sap/docs/assets/x.svg"
+
+
+def test_resolve_image_url_absolute_kept():
+    r = resolve_image_url("https://cdn.x/y.png", "https://s/p/")
+    assert r == "https://cdn.x/y.png"
+
+
+def test_resolve_image_url_data_uri_kept():
+    r = resolve_image_url("data:image/png;base64,AAAA", "https://s/p/")
+    assert r == "data:image/png;base64,AAAA"
+
+
+def test_resolve_image_url_empty_none():
+    assert resolve_image_url("", "https://s/p/") is None
+    assert resolve_image_url(None, "https://s/p/") is None
+
+
+# ── keep-images: 本地路径 + 相对引用 ──────────────────────────────────
+from docsite_to_md import image_local_path, image_rel_href  # noqa: E402
+
+
+def test_image_local_path_from_url():
+    # 图在 .../assets/ 下:剥到 assets/ 后,存 out/assets/<file>,不带冗余层
+    p = image_local_path("https://cap.cloud.sap/docs/assets/csn.svg", Path("cap"))
+    assert p == Path("cap/assets/csn.svg")
+
+
+def test_image_local_path_no_assets_marker_keeps_path():
+    # 非 assets 结构:用完整 url path(去域名)防撞名
+    p = image_local_path("https://s/docs/a/b/pic.png", Path("out"))
+    assert p == Path("out/assets/docs/a/b/pic.png")
+
+
+def test_image_local_path_nested_under_assets():
+    # assets 后还有子目录 → 保留子结构
+    p = image_local_path("https://s/docs/assets/img/pic.png", Path("out"))
+    assert p == Path("out/assets/img/pic.png")
+
+
+def test_image_local_path_data_uri_hashed():
+    p = image_local_path("data:image/png;base64,iVBORw0AAA", Path("out"))
+    assert p.parent == Path("out/assets/inline")
+    assert p.suffix == ".png"
+
+
+def test_image_rel_href_sibling_assets():
+    href = image_rel_href(Path("out/assets/csn.svg"), Path("out/cds/index.md"))
+    assert href == "../assets/csn.svg"
+
+
+def test_image_rel_href_top_level_md():
+    href = image_rel_href(Path("out/assets/x.svg"), Path("out/index.md"))
+    assert href == "assets/x.svg"
+
+
+# ── keep-images: 落盘 + 缓存 ──────────────────────────────────────────
+import tempfile  # noqa: E402
+from docsite_to_md import store_image, ImageContext  # noqa: E402
+
+
+def _ctx(tmp, downloader, page="https://s/docs/cds/", md_rel="cds/index.md"):
+    out = Path(tmp)
+    return ImageContext(page_url=page, out_dir=out,
+                        md_path=out / md_rel, downloader=downloader)
+
+
+def test_store_image_http_writes_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"<svg>ok</svg>")
+        p = store_image("https://s/docs/assets/x.svg", ctx)
+        assert p is not None and p.exists()
+        assert p.read_bytes() == b"<svg>ok</svg>"
+
+
+def test_store_image_download_fail_returns_none():
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: None)
+        p = store_image("https://s/docs/assets/bad.png", ctx)
+        assert p is None
+
+
+def test_store_image_cache_hit_no_second_download():
+    calls = []
+
+    def dl(url):
+        calls.append(url)
+        return b"data"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, dl)
+        p1 = store_image("https://s/docs/assets/x.png", ctx)
+        p2 = store_image("https://s/docs/assets/x.png", ctx)
+        assert p1 == p2
+        assert len(calls) == 1, "同图第二次该走缓存,不重复下载"
+
+
+def test_store_image_data_uri_decoded():
+    raw = b"\x89PNG\r\n"
+    data_uri = "data:image/png;base64," + base64.b64encode(raw).decode()
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: None)  # data uri 不走 downloader
+        p = store_image(data_uri, ctx)
+        assert p is not None and p.read_bytes() == raw
+
+
+def test_store_image_collision_raises():
+    """两个不同 URL 剥 assets/ 后撞到同一本地路径,报错不静默覆盖。"""
+    import pytest
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"data")
+        store_image("https://s/a/assets/logo.png", ctx)  # 先落一个
+        with pytest.raises(ValueError, match="撞名"):
+            store_image("https://s/b/assets/logo.png", ctx)  # 剥后同为 assets/logo.png
+
+
+def test_store_image_traversal_skipped():
+    """畸形 src 含 ../ 逃出 out_dir 时跳过返 None,不写盘。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"data")
+        # path 无 assets/ 段,用完整 path;含 ../ 逃逸
+        p = store_image("https://s/../../../etc/evil.png", ctx)
+        assert p is None
+        assert ctx.cache == {}, "越界路径不该进缓存"
+
+
+def test_downloader_oversize_returns_none():
+    """超大响应(> 上限)跳过返 None。"""
+    from docsite_to_md import _make_downloader, _MAX_IMAGE_BYTES
+    import urllib.request
+    from unittest import mock
+
+    class FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n=-1):
+            return b"x" * (_MAX_IMAGE_BYTES + 1) if n < 0 else b"x" * n
+
+    dl = _make_downloader()
+    with mock.patch.object(urllib.request, "urlopen", return_value=FakeResp()):
+        assert dl("https://s/huge.png") is None
+
+
+# ── keep-images: 端到端(注入 fake downloader) ───────────────────────
+def conv_keep(body_html, downloader, page="https://s/docs/cds/", md_rel="cds/index.md"):
+    """keep-images 模式转换,注入 fake downloader + tmp out_dir。返 (md, out_dir)。"""
+    page_html = (f'<html><body><main class="main"><div class="vp-doc">'
+                 f'{body_html}</div></main></body></html>')
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp)
+    ctx = ImageContext(page_url=page, out_dir=out, md_path=out / md_rel,
+                       downloader=downloader)
+    md = html_to_md(page_html, selector=".vp-doc", image_ctx=ctx)
+    return md, out
+
+
+def test_keep_images_localizes_and_rewrites():
+    md, out = conv_keep('<p>t</p><img src="/docs/assets/csn.svg" alt="arch">',
+                        lambda url: b"<svg/>")
+    assert "![arch](../assets/csn.svg)" in md, "该保留图并重写为相对路径"
+    assert (out / "assets/csn.svg").exists(), "图该落盘"
+
+
+def test_keep_images_download_fail_placeholder():
+    md, _ = conv_keep('<img src="/docs/assets/x.png" alt="diagram">',
+                      lambda url: None)
+    assert "*[图片: diagram]*" in md, "下载失败该降级为占位"
+    assert "![" not in md, "失败不该留 md 图引用"
+
+
+def test_keep_images_fail_no_alt_placeholder():
+    md, _ = conv_keep('<img src="/docs/assets/x.png">', lambda url: None)
+    assert "*[图片]*" in md, "无 alt 失败占位"
+
+
+def test_keep_images_default_still_strips():
+    """不传 image_ctx 时,现有砍图行为不变。"""
+    page = ('<html><body><main class="main"><div class="vp-doc">'
+            '<img src="/foo.png" alt="x"><p>t</p></div></main></body></html>')
+    md = html_to_md(page, selector=".vp-doc")  # 无 image_ctx
+    assert "![" not in md and ".png" not in md
+
+
+def test_keep_images_single_page_self_contained():
+    """单页模式(out_dir=md 父目录):图落 md 同级 assets/,引用 assets/x 自包含。"""
+    md, out = conv_keep('<img src="/docs/assets/x.svg" alt="a">',
+                        lambda url: b"<svg/>", md_rel="foo.md")
+    assert "![a](assets/x.svg)" in md, "md 同级 assets 引用该无 ../ 前缀"
+    assert (out / "assets/x.svg").exists()
+
+
+def test_keep_images_shared_cache_across_pages():
+    """批量共享 cache:同图两页只下一次。"""
+    calls = []
+
+    def dl(url):
+        calls.append(url)
+        return b"<svg/>"
+
+    tmp = tempfile.mkdtemp()
+    out = Path(tmp)
+    cache = {}
+    for md_rel in ("cds/a.md", "cds/b.md"):
+        ctx = ImageContext(page_url="https://s/docs/cds/", out_dir=out,
+                           md_path=out / md_rel, downloader=dl, cache=cache)
+        page = ('<html><body><main class="main"><div class="vp-doc">'
+                '<img src="/docs/assets/shared.svg" alt="s"></div></main></body></html>')
+        html_to_md(page, selector=".vp-doc", image_ctx=ctx)
+    assert len(calls) == 1, "同图跨页该走共享缓存只下一次"
 
 
 if __name__ == "__main__":
