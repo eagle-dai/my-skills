@@ -1,6 +1,6 @@
 ---
 name: docsite-to-markdown
-description: Use when copying/mirroring a documentation website (VitePress best-supported; other SSG docs like Docusaurus/MkDocs via --selector) into local markdown for AI querying, RAG, or offline corpus — batch-converting many doc pages to clean text, not archiving a single rich page.
+description: Use when mirroring a whole SSG-prerendered documentation site (typically built from a git repo — VitePress best-supported, Docusaurus/MkDocs via --selector) into a local markdown corpus for AI querying, RAG, or offline reading — crawls the site (sitemap/BFS), converts many pages to clean text, drops image/formula fidelity. NOT for pure SPAs without prerendering (curl path can't see the content), and NOT for high-fidelity archival of SingleFile-saved HTML (use html-to-markdown for that, even in batch).
 ---
 
 # docsite-to-markdown
