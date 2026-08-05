@@ -337,6 +337,8 @@ class ImageContext:
     md_path: Path
     downloader: Callable[[str], "bytes | None"]
     cache: dict[str, Path] = field(default_factory=dict)
+    # 反向映射 dest→url,检测两个不同 URL 剥 assets/ 后撞到同一本地路径
+    dest_owner: dict[Path, str] = field(default_factory=dict)
 
 
 _DATA_URI_RE = re.compile(r"^data:image/([A-Za-z0-9.+-]+)[;,]")
@@ -375,6 +377,17 @@ def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
     if img_url in ctx.cache:
         return ctx.cache[img_url]
     dest = image_local_path(img_url, ctx.out_dir)
+    # traversal 兜底:畸形 src(含 ../)可能让 dest 逃出 out_dir,拒写
+    root = ctx.out_dir.resolve()
+    if not dest.resolve().is_relative_to(root):
+        print(f"    ⚠ 跳过越界图片路径 {img_url} → {dest}", file=sys.stderr)
+        return None
+    # 撞名检测:两个不同 URL 剥 assets/ 后映到同一本地路径,报错不静默覆盖
+    prev = ctx.dest_owner.get(dest)
+    if prev is not None and prev != img_url:
+        raise ValueError(
+            f"图片本地路径撞名:{prev} 和 {img_url} 都映射到 {dest}"
+            f"(剥 assets/ 前缀后同名)。改站点结构或改 image_local_path 剥法")
     if img_url.startswith("data:"):
         try:
             head, _, payload = img_url.partition(",")
@@ -388,20 +401,29 @@ def store_image(img_url: str, ctx: "ImageContext") -> "Path | None":
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)  # 写盘失败(OSError)是环境问题,该抛,不是单图问题
     ctx.cache[img_url] = dest
+    ctx.dest_owner[dest] = img_url
     return dest
 
 
+_MAX_IMAGE_BYTES = 50 * 1024 * 1024  # 单图上限,防超大响应爆内存
+
+
 def _make_downloader(delay: float = 0.0) -> "Callable[[str], bytes | None]":
-    """返回图片下载器:成功返 bytes,失败(网络/404/超时)返 None,不抛。"""
+    """返回图片下载器:成功返 bytes,失败(网络/404/超时/超限)返 None,不抛。"""
     def dl(url: str) -> "bytes | None":
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
+                # 多读 1 字节判断是否超限(Content-Length 可缺失/撒谎,以实读为准)
+                data = resp.read(_MAX_IMAGE_BYTES + 1)
+            if len(data) > _MAX_IMAGE_BYTES:
+                print(f"    ⚠ 图片超 {_MAX_IMAGE_BYTES // 1024 // 1024}MB 跳过 {url}",
+                      file=sys.stderr)
+                return None
             if delay:
                 time.sleep(delay)
             return data
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as e:
+        except (urllib.error.URLError, OSError, ValueError) as e:
             print(f"    ⚠ 图片下载失败 {url}: {e}", file=sys.stderr)
             return None
     return dl

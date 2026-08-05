@@ -593,6 +593,43 @@ def test_store_image_data_uri_decoded():
         assert p is not None and p.read_bytes() == raw
 
 
+def test_store_image_collision_raises():
+    """两个不同 URL 剥 assets/ 后撞到同一本地路径,报错不静默覆盖。"""
+    import pytest
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"data")
+        store_image("https://s/a/assets/logo.png", ctx)  # 先落一个
+        with pytest.raises(ValueError, match="撞名"):
+            store_image("https://s/b/assets/logo.png", ctx)  # 剥后同为 assets/logo.png
+
+
+def test_store_image_traversal_skipped():
+    """畸形 src 含 ../ 逃出 out_dir 时跳过返 None,不写盘。"""
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = _ctx(tmp, lambda url: b"data")
+        # path 无 assets/ 段,用完整 path;含 ../ 逃逸
+        p = store_image("https://s/../../../etc/evil.png", ctx)
+        assert p is None
+        assert ctx.cache == {}, "越界路径不该进缓存"
+
+
+def test_downloader_oversize_returns_none():
+    """超大响应(> 上限)跳过返 None。"""
+    from docsite_to_md import _make_downloader, _MAX_IMAGE_BYTES
+    import urllib.request
+    from unittest import mock
+
+    class FakeResp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, n=-1):
+            return b"x" * (_MAX_IMAGE_BYTES + 1) if n < 0 else b"x" * n
+
+    dl = _make_downloader()
+    with mock.patch.object(urllib.request, "urlopen", return_value=FakeResp()):
+        assert dl("https://s/huge.png") is None
+
+
 # ── keep-images: 端到端(注入 fake downloader) ───────────────────────
 def conv_keep(body_html, downloader, page="https://s/docs/cds/", md_rel="cds/index.md"):
     """keep-images 模式转换,注入 fake downloader + tmp out_dir。返 (md, out_dir)。"""
