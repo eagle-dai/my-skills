@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from docsite_to_md import html_to_md, url_to_path  # noqa: E402
+from docsite_to_md import html_to_md, url_to_path, _unescape_semicolon_only  # noqa: E402
 
 
 def conv(body_html: str) -> str:
@@ -814,6 +814,31 @@ def test_code_block_amp_reg_word_not_decoded():
               '</code></pre></div>')
     assert "&region=eu" in md, md
     assert "®" not in md, md
+
+
+# ── _unescape_semicolon_only 函数级边界:精确实体查表,不贪婪 ──────────
+def test_unescape_semicolon_decodes_known_entities():
+    """已知完整实体(命名/十进制/十六进制含大写 X)都该解。"""
+    assert _unescape_semicolon_only("a&amp;b") == "a&b"
+    assert _unescape_semicolon_only("&lt;x&gt;") == "<x>"
+    assert _unescape_semicolon_only("&#38;") == "&"
+    assert _unescape_semicolon_only("&#x26;") == "&"
+    assert _unescape_semicolon_only("&#X26;") == "&"  # 大写 X 也是合法十六进制实体
+
+
+def test_unescape_semicolon_no_semicolonless_legacy():
+    """无分号 legacy 前缀原样保留:&curren/&reg 不解成 ¤/®。"""
+    assert _unescape_semicolon_only("a=1&currentschema=X") == "a=1&currentschema=X"
+    assert _unescape_semicolon_only("?a=1&region=eu") == "?a=1&region=eu"
+
+
+def test_unescape_semicolon_no_greedy_prefix_on_semicolon_string():
+    """带分号但非已知实体全名的串,不做贪婪 legacy 前缀匹配。
+    html.unescape('&notreal;') 会解成 '¬real;'(&not;=¬);本函数应原样保留。"""
+    assert _unescape_semicolon_only("&notreal;") == "&notreal;"
+    assert _unescape_semicolon_only("x&param;y") == "x&param;y"  # &param; 非标准实体
+    # 但真正的 &not; (已知实体) 仍该解
+    assert _unescape_semicolon_only("&not;") == "¬"
 
 
 # ── sitemap index(嵌套 sitemap)要递归展开子 sitemap ──────────────

@@ -27,6 +27,7 @@ import argparse
 import base64
 import hashlib
 import html
+import html.entities
 import os
 import re
 import sys
@@ -81,11 +82,14 @@ _CELL_DROP = re.compile(r"<wbr\s*/?>")                        # 软换行占位,
 _CELL_SPACE = re.compile(r"<br\s*/?>")                        # 断行 → 空格
 _CELL_UNWRAP = re.compile(r"</?(?:i|b|em|strong|sub|sup|nobr)\b[^>]*>")  # 强调标签,留文本
 
-# 只匹配【带分号结尾】的实体:命名(&amp;)、十进制(&#38;)、十六进制(&#x26;)。
-# html.unescape 会额外解析【无分号】的 legacy 实体前缀(如 &curren、&reg、&copy),
-# 对代码/URL 里字面的 & 是灾难 —— 例如 JDBC URL 的 &currentschema 会被吃成 ¤tschema
-# (&curren; = ¤)。代码块里的 & 几乎总是字面量,只该解真正写全(带分号)的实体。
-_ENTITY_SEMI = re.compile(r"&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")
+# 只解【精确的完整实体】:命名(&amp;)、十进制(&#38;)、十六进制(&#x26; / &#X26;)。
+# 不能用 html.unescape:它会额外解析【无分号】的 legacy 实体前缀(&curren、&reg、&copy),
+# 对代码/URL 里字面的 & 是灾难 —— JDBC URL 的 &currentschema 会被吃成 ¤tschema
+# (&curren; = ¤)。而且即便整串带分号,html.unescape 仍对串内部做最长 legacy 前缀匹配
+# (&notreal; → ¬real;,因 &not; = ¬)。所以这里【逐个精确查表】:命名实体必须整个是
+# html5 表里的已知名(带分号形式),否则原样保留;数字实体自己算 chr。代码/属性表里
+# 的 & 几乎总是字面量,只有真正写全的标准实体才该解。
+_ENTITY_SEMI = re.compile(r"&(#\d+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);")
 # 裸尖括号:表格单元格 unescape 后,占位符如 <key>/<index> 会变裸 < >,GitHub 渲染
 # 时当未知 HTML 标签整个吞掉。删完真标签(wbr/br/i…)后,把剩下的裸尖括号转回实体,
 # 让它们可见地渲染出来。
@@ -93,9 +97,22 @@ _BARE_LT = re.compile(r"<")
 _BARE_GT = re.compile(r">")
 
 
+def _decode_one_entity(m: "re.Match[str]") -> str:
+    """把单个匹配到的实体串解成字符;不是已知实体则原样保留(不做 legacy 前缀匹配)。"""
+    whole, body = m.group(0), m.group(1)
+    if body[0] == "#":
+        try:
+            cp = int(body[2:], 16) if body[1] in "xX" else int(body[1:])
+            return chr(cp)
+        except (ValueError, OverflowError):
+            return whole
+    # 命名实体:html5 表的标准键是【带分号】形式(如 "amp;"),精确命中才解
+    return html.entities.html5.get(body + ";", whole)
+
+
 def _unescape_semicolon_only(text: str) -> str:
-    """只解带分号的 HTML 实体,不碰无分号的 legacy 实体前缀。"""
-    return _ENTITY_SEMI.sub(lambda m: html.unescape(m.group(0)), text)
+    """只解精确的完整 HTML 实体,不碰无分号 legacy 前缀,也不对带分号串做贪婪前缀匹配。"""
+    return _ENTITY_SEMI.sub(_decode_one_entity, text)
 
 
 _UA = "docsite-to-md/1.0"
