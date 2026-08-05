@@ -729,6 +729,40 @@ def test_store_image_data_uri_plain_url_decoded(tmp_path=None):
         assert b"%3C" not in content, "不该有编码残留"
 
 
+# ── 双重转义实体:单元格与代码块里的 &amp;lt;key&amp;gt; / &amp;quot; 要解码 ──
+def test_table_cell_double_escaped_entity_decoded():
+    """VitePress 属性表把占位符 &amp;lt;key&amp;gt; 双重转义塞单元格,bs4 一层解析后
+    剩 &lt;key&gt;,markdownify 不再解码 → md 残留裸实体。清洗要解码成 <key>。"""
+    md = conv('<table><tr><th>K</th></tr>'
+              '<tr><td>cds.mock.users.&amp;lt;key&amp;gt;.id</td></tr></table>')
+    assert "<key>" in md, md
+    assert "&lt;" not in md and "&gt;" not in md, f"实体没解码: {md}"
+
+
+def test_table_cell_double_escaped_quot_decoded():
+    md = conv('<table><tr><th>K</th></tr>'
+              '<tr><td>say &amp;quot;hi&amp;quot;</td></tr></table>')
+    assert 'say "hi"' in md, md
+    assert "&quot;" not in md
+
+
+def test_table_cell_double_escaped_wbr_still_stripped():
+    """双重转义的 &amp;lt;wbr&amp;gt; 解码后是 <wbr> 软换行占位,仍要删,不能留在 md。"""
+    md = conv('<table><tr><th>K</th></tr>'
+              '<tr><td>a.&amp;lt;wbr&amp;gt;b</td></tr></table>')
+    assert "<wbr>" not in md, md
+    assert "a.b" in md or "a.​b" in md, md
+
+
+def test_code_block_double_escaped_entity_decoded():
+    """代码块(Shiki)里双重转义的 &amp;quot; 该解码成真引号,否则复制出的 XML 不能用。"""
+    md = conv('<div class="language-xml"><pre class="shiki"><code>'
+              '<span class="line"><span>&lt;formula&gt;&amp;quot;id&amp;quot;&lt;/formula&gt;</span></span>'
+              '</code></pre></div>')
+    assert '"id"' in md, md
+    assert "&quot;" not in md
+
+
 # ── sitemap index(嵌套 sitemap)要递归展开子 sitemap ──────────────
 def test_read_sitemap_index_recurses(monkeypatch=None):
     """sitemapindex 的 <loc> 指向子 sitemap 的 .xml,要递归抓子 sitemap 里的页面 URL,

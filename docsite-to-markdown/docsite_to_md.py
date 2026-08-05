@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import html
 import os
 import re
 import sys
@@ -145,7 +146,13 @@ def strip_noise_and_images(body: Tag, image_ctx: "ImageContext | None" = None) -
         for s in cell.find_all(string=True):
             if s.find_parent(["code", "pre", "kbd", "samp"]):
                 continue
-            new = _CELL_DROP.sub("", str(s))
+            new = str(s)
+            # VitePress 属性表把占位符如 &amp;lt;key&amp;gt; 双重转义塞进单元格,bs4 一层
+            # 解析后文本节点里剩 &lt;key&gt; / &lt;wbr&gt; 等,markdownify 转 <td> 时不再
+            # 解码。先 unescape 成真字符,再统一删标签字面量(<wbr>/<br>/<i>),这样
+            # 单层(bs4 已解成 <wbr>)和双层(unescape 后才成 <wbr>)转义都能清干净。
+            new = html.unescape(new)
+            new = _CELL_DROP.sub("", new)
             new = _CELL_SPACE.sub(" ", new)
             new = _CELL_UNWRAP.sub("", new)
             if new != str(s):
@@ -278,6 +285,9 @@ class DocConverter(markdownify.MarkdownConverter):
     def convert_pre(self, el, text, parent_tags=None, **kw):
         code_el = el.find("code") or el
         code = code_el.get_text()
+        # VitePress/Shiki 快照有时把代码里的 & < > " 双重转义(源 &amp;quot;),bs4 一层
+        # 解析后 get_text 得到 &quot; 残留。代码块里这些几乎总该显示为真字符,再解码一次。
+        code = html.unescape(code)
         code = code.rstrip("\n")
         lang = code_language(el)
         fence = "`" * max(3, max_backticks(code) + 1)
